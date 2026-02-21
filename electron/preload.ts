@@ -204,6 +204,7 @@ export const electronAPI = {
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
+  openRecorder: () => ipcRenderer.send('window:open-recorder'),
   recorderClickThrough: () => ipcRenderer.send('recorder:click-through'),
   setRecorderWindowSize: (size: { width: number; height: number }) => ipcRenderer.send('recorder:set-size', size),
   windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),

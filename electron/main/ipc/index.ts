@@ -15,6 +15,7 @@ export function registerIpcHandlers() {
   ipcMain.on('window:minimize', appHandlers.minimizeWindow)
   ipcMain.on('window:maximize', appHandlers.maximizeWindow)
   ipcMain.on('window:close', appHandlers.closeWindow)
+  ipcMain.on('window:open-recorder', appHandlers.openRecorderWindow)
   ipcMain.handle('window:isMaximized', appHandlers.handleIsMaximized)
   ipcMain.on('window:update-title-bar-overlay', appHandlers.updateTitleBarOverlay)
 

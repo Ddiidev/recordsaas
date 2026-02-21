@@ -247,13 +247,13 @@
 
 /* --- THEME: Ocean Blue (DEFAULT) --- */
 [data-theme='ocean-blue'] {
-  --background: hsl(0 0% 98%);
+  --background: hsl(0 0% 100%);
   --foreground: hsl(0 0% 13%);
   --card: hsl(0 0% 100%);
   --card-foreground: hsl(0 0% 13%);
   --popover: hsl(0 0% 100%);
   --popover-foreground: hsl(0 0% 13%);
-  --primary: hsl(211 100% 50%);
+  --primary: hsl(154 60% 42%);
   --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(0 0% 96%);
   --secondary-foreground: hsl(0 0% 13%);
@@ -263,57 +263,58 @@
   --accent-foreground: hsl(0 0% 13%);
   --destructive: hsl(0 82% 55%);
   --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(0 0% 89%);
-  --input: hsl(0 0% 94%);
-  --ring: hsl(211 100% 50%);
-  --sidebar: hsl(0 0% 97.5%);
+  --border: hsl(0 0% 86%);
+  --input: hsl(0 0% 90%);
+  --ring: hsl(154 60% 42%);
+  --sidebar: hsl(0 0% 98%);
   --sidebar-foreground: hsl(0 0% 13%);
-  --sidebar-border: hsl(0 0% 87%);
+  --sidebar-border: hsl(0 0% 86%);
   --color-picker-border: hsl(0 0% 85%);
   --color-picker-border-hover: hsl(0 0% 72%);
-  --color-picker-focus-ring: hsla(211, 100%, 50%, 0.25);
+  --color-picker-focus-ring: hsla(154, 60%, 42%, 0.25);
   --color-picker-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   --color-picker-input-bg: hsl(0 0% 99%);
   --color-picker-input-border: hsl(0 0% 89%);
-  --radius: 0.75rem;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --radius: 0.28rem;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-heading: 'Outfit', 'Inter', sans-serif;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
   --timeline-tick: hsl(0 0% 28%);
   --speed-accent: hsl(158, 78%, 52%);
 }
 
-/* Ocean Blue Dark - macOS Style */
+/* Ocean Blue Dark - Premium Editor Style */
 [data-theme='ocean-blue'].dark {
-  --background: hsl(220 25% 6%);
+  --background: hsl(215 16% 16%);
   --foreground: hsl(210 20% 98%);
-  --card: hsl(220 24% 9%);
+  --card: hsl(215 16% 18%);
   --card-foreground: hsl(210 20% 98%);
-  --popover: hsl(220 24% 10%);
+  --popover: hsl(215 16% 18%);
   --popover-foreground: hsl(210 20% 98%);
-  --primary: hsl(213 94% 68%);
+  --primary: hsl(154 60% 50%);
   --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(220 22% 14%);
+  --secondary: hsl(215 16% 22%);
   --secondary-foreground: hsl(210 20% 98%);
-  --muted: hsl(220 22% 12%);
+  --muted: hsl(215 16% 20%);
   --muted-foreground: hsl(215 16% 65%);
-  --accent: hsl(220 24% 16%);
+  --accent: hsl(215 16% 24%);
   --accent-foreground: hsl(210 20% 98%);
   --destructive: hsl(0 72% 58%);
   --destructive-foreground: hsl(0 0% 100%);
-  --border: hsl(220 22% 18%);
-  --input: hsl(220 22% 14%);
-  --ring: hsl(213 94% 68%);
-  --sidebar: hsl(220 26% 7%);
+  --border: hsl(215 16% 28%);
+  --input: hsl(215 16% 26%);
+  --ring: hsl(154 60% 50%);
+  --sidebar: hsl(215 16% 17%);
   --sidebar-foreground: hsl(210 20% 98%);
-  --sidebar-border: hsl(220 22% 18%);
-  --color-picker-border: hsl(220 20% 24%);
-  --color-picker-border-hover: hsl(220 20% 38%);
-  --color-picker-focus-ring: hsla(213, 94%, 68%, 0.4);
+  --sidebar-border: hsl(215 16% 28%);
+  --color-picker-border: hsl(220 20% 36%);
+  --color-picker-border-hover: hsl(220 20% 48%);
+  --color-picker-focus-ring: hsla(154, 60%, 50%, 0.4);
   --color-picker-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  --color-picker-input-bg: hsl(220 22% 12%);
-  --color-picker-input-border: hsl(220 20% 24%);
+  --color-picker-input-bg: hsl(215 16% 20%);
+  --color-picker-input-border: hsl(220 20% 36%);
   --timeline-tick: hsl(210 18% 76%);
-  --speed-accent: hsl(158, 78%, 56%);
+  --speed-accent: hsl(154 60% 50%);
 }
 
 @theme inline {
@@ -342,13 +343,14 @@
   --color-speed-accent: var(--speed-accent);
 
   --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 1px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 2px);
 }
 
 ::-webkit-scrollbar {

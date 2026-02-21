@@ -22,8 +22,8 @@ const ToolbarButton = React.forwardRef<HTMLButtonElement, ToolbarButtonProps>(
           'disabled:pointer-events-none disabled:opacity-40',
           variant === 'icon' ? 'h-10 w-10 rounded-xl' : 'h-10 px-4 rounded-xl text-sm gap-2',
           disabled
-            ? 'bg-card/80 text-muted-foreground/50 border border-border/20 shadow-sm'
-            : 'bg-card/90 text-foreground border border-border/40 shadow-sm hover:bg-accent hover:text-accent-foreground hover:border-border/60 hover:shadow-md',
+            ? 'bg-card/80 text-muted-foreground/50 border border-border shadow-sm opacity-50'
+            : 'bg-card/90 text-foreground border border-border shadow-sm hover:bg-accent hover:text-accent-foreground hover:border-border hover:shadow-md',
           className,
         )}
         disabled={disabled}
@@ -117,7 +117,7 @@ export function PreviewControls() {
         <span className="text-sm font-semibold text-muted-foreground">Aspect:</span>
         <div className="w-40">
           <Select value={aspectRatio} onValueChange={(value) => setAspectRatio(value as AspectRatio)}>
-            <SelectTrigger className="h-10 text-sm border-border bg-card shadow-md">
+            <SelectTrigger className="h-10 text-sm border-border bg-card">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

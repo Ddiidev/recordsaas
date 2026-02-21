@@ -430,7 +430,7 @@ export const Preview = memo(
             />
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-muted/30 to-muted/10 border-2 border-dashed border-border/40 rounded-xl flex flex-col items-center justify-center text-muted-foreground gap-4 backdrop-blur-sm">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center backdrop-blur-md border border-border/30 shadow-lg">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center backdrop-blur-md border border-border/30 shadow-md">
                 <Movie className="w-10 h-10 text-primary/60" />
               </div>
               <div className="text-center space-y-1">
@@ -537,7 +537,7 @@ export const Preview = memo(
                 <PlayerSkipForward className="w-4 h-4" />
               </Button>
 
-              <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2">
+              <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4">
                 <span className="text-foreground font-semibold">{formatTime(currentTime, true)}</span>
                 <span className="text-muted-foreground/50">/</span>
                 <span className="text-muted-foreground">{formatTime(duration, true)}</span>

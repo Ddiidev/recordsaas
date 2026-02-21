@@ -74,13 +74,13 @@ const SelectTrigger = React.forwardRef<
         id={selectId}
         ref={ref}
         className={cn(
-          'flex h-11 w-full items-center justify-between rounded-lg border border-border bg-input/50 px-3 py-2 text-sm font-medium text-foreground',
-          'placeholder:text-muted-foreground/70',
-          'focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50',
+          'flex h-11 w-full items-center justify-between rounded-md border border-border bg-input/20 px-3 py-2 text-sm font-medium text-foreground',
+          'placeholder:text-muted-foreground/70 shadow-sm',
+          'focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50',
           'disabled:cursor-not-allowed disabled:opacity-50',
           'transition-all duration-200',
-          'hover:border-border/80 hover:bg-input/70',
-          'data-[state=open]:border-primary/50 data-[state=open]:ring-2 data-[state=open]:ring-primary/50',
+          'hover:border-border/80 hover:bg-input/40',
+          'data-[state=open]:border-primary/50 data-[state=open]:ring-2 data-[state=open]:ring-primary/30',
           'gap-2', // Add gap for spacing
           error && 'border-destructive focus:border-destructive focus:ring-destructive/50',
           className,
@@ -138,10 +138,10 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        // Base styling - softer shadows, more blur
+        // Base styling
         'relative z-50 max-h-96 min-w-[8rem] overflow-hidden',
-        'rounded-xl border border-border/60 bg-card/98 backdrop-blur-xl',
-        'text-card-foreground shadow-xl',
+        'rounded-md border border-border bg-popover backdrop-blur-xl',
+        'text-popover-foreground shadow-md',
 
         // Animations - smoother
         'data-[state=open]:animate-in data-[state=closed]:animate-out',

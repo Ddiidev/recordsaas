@@ -196,25 +196,34 @@ export function CameraSettings() {
                 {/* Shape Selector */}
                 <div className="space-y-3">
                   <label className="text-sm font-medium text-sidebar-foreground">Shape</label>
-                  <div className="grid grid-cols-3 gap-2 p-1 bg-muted/50 rounded-lg">
+                  <div className="grid grid-cols-3 gap-2">
                     <Button
-                      variant={webcamStyles.shape === 'rectangle' ? 'secondary' : 'ghost'}
+                      variant="ghost"
                       onClick={() => updateWebcamStyle({ shape: 'rectangle' })}
-                      className="h-auto py-2.5 flex items-center justify-center gap-2"
+                      className={cn(
+                        "h-auto py-2.5 flex items-center justify-center gap-2 border transition-all",
+                        webcamStyles.shape === 'rectangle' ? "border-primary bg-primary/10 text-primary dark:text-white hover:bg-primary/20" : "border-border/60 text-foreground dark:text-white/80 hover:border-border hover:bg-muted/50"
+                      )}
                     >
                       <Rectangle className="w-5 h-4" />
                     </Button>
                     <Button
-                      variant={webcamStyles.shape === 'square' ? 'secondary' : 'ghost'}
+                      variant="ghost"
                       onClick={() => updateWebcamStyle({ shape: 'square' })}
-                      className="h-auto py-2.5 flex items-center justify-center gap-2"
+                      className={cn(
+                        "h-auto py-2.5 flex items-center justify-center gap-2 border transition-all",
+                        webcamStyles.shape === 'square' ? "border-primary bg-primary/10 text-primary dark:text-white hover:bg-primary/20" : "border-border/60 text-foreground dark:text-white/80 hover:border-border hover:bg-muted/50"
+                      )}
                     >
                       <Square className="w-4 h-4" />
                     </Button>
                     <Button
-                      variant={webcamStyles.shape === 'circle' ? 'secondary' : 'ghost'}
+                      variant="ghost"
                       onClick={() => updateWebcamStyle({ shape: 'circle' })}
-                      className="h-auto py-2.5 flex items-center justify-center gap-2"
+                      className={cn(
+                        "h-auto py-2.5 flex items-center justify-center gap-2 border transition-all",
+                        webcamStyles.shape === 'circle' ? "border-primary bg-primary/10 text-primary dark:text-white hover:bg-primary/20" : "border-border/60 text-foreground dark:text-white/80 hover:border-border hover:bg-muted/50"
+                      )}
                     >
                       <Circle className="w-4 h-4" />
                     </Button>

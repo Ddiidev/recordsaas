@@ -89,7 +89,7 @@ export function AudioSettings() {
                     variant="outline"
                     size="icon"
                     onClick={toggleMute}
-                    className="flex-shrink-0 h-10 w-10"
+                    className="flex-shrink-0 h-10 w-10 text-foreground dark:text-white"
                     aria-label={isMuted ? 'Unmute' : 'Mute'}
                   >
                     <VolumeIcon className="w-5 h-5" />

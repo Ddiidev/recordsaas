@@ -133,29 +133,8 @@ export function SidePanel() {
 
   return (
     <div className="h-full flex">
-      {/* Main content area */}
-      <div className="flex-1 bg-sidebar overflow-hidden relative">
-        {/* Render all panels but only show the active one.
-            This prevents unmounting and preserves the internal state of components like Collapse. */}
-        <div className="h-full" hidden={activeSidePanelTab !== 'general'}>
-          {selectedRegion ? <RegionSettingsPanel region={selectedRegion} /> : <FrameSettingsPanel />}
-        </div>
-        <div className="h-full" hidden={activeSidePanelTab !== 'camera'}>
-          <CameraSettings />
-        </div>
-        <div className="h-full" hidden={activeSidePanelTab !== 'audio'}>
-          <AudioSettings />
-        </div>
-        <div className="h-full" hidden={activeSidePanelTab !== 'animation'}>
-          <AnimationSettingsPanel />
-        </div>
-        <div className="h-full" hidden={activeSidePanelTab !== 'cursor'}>
-          <CursorSettings />
-        </div>
-      </div>
-
       {/* Vertical Tab Navigator (Always visible) */}
-      <div className="w-[64px] flex-shrink-0 p-3 border-l border-sidebar-border bg-sidebar/80">
+      <div className="w-[64px] flex-shrink-0 p-3 border-r border-sidebar-border bg-sidebar/80">
         <div className="flex flex-col items-center space-y-2">
           <TabButton
             label="General"
@@ -189,6 +168,27 @@ export function SidePanel() {
             isActive={activeSidePanelTab === 'cursor'}
             onClick={() => setActiveSidePanelTab('cursor')}
           />
+        </div>
+      </div>
+
+      {/* Main content area */}
+      <div className="flex-1 bg-sidebar overflow-hidden relative">
+        {/* Render all panels but only show the active one.
+            This prevents unmounting and preserves the internal state of components like Collapse. */}
+        <div className="h-full" hidden={activeSidePanelTab !== 'general'}>
+          {selectedRegion ? <RegionSettingsPanel region={selectedRegion} /> : <FrameSettingsPanel />}
+        </div>
+        <div className="h-full" hidden={activeSidePanelTab !== 'camera'}>
+          <CameraSettings />
+        </div>
+        <div className="h-full" hidden={activeSidePanelTab !== 'audio'}>
+          <AudioSettings />
+        </div>
+        <div className="h-full" hidden={activeSidePanelTab !== 'animation'}>
+          <AnimationSettingsPanel />
+        </div>
+        <div className="h-full" hidden={activeSidePanelTab !== 'cursor'}>
+          <CursorSettings />
         </div>
       </div>
     </div>

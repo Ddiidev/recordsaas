@@ -209,8 +209,8 @@ export function CursorSettings() {
             <label className="text-sm font-medium text-sidebar-foreground flex items-center gap-2">Scale</label>
             <div
               className={cn(
-                'grid grid-cols-4 gap-1 p-1 rounded-lg',
-                !isCustomizationSupported ? 'opacity-50 cursor-not-allowed' : 'bg-muted/50',
+                'grid grid-cols-4 gap-1 p-1 rounded-lg border border-border bg-muted/10',
+                !isCustomizationSupported ? 'opacity-50 cursor-not-allowed' : '',
               )}
             >
               {POST_PROCESSING_SCALES.map((scale) => (
@@ -219,11 +219,10 @@ export function CursorSettings() {
                   onClick={!isCustomizationSupported ? undefined : () => handleCursorScaleChange(scale.value)}
                   disabled={!isCustomizationSupported}
                   className={cn(
-                    'py-2 text-sm font-medium rounded-md transition-colors duration-200',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    'py-2 text-sm font-medium rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     cursorScale === scale.value
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
+                      ? 'bg-primary shadow-sm text-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                     !isCustomizationSupported && 'cursor-not-allowed hover:text-muted-foreground',
                   )}
                 >

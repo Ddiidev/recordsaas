@@ -1,5 +1,6 @@
 import { app, BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { appState } from '../../state'
+import { createRecorderWindow } from '../../windows/recorder-window'
 
 export function handleGetPath(_event: IpcMainInvokeEvent, name: 'home' | 'userData' | 'desktop' | 'documents') {
   return app.getPath(name)
@@ -30,6 +31,16 @@ export function maximizeWindow(event: IpcMainEvent) {
 export function closeWindow(event: IpcMainEvent) {
   const window = BrowserWindow.fromWebContents(event.sender)
   window?.close()
+}
+
+export function openRecorderWindow(event: IpcMainEvent) {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  window?.close()
+  if (!appState.recorderWin || appState.recorderWin.isDestroyed()) {
+    createRecorderWindow()
+  } else {
+    appState.recorderWin.show()
+  }
 }
 
 export function recorderClickThrough(event: IpcMainEvent) {

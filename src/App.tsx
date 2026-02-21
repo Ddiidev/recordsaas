@@ -5,6 +5,8 @@ import { RecorderPage } from './pages/RecorderPage'
 import { RendererPage } from './pages/RendererPage'
 import { useEditorStore } from './store/editorStore'
 
+import { LandingPage } from './pages/LandingPage'
+
 function App() {
   const [route, setRoute] = useState(window.location.hash)
   const [systemPrefersDark, setSystemPrefersDark] = useState(
@@ -71,7 +73,11 @@ function App() {
     return <EditorPage />
   }
 
-  return <RecorderPage />
+  if (route.startsWith('#recorder')) {
+    return <RecorderPage />
+  }
+
+  return <LandingPage onEnterApp={() => { window.location.hash = '#recorder'; }} />
 }
 
 export default App
