@@ -28,6 +28,7 @@ type CompletePayload = {
   success: boolean
   outputPath?: string
   error?: string
+  duration?: number
 }
 
 // Payload for worker render

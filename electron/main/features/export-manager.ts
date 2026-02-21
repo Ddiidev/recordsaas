@@ -103,6 +103,16 @@ const buildAudioTimelineSegments = (
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function startExport(event: IpcMainInvokeEvent, { projectState, exportSettings, outputPath }: any) {
   log.info('[ExportManager] Starting export process...')
+  
+  // Create the directory if it doesn't exist
+  const outputDir = path.dirname(outputPath)
+  if (!fs.existsSync(outputDir)) {
+    log.info(`[ExportManager] Creating missing directory: ${outputDir}`)
+    fs.mkdirSync(outputDir, { recursive: true })
+  }
+
+  const exportStartTime = Date.now()
+
   const editorWindow = BrowserWindow.fromWebContents(event.sender)
   if (!editorWindow) return
 
@@ -317,6 +327,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
       appState.renderWorker.close()
     }
+    appState.renderWorker = null
+
+    if (editorWindow && !editorWindow.isDestroyed()) {
+      editorWindow.webContents.send('export:complete', { success: false, error: 'Export cancelled.' })
+    }
+
     if (fs.existsSync(outputPath)) {
       fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete cancelled export file:', err))
     }
@@ -396,11 +412,13 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (!exportCompleted) {
       // Check if the editor window still exists before sending a message
       if (editorWindow && !editorWindow.isDestroyed()) {
+        const renderDuration = (Date.now() - exportStartTime) / 1000;
         if (code === null) {
           // Cancelled by SIGKILL
           editorWindow.webContents.send('export:complete', { success: false, error: 'Export cancelled.' })
         } else if (code === 0) {
-          editorWindow.webContents.send('export:complete', { success: true, outputPath })
+          log.info(`[ExportManager] Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
+          editorWindow.webContents.send('export:complete', { success: true, outputPath, duration: renderDuration })
         } else {
           editorWindow.webContents.send('export:complete', { success: false, error: `FFmpeg exited with code ${code}` })
         }
