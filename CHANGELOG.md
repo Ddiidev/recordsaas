@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/Ddiidev/recordsaas/compare/v2.0.0...v2.0.1) (2026-02-21)
+
+
+### Bug Fixes
+
+* **ci:** fix artifact upload glob pattern for upload-artifact@v4 ([#2](https://github.com/Ddiidev/recordsaas/issues/2)) ([86fdffe](https://github.com/Ddiidev/recordsaas/commit/86fdffeaccd068e9e3e2fa2ddb6b2241c76346da))
+
 # [2.0.0](https://github.com/Ddiidev/recordsaas/compare/v1.2.6...v2.0.0) (2026-02-21)
 
 
