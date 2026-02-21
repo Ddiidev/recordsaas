@@ -290,7 +290,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
   const timelineViewportHeight = Math.min(
     maxTimelineViewportHeight,
     Math.max(minTimelineViewportHeight, timelineContentHeight),
-  )
+  ) + 14 // Adds buffer for horizontal scrollbar to prevent vertical scrolling for 2 lanes
   const showLaneActionButtons = sortedLanes.length > 1
   const laneActionMenuLaneIndex = laneActionMenu
     ? sortedLanes.findIndex((lane) => lane.id === laneActionMenu.laneId)
@@ -331,7 +331,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
 
   return (
     <div className="flex flex-col bg-background/50 p-3 transition-all duration-300 ease-in-out">
-      <div className="mb-2 flex items-center justify-between px-1">
+      <div className="mb-2 flex items-center gap-3 px-1">
         <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Timeline lanes</span>
         <button
           type="button"

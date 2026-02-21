@@ -17,15 +17,15 @@ export function ExportButton({ onClick, isExporting, disabled }: ExportButtonPro
       className={cn(
         'btn-clean relative overflow-hidden font-semibold px-5 h-9 rounded-lg',
         'bg-gradient-to-br from-primary via-primary to-primary/80',
-        'text-primary-foreground shadow-lg',
+        'text-primary-foreground shadow-sm',
         'before:absolute before:inset-0 before:bg-gradient-to-br before:from-white/20 before:via-transparent before:to-transparent',
         'before:opacity-0 hover:before:opacity-100 before:transition-opacity before:duration-300',
         'after:absolute after:top-0 after:right-0 after:w-16 after:h-16 after:bg-white/30',
         'after:rounded-full after:blur-2xl after:opacity-40',
-        'hover:shadow-xl hover:shadow-primary/30',
+        'hover:shadow-md hover:shadow-primary/30',
         'active:shadow-md',
         'transition-all duration-200',
-        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg disabled:after:opacity-40',
+        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-sm disabled:after:opacity-40',
       )}
     >
       <span className="relative z-10 flex items-center">

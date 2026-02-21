@@ -114,7 +114,7 @@ export function PresetPreview({
   return (
     <div
       ref={previewRef}
-      className="h-full rounded-xl flex items-center justify-center transition-all duration-300 ease-out max-w-full max-h-full shadow-lg"
+      className="h-full rounded-xl flex items-center justify-center transition-all duration-300 ease-out max-w-full max-h-full shadow-md"
       style={{ ...backgroundStyle, aspectRatio: cssAspectRatio }}
     >
       <div className="w-full h-full" style={{ padding: `${styles.padding}%`, position: 'relative' }}>
@@ -135,7 +135,7 @@ export function PresetPreview({
 
         {isWebcamVisible && webcamStyles && webcamPosition && (
           <div className={fakeWebcamClasses} style={fakeWebcamStyle}>
-            <div className="w-full h-full bg-card flex items-center justify-center shadow-lg">
+            <div className="w-full h-full bg-card flex items-center justify-center shadow-md">
               <Video className="w-1/2 h-1/2 text-foreground/40" />
             </div>
           </div>

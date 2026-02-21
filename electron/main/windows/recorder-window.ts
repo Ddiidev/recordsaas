@@ -11,10 +11,10 @@ import { resetCursorScale } from '../features/cursor-manager'
 export function createRecorderWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
-  const windowWidth = 900
-  const windowHeight = 360
+  const windowWidth = 1100
+  const windowHeight = 700
   const x = Math.round((screenWidth - windowWidth) / 2)
-  const y = Math.max(0, Math.round(screenHeight / 4))
+  const y = Math.max(0, Math.round((screenHeight - windowHeight) / 2))
 
   appState.recorderWin = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC!, 'screenarc-appicon.png'),

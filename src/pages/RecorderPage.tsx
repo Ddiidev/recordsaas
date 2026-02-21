@@ -19,6 +19,7 @@ import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { SettingsModal } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../lib/utils'
 import '../index.css'
 
@@ -343,23 +344,43 @@ export function RecorderPage() {
   }
 
   return (
-    <div className="relative h-screen w-screen bg-transparent select-none">
-      <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
-        <div data-interactive="true" className="relative">
+    <TooltipProvider delayDuration={400}>
+      <div className="relative h-screen w-screen bg-transparent select-none">
+        <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
+          <div data-interactive="true" className="relative">
           {/* Main Control Bar */}
           <div
-            className="relative flex items-center gap-3 px-4 py-3 rounded-2xl bg-card border border-border shadow-2xl"
+            className={cn(
+              "relative flex items-center gap-3 px-4 py-3 rounded-lg bg-card border shadow-2xl",
+              "border-primary"
+            )}
             style={{ WebkitAppRegion: 'drag' }}
           >
-            <button
-              onClick={() => window.electronAPI.closeWindow()}
-              style={{ WebkitAppRegion: 'no-drag' }}
-              className="absolute -top-2.5 -left-2.5 z-20 flex items-center justify-center w-6 h-6 rounded-full bg-destructive/90 hover:bg-destructive text-white shadow-lg transition-all hover:scale-110"
-              aria-label="Close Recorder"
-              disabled={isRecording || actionInProgress !== 'none'}
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            {/* Close Button - macOS/Linux (Left) */}
+            {platform !== 'win32' && (
+              <button
+                onClick={() => window.electronAPI.closeWindow()}
+                style={{ WebkitAppRegion: 'no-drag' }}
+                className="absolute -top-2.5 -left-2.5 z-20 flex items-center justify-center w-6 h-6 rounded-md bg-destructive/90 hover:bg-destructive text-white shadow-lg transition-all hover:scale-110"
+                aria-label="Close Recorder"
+                disabled={isRecording || actionInProgress !== 'none'}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Close Button - Windows (Right) */}
+            {platform === 'win32' && (
+              <button
+                onClick={() => window.electronAPI.closeWindow()}
+                style={{ WebkitAppRegion: 'no-drag' }}
+                className="absolute -top-2.5 -right-2.5 z-20 flex items-center justify-center w-6 h-6 rounded-md bg-destructive/90 hover:bg-destructive text-white shadow-lg transition-all hover:scale-110"
+                aria-label="Close Recorder"
+                disabled={isRecording || actionInProgress !== 'none'}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
 
             {/* Source Toggle */}
             <div
@@ -513,56 +534,86 @@ export function RecorderPage() {
             <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' }}>
               <div className="flex items-center gap-2">
                 {isRecording ? (
-                  <Button
-                    onClick={handleStop}
-                    title="Stop Recording"
-                    variant="destructive"
-                    size="icon"
-                    className="h-10 w-10 rounded-full shadow-lg"
-                  >
-                    <Square size={16} fill="currentColor" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleStop}
+                        variant="destructive"
+                        size="icon"
+                        className="h-10 w-10 rounded-lg shadow-lg"
+                      >
+                        <Square size={16} fill="currentColor" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                      Stop Recording
+                    </TooltipContent>
+                  </Tooltip>
                 ) : (
-                  <Button
-                    onClick={handleStart}
-                    title="Record"
-                    disabled={isInitializing || actionInProgress !== 'none'}
-                    size="icon"
-                    className="h-10 w-10 rounded-full shadow-lg"
-                  >
-                    <Video size={18} />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleStart}
+                        disabled={isInitializing || actionInProgress !== 'none'}
+                        size="icon"
+                        className="h-10 w-10 rounded-lg shadow-lg"
+                      >
+                        <Video size={18} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                      Record Screen
+                    </TooltipContent>
+                  </Tooltip>
                 )}
-                <Button
-                  onClick={handleLoadVideo}
-                  title="Load from video"
-                  disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                  variant="secondary"
-                  size="icon"
-                  className="h-10 w-10 rounded-full shadow-lg"
-                >
-                  <Folder size={18} />
-                </Button>
-                <Button
-                  onClick={handleImportProject}
-                  title="Import Project"
-                  disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                  variant="secondary"
-                  size="icon"
-                  className="h-10 w-10 rounded-full shadow-lg"
-                >
-                  <FileImport size={18} />
-                </Button>
-                <Button
-                  onClick={() => setSettingsModalOpen(true)}
-                  title="Settings"
-                  disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                  variant="secondary"
-                  size="icon"
-                  className="h-10 w-10 rounded-full shadow-lg"
-                >
-                  <Settings size={18} />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleLoadVideo}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-lg shadow-lg"
+                    >
+                      <Folder size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    Load Local Video
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleImportProject}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-lg shadow-lg"
+                    >
+                      <FileImport size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    Import Project
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => setSettingsModalOpen(true)}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-lg shadow-lg"
+                    >
+                      <Settings size={18} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    Settings
+                  </TooltipContent>
+                </Tooltip>
               </div>
               <div className="w-8 h-10 flex items-center justify-center">
                 <Loader2
@@ -579,7 +630,7 @@ export function RecorderPage() {
           {/* Webcam Preview */}
           <div
             className={cn(
-              'mt-4 mx-auto w-48 aspect-square rounded-[32%] overflow-hidden shadow-2xl bg-black transition-all duration-300',
+              'mt-4 mx-auto w-48 aspect-square rounded-2xl overflow-hidden shadow-xl bg-black transition-all duration-300',
               selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
                 ? 'opacity-100 scale-100'
                 : 'opacity-0 scale-95 pointer-events-none',
@@ -602,8 +653,9 @@ export function RecorderPage() {
         </div>
       )}
 
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} />
-    </div>
+      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} isTransparent />
+      </div>
+    </TooltipProvider>
   )
 }
 

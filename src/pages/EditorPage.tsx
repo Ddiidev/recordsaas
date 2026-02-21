@@ -11,7 +11,7 @@ import { ExportModal } from '../components/editor/ExportModal'
 import { WindowControls } from '../components/editor/WindowControls'
 import { PresetModal } from '../components/editor/PresetModal'
 import { SettingsModal } from '../components/settings/SettingsModal'
-import { Stack3, Loader2, Check, Settings } from 'tabler-icons-react'
+import { Stack3, Loader2, Check, Settings, Home } from 'tabler-icons-react'
 import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
@@ -254,8 +254,8 @@ export function EditorPage() {
         onClick={() => setPresetModalOpen(true)}
         disabled={presetSaveStatus === 'saving'}
         className={cn(
-          'transition-all duration-300 w-[110px] h-8 font-medium shadow-sm',
-          presetSaveStatus === 'saved' && 'bg-green-500/15 border border-green-500/30',
+          'transition-all duration-300 w-[110px] h-8 font-medium shadow-sm border border-dashed hover:border-green-500',
+          presetSaveStatus === 'saved' ? 'bg-green-500/15 border-green-500/30' : 'border-green-500/50',
           'text-green-600 dark:text-green-400 shadow-green-500/10',
         )}
       >
@@ -267,9 +267,22 @@ export function EditorPage() {
         size="icon"
         onClick={() => setSettingsModalOpen(true)}
         aria-label="Open Settings"
-        className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg')}
+        title="Settings"
+        className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
       >
         <Settings className="w-4 h-4" />
+      </Button>,
+      <div key="separator" className="w-px h-6 bg-border mx-1" />,
+      <Button
+        key="home"
+        variant="ghost"
+        size="icon"
+        onClick={() => window.electronAPI.openRecorder()}
+        aria-label="Home"
+        title="Home"
+        className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+      >
+        <Home className="w-4 h-4" />
       </Button>,
       updateInfo && <UpdateNotification key="update" info={updateInfo} />,
     ].filter(Boolean)
@@ -315,7 +328,7 @@ export function EditorPage() {
 
         {/* Centered Title */}
         <h1 className="text-sm font-bold text-foreground pointer-events-none tracking-tight absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          ScreenArc
+          Record<span className="text-primary">SaaS</span>
         </h1>
 
         {/* Right side controls (for non-Windows) */}
@@ -329,10 +342,10 @@ export function EditorPage() {
         )}
       </header>
 
-      <div className={cn('flex flex-1 overflow-hidden', isPreviewFullScreen && 'h-full w-full')}>
+      <div className={cn('flex flex-row-reverse flex-1 overflow-hidden', isPreviewFullScreen && 'h-full w-full')}>
         <div
           className={cn(
-            'w-[28rem] flex-shrink-0 bg-sidebar border-r border-sidebar-border overflow-hidden',
+            'w-[28rem] flex-shrink-0 bg-sidebar border-l border-sidebar-border overflow-hidden',
             isPreviewFullScreen && 'hidden', // Hide SidePanel in fullscreen
           )}
         >

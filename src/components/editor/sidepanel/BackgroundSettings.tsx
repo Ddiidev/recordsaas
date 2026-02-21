@@ -38,7 +38,7 @@ const WallpaperSelector = () => {
           />
           {frameStyles.background.thumbnailUrl === wallpaper.thumbnailUrl && (
             <div className="absolute inset-0 bg-primary/10 flex items-center justify-center backdrop-blur-[1px]">
-              <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center shadow-lg">
+              <div className="w-5 h-5 bg-primary rounded-full flex items-center justify-center shadow-sm">
                 <Check className="w-3 h-3 text-primary-foreground" />
               </div>
             </div>
@@ -88,7 +88,7 @@ const ColorSelector = () => {
         >
           {frameStyles.background.color === color && (
             <div className="w-full h-full flex items-center justify-center">
-              <div className="w-5 h-5 bg-white/90 rounded-full flex items-center justify-center shadow-lg">
+              <div className="w-5 h-5 bg-white/90 rounded-full flex items-center justify-center shadow-sm">
                 <Check className="w-3 h-3 text-gray-800" />
               </div>
             </div>
@@ -211,7 +211,7 @@ const GradientSelector = () => {
                 >
                   {frameStyles.background.gradientDirection === preset.direction && (
                     <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
-                      <div className="w-5 h-5 bg-white/90 rounded-full flex items-center justify-center shadow-lg">
+                      <div className="w-5 h-5 bg-white/90 rounded-full flex items-center justify-center shadow-sm">
                         <Check className="w-3 h-3 text-gray-800" />
                       </div>
                     </div>
@@ -276,7 +276,7 @@ const ImageSelector = () => {
                   e.stopPropagation()
                   removeUploadedImage()
                 }}
-                className="px-4 py-2 bg-destructive text-destructive-foreground rounded-lg font-medium text-sm hover:bg-destructive/90 transition-colors shadow-lg"
+                className="px-4 py-2 bg-destructive text-destructive-foreground rounded-lg font-medium text-sm hover:bg-destructive/90 transition-colors shadow-sm"
               >
                 <X className="w-4 h-4 mr-1.5 inline" />
                 Remove
@@ -287,7 +287,7 @@ const ImageSelector = () => {
                   e.stopPropagation()
                   imageInputRef.current?.click()
                 }}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors shadow-lg"
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors shadow-sm"
               >
                 <CloudUpload className="w-4 h-4 mr-1.5 inline" />
                 Replace
@@ -335,28 +335,19 @@ export function BackgroundSettings() {
       description="Choose how your video background looks"
     >
       <div className="space-y-6">
-        <div className="relative p-1 bg-muted/50 rounded-full">
-          <div className="relative grid grid-cols-4 gap-1">
-            <div
-              className="absolute top-0 left-0 h-full bg-background rounded-full shadow-sm transition-all duration-300 ease-out border border-sidebar-border"
-              style={{
-                width: `calc(25% - 0.125rem)`,
-                transform: `translateX(calc(${tabs.findIndex((t) => t.id === activeTab) * 100}% + ${tabs.findIndex((t) => t.id === activeTab) * 0.25}rem))`,
-              }}
-            />
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as BackgroundTab)}
-                className={cn(
-                  'relative z-10 py-2.5 text-sm font-medium transition-colors duration-200 rounded-full',
-                  activeTab === tab.id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {tab.name}
-              </button>
-            ))}
-          </div>
+        <div className="grid grid-cols-4 gap-1 p-1 bg-muted/10 border border-border rounded-lg">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as BackgroundTab)}
+              className={cn(
+                'py-2.5 text-sm font-medium transition-all duration-200 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                activeTab === tab.id ? 'bg-primary shadow-sm text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+              )}
+            >
+              {tab.name}
+            </button>
+          ))}
         </div>
 
         <div className="min-h-[200px]">{tabs.find((t) => t.id === activeTab)?.component}</div>

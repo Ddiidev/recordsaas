@@ -66,16 +66,16 @@ export function AnimationSettingsPanel() {
             {/* Speed Selector */}
             <div className="space-y-3">
               <label className="text-sm font-medium text-sidebar-foreground">Speed</label>
-              <div className="grid grid-cols-4 gap-1 p-1 bg-muted/50 rounded-lg">
+              <div className="grid grid-cols-4 gap-1 p-1 bg-muted/10 border border-border rounded-lg">
                 {speedOptions.map((s) => (
                   <button
                     key={s}
                     onClick={() => setSpeed(s)}
                     className={cn(
-                      'py-2 text-sm font-medium rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'py-2 text-sm font-medium rounded-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       speed === s
-                        ? 'bg-background shadow-sm text-foreground'
-                        : 'text-muted-foreground hover:text-foreground',
+                        ? 'bg-primary shadow-sm text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
                     )}
                   >
                     {s}

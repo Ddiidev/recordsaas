@@ -76,7 +76,7 @@ export const Slider: React.FC<SliderProps> = ({
       <div className="relative flex items-center h-5">
         <div
           ref={sliderRef}
-          className={`relative w-full h-2 bg-muted rounded-full cursor-pointer group ${
+          className={`relative w-full h-2 bg-muted rounded-full cursor-pointer border border-border/50 dark:border-border group ${
             disabled ? 'opacity-50 cursor-not-allowed' : ''
           }`}
           onMouseDown={handleMouseDown}
@@ -85,12 +85,14 @@ export const Slider: React.FC<SliderProps> = ({
           <div className="absolute top-0 left-0 h-full bg-primary rounded-full" style={{ width: `${percentage}%` }} />
           {/* Handle */}
           <div
-            className={`absolute top-1/2 w-5 h-5 bg-card rounded-full transform -translate-y-1/2 -translate-x-1/2 transition-transform duration-100 ease-out shadow-md
+            className={`absolute top-1/2 w-[18px] h-[18px] bg-card rounded-sm border border-primary/40 transform -translate-y-1/2 -translate-x-1/2 transition-transform duration-100 ease-out shadow-md flex items-center justify-center
               ${isDragging ? 'scale-110 ring-4 ring-primary/20' : 'group-hover:ring-4 group-hover:ring-primary/20'}
               ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
             `}
             style={{ left: `${percentage}%` }}
-          />
+          >
+            <div className="w-1.5 h-1.5 bg-primary rounded-sm pointer-events-none" />
+          </div>
         </div>
       </div>
     </div>

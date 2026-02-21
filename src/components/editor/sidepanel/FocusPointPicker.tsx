@@ -113,7 +113,7 @@ export function FocusPointPicker({ regionId, targetX, targetY, startTime, onTarg
           />
         )}
         <div
-          className="absolute w-8 h-8 rounded-full border-2 border-primary bg-primary/20 backdrop-blur-sm shadow-lg pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-150"
+          className="absolute w-8 h-8 rounded-full border-2 border-primary bg-primary/20 backdrop-blur-sm shadow-sm pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-150"
           style={{
             left: `${reticleLeft}%`,
             top: `${reticleTop}%`,

@@ -28,7 +28,7 @@ interface ExportModalProps {
 const generateFilename = (format: 'mp4' | 'gif') => {
   const now = new Date()
   const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19)
-  let filename = `ScreenArc-${timestamp}.${format}`
+  let filename = `RecordSaaS-${timestamp}.${format}`
   // Fix slashes for Windows
   if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
      filename = filename.split('/').join('\\')
@@ -126,9 +126,20 @@ const SettingsView = ({
   return (
     <>
       {/* Header */}
-      <div className="p-6 border-b border-border flex-shrink-0">
+      <div className="relative p-6 border-b border-border flex-shrink-0 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
+        {window.process?.platform !== 'darwin' && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="absolute top-4 right-4 w-8 h-8 rounded-lg text-muted-foreground hover:bg-destructive hover:text-white transition-colors z-50"
+          >
+            <span className="sr-only">Close</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </Button>
+        )}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-lg bg-background flex items-center justify-center border border-primary/20 shadow-sm">
             <Upload className="w-5 h-5 text-primary" />
           </div>
           <div>
@@ -200,7 +211,7 @@ const SettingsView = ({
                   className="w-full h-9 bg-background text-foreground"
                 />
               </div>
-              <Button variant="secondary" size="sm" onClick={handleBrowse} className="h-9 whitespace-nowrap">
+              <Button variant="secondary" size="sm" onClick={handleBrowse} className="h-9 whitespace-nowrap shadow-sm">
                 Browse
               </Button>
             </div>
@@ -213,8 +224,8 @@ const SettingsView = ({
       </div>
 
       {/* Footer */}
-      <div className="p-4 border-t border-border flex justify-end gap-3 flex-shrink-0">
-        <Button variant="secondary" onClick={onClose}>
+      <div className="p-4 border-t border-border flex justify-end gap-3 flex-shrink-0 bg-muted/20">
+        <Button variant="secondary" onClick={onClose} className="shadow-sm">
           Cancel
         </Button>
         <Button onClick={() => {
@@ -223,7 +234,7 @@ const SettingsView = ({
             fixedOutputPath = outputPath.split('/').join('\\')
           }
           onStartExport(settings, fixedOutputPath)
-        }} disabled={!outputPath}>
+        }} disabled={!outputPath} className="shadow-sm">
           Start Export
         </Button>
       </div>
@@ -245,7 +256,7 @@ const ProgressView = ({ progress, onCancel }: { progress: number; onCancel: () =
       />
     </div>
     <p className="text-sm font-semibold text-primary mt-4 tabular-nums">{Math.round(progress)}%</p>
-    <Button variant="secondary" onClick={onCancel} className="mt-8 w-full">
+    <Button variant="secondary" onClick={onCancel} className="mt-8 w-full shadow-sm">
       Cancel
     </Button>
   </div>
@@ -339,8 +350,8 @@ export function ExportModal({
   }
 
   return (
-    <div className="modal-backdrop z-50 flex items-center justify-center">
-      <div className="card-clean w-full max-w-2xl m-4 flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop z-50 flex items-center justify-center backdrop-blur-[2px]" onClick={onClose}>
+      <div className="w-full max-w-2xl m-4 flex flex-col shadow-2xl rounded-xl bg-card border border-border relative" onClick={(e) => e.stopPropagation()}>
         {renderContent()}
       </div>
     </div>
