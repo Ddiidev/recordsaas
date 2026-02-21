@@ -1,0 +1,16 @@
+name: Feature Request
+description: Suggest an idea or enhancement for the app
+labels: [enhancement]
+body:
+  - type: input
+    attributes:
+      label: OS / Platform
+      description: What operating system are you using? (e.g., Windows 11, macOS 14, Ubuntu 22.04)
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Feature Description
+      description: Please describe the feature or enhancement you would like to see.
+    validations:
+      required: true

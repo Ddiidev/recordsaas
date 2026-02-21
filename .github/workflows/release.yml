@@ -1,0 +1,135 @@
+name: Release and Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # --- JOB 1: Create Release using Semantic Release (KHÔNG THAY ĐỔI) ---
+  release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+      new_release_tag: ${{ steps.semantic.outputs.new_release_git_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Semantic Release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- JOB 2: Build and Upload Artifacts ---
+  build:
+    name: Build & Upload Artifacts
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_release_tag }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Linux dependencies (Xvfb)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb rpm elfutils
+
+      - name: Start Xvfb
+        if: runner.os == 'Linux'
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: Download and setup FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p binaries/linux
+          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg -o binaries/linux/ffmpeg
+          chmod +x binaries/linux/ffmpeg
+        shell: bash
+
+      - name: Download and setup FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p binaries/windows
+          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg.exe -o binaries/windows/ffmpeg.exe
+        shell: bash
+
+      - name: Install node-gyp globally (Windows)
+        if: runner.os == 'Windows'
+        run: npm install -g node-gyp
+
+      - name: Download and setup FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p binaries/darwin
+          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg-darwin-arm64 -o binaries/darwin/ffmpeg-arm64
+          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg-darwin-x64 -o binaries/darwin/ffmpeg-x64
+          chmod +x binaries/darwin/ffmpeg-*
+        shell: bash
+
+      - name: Install all dependencies
+        run: npm ci
+
+      - name: Set package.json version
+        run: npm version ${{ needs.release.outputs.new_release_version }} --no-git-tag-version
+
+      - name: Build Application
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            npm run dist:linux
+          elif [ "${{ runner.os }}" == "Windows" ]; then
+            npm run dist:win
+          elif [ "${{ runner.os }}" == "macOS" ]; then
+            npm run dist:mac
+          fi
+        shell: bash
+
+      - name: Verify built files
+        run: ls -R
+        shell: bash
+
+      - name: Upload Build Artifacts (Private Download)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecordSaaS-Binaries-${{ matrix.os }}
+          path: dist/*.{AppImage,deb,rpm,zip,dmg,exe}
+          retention-days: 15

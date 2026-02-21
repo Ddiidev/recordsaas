@@ -1,0 +1,16 @@
+name: Documentation Issue
+description: Report an issue with the documentation
+labels: [documentation]
+body:
+  - type: input
+    attributes:
+      label: OS / Platform
+      description: What operating system are you using?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Issue Description
+      description: Please describe the issue with the documentation.
+    validations:
+      required: true

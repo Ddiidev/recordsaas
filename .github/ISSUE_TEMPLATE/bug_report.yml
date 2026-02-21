@@ -1,0 +1,16 @@
+name: Bug Report
+description: Report a bug in the application
+labels: [bug]
+body:
+  - type: input
+    attributes:
+      label: OS / Platform
+      description: What operating system are you using? (e.g., Windows 11, macOS 14, Ubuntu 22.04)
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Bug Description
+      description: Please describe the bug and how to reproduce it.
+    validations:
+      required: true
