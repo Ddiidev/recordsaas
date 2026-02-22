@@ -1,3 +1,10 @@
+## [2.0.2](https://github.com/Ddiidev/recordsaas/compare/v2.0.1...v2.0.2) (2026-02-22)
+
+
+### Performance Improvements
+
+* optimize video rendering pipeline — 2x faster on CPU, ~1.7x on GPU ([#3](https://github.com/Ddiidev/recordsaas/issues/3)) ([a2142d5](https://github.com/Ddiidev/recordsaas/commit/a2142d5e5f2a5ebe1a1bde0e4defc99ddeb4eb5e))
+
 ## [2.0.1](https://github.com/Ddiidev/recordsaas/compare/v2.0.0...v2.0.1) (2026-02-21)
 
 
