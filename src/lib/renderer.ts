@@ -274,12 +274,13 @@ export const drawScene = async (
   outputHeight: number,
   preloadedBgImage: HTMLImageElement | null,
   webcamDimensions?: { width: number; height: number },
+  exportQuality?: string,
 ): Promise<void> => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
-  // Enable high-quality rendering
+  // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
+  ctx.imageSmoothingQuality = exportQuality === 'ultra high' ? 'high' : 'medium'
 
   // --- 1. Draw Background ---
   await drawBackground(ctx, outputWidth, outputHeight, state.frameStyles.background, preloadedBgImage)

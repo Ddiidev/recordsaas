@@ -8,7 +8,7 @@ export async function checkForUpdates(window: BrowserWindow | null) {
 
   const currentVersion = app.getVersion()
   const repoOwner = 'Ddiidev'
-  const repoName = 'screenarc-fork'
+  const repoName = 'recordsaas'
   const url = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`
   const maxAttempts = 3
   let currentAttempt = 0

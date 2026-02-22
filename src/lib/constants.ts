@@ -29,7 +29,7 @@ export const RESOLUTIONS = {
 
 // Application-wide constants
 export const APP = {
-  LAST_PRESET_ID_KEY: 'screenarc_lastActivePresetId',
+  LAST_PRESET_ID_KEY: 'recordsaas_lastActivePresetId',
 }
 
 // Timeline specific constants

@@ -12,7 +12,7 @@ export type ExportSettings = {
   format: 'mp4' | 'gif'
   resolution: '720p' | '1080p' | '2k'
   fps: 30 | 60
-  quality: 'low' | 'medium' | 'high'
+  quality: 'low' | 'medium' | 'high' | 'ultra high'
 }
 
 interface ExportModalProps {
@@ -58,14 +58,19 @@ const SettingsView = ({
     fps: 30,
     quality: 'medium',
   })
+  const [isGpuEnabled, setIsGpuEnabled] = useState(true)
 
   useEffect(() => {
     let isMounted = true
     const loadSettings = async () => {
       try {
-        const savedSettings = await window.electronAPI.getSetting<Partial<ExportSettings>>('exportSettings')
-        if (savedSettings && isMounted) {
-          setSettings(prev => ({ ...prev, ...savedSettings }))
+        const [savedSettings, gpuEnabled] = await Promise.all([
+          window.electronAPI.getSetting<Partial<ExportSettings>>('exportSettings'),
+          window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
+        ])
+        if (isMounted) {
+          if (savedSettings) setSettings(prev => ({ ...prev, ...savedSettings }))
+          setIsGpuEnabled(gpuEnabled ?? false)
         }
       } catch (error) {
         console.error('Failed to load export settings:', error)
@@ -212,9 +217,16 @@ const SettingsView = ({
                 <SelectItem value="low">Low</SelectItem>
                 <SelectItem value="medium">Medium</SelectItem>
                 <SelectItem value="high">High</SelectItem>
+                <SelectItem value="ultra high">Ultra High</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
+          {!isGpuEnabled && (settings.quality === 'high' || settings.quality === 'ultra high') && (
+            <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-600 dark:text-yellow-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+              <span>Hardware acceleration is disabled. {settings.quality === 'ultra high' ? 'Ultra High' : 'High'} quality uses more CPU for rendering, which may significantly increase export time. Final file size may also increase by ~6%.</span>
+            </div>
+          )}
           <SettingRow label="FPS">
             <Select 
               value={String(settings.fps)} 

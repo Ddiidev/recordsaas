@@ -18,7 +18,7 @@ export function AboutTab() {
 
   return (
     <div className="p-8 text-center flex flex-col items-center justify-center h-full">
-      <img src="media://screenarc-appicon.png" alt="RecordSaaS Logo" className="w-24 h-24 mb-4 rounded-3xl shadow-lg" />
+      <img src="media://recordsaas-appicon.png" alt="RecordSaaS Logo" className="w-24 h-24 mb-4 rounded-3xl shadow-lg" />
       <h2 className="text-2xl font-bold text-foreground">Record<span className="text-primary">SaaS</span></h2>
       <p className="text-sm text-muted-foreground mb-6">Version {appVersion}</p>
 

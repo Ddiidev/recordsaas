@@ -194,7 +194,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
         // Safe Approach: Create separate segment files and concat them.
         // This avoids complex filter string limits and escaping issues.
-        const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'screenarc-audio-'))
+        const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
         const segmentFiles: string[] = []
 
         // Helper to build atempo filter chain
