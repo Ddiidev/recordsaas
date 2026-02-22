@@ -80,7 +80,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p binaries/linux
-          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg -o binaries/linux/ffmpeg
+          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg -o binaries/linux/ffmpeg
           chmod +x binaries/linux/ffmpeg
         shell: bash
 
@@ -88,7 +88,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir -p binaries/windows
-          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg.exe -o binaries/windows/ffmpeg.exe
+          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg.exe -o binaries/windows/ffmpeg.exe
         shell: bash
 
       - name: Install node-gyp globally (Windows)
@@ -99,8 +99,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p binaries/darwin
-          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg-darwin-arm64 -o binaries/darwin/ffmpeg-arm64
-          curl -L https://github.com/tamnguyenvan/screenarc-assets/releases/download/v0.0.1/ffmpeg-darwin-x64 -o binaries/darwin/ffmpeg-x64
+          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg-darwin-arm64 -o binaries/darwin/ffmpeg-arm64
+          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg-darwin-x64 -o binaries/darwin/ffmpeg-x64
           chmod +x binaries/darwin/ffmpeg-*
         shell: bash
 

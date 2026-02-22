@@ -307,7 +307,7 @@ class MacOSMouseTracker extends EventEmitter implements IMouseTracker {
       log.warn('[MouseTracker-macOS] Accessibility permissions not granted. Requesting...')
       dialog.showErrorBox(
         'Permissions Required',
-        'ScreenArc needs Accessibility permissions to track mouse clicks. Please grant access in System Settings > Privacy & Security > Accessibility, then restart the recording.',
+        'RecordSaaS needs Accessibility permissions to track mouse clicks. Please grant access in System Settings > Privacy & Security > Accessibility, then restart the recording.',
       )
       iohook.requestAccessibilityPermissions()
       return false // MODIFIED: Signal failure if permissions are not granted

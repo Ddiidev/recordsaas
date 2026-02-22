@@ -12,7 +12,7 @@ export type ExportSettings = {
   format: 'mp4' | 'gif'
   resolution: '720p' | '1080p' | '2k'
   fps: 30 | 60
-  quality: 'low' | 'medium' | 'high'
+  quality: 'low' | 'medium' | 'high' | 'ultra high'
 }
 
 interface ExportModalProps {
@@ -22,7 +22,7 @@ interface ExportModalProps {
   onCancelExport: () => void
   isExporting: boolean
   progress: number
-  result: { success: boolean; outputPath?: string; error?: string } | null
+  result: { success: boolean; outputPath?: string; error?: string; duration?: number } | null
 }
 
 const generateFilename = (format: 'mp4' | 'gif') => {
@@ -34,6 +34,14 @@ const generateFilename = (format: 'mp4' | 'gif') => {
      filename = filename.split('/').join('\\')
   }
   return filename
+}
+
+const formatFullDurationMs = (totalSeconds: number) => {
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = Math.floor(totalSeconds % 60)
+  const ms = Math.floor((totalSeconds % 1) * 1000)
+  return `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s ${ms.toString().padStart(3, '0')}ms`
 }
 
 // --- Sub-components for different views ---
@@ -50,6 +58,27 @@ const SettingsView = ({
     fps: 30,
     quality: 'medium',
   })
+  const [isGpuEnabled, setIsGpuEnabled] = useState(true)
+
+  useEffect(() => {
+    let isMounted = true
+    const loadSettings = async () => {
+      try {
+        const [savedSettings, gpuEnabled] = await Promise.all([
+          window.electronAPI.getSetting<Partial<ExportSettings>>('exportSettings'),
+          window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
+        ])
+        if (isMounted) {
+          if (savedSettings) setSettings(prev => ({ ...prev, ...savedSettings }))
+          setIsGpuEnabled(gpuEnabled ?? false)
+        }
+      } catch (error) {
+        console.error('Failed to load export settings:', error)
+      }
+    }
+    loadSettings()
+    return () => { isMounted = false }
+  }, [])
   const [outputPath, setOutputPath] = useState('')
   const { originalProjectPath, duration, cutRegions, speedRegions } = useEditorStore((state) => ({
     originalProjectPath: state.originalProjectPath,
@@ -80,7 +109,11 @@ const SettingsView = ({
   }, [duration, cutRegions, speedRegions])
 
   const handleValueChange = (key: keyof ExportSettings, value: unknown) => {
-    setSettings((prev) => ({ ...prev, [key]: value }))
+    setSettings((prev) => {
+      const updated = { ...prev, [key]: value }
+      window.electronAPI.setSetting('exportSettings', updated)
+      return updated
+    })
   }
 
   const handleBrowse = async () => {
@@ -184,9 +217,16 @@ const SettingsView = ({
                 <SelectItem value="low">Low</SelectItem>
                 <SelectItem value="medium">Medium</SelectItem>
                 <SelectItem value="high">High</SelectItem>
+                <SelectItem value="ultra high">Ultra High</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
+          {!isGpuEnabled && (settings.quality === 'high' || settings.quality === 'ultra high') && (
+            <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-600 dark:text-yellow-400">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+              <span>Hardware acceleration is disabled. {settings.quality === 'ultra high' ? 'Ultra High' : 'High'} quality uses more CPU for rendering, which may significantly increase export time. Final file size may also increase by ~6%.</span>
+            </div>
+          )}
           <SettingRow label="FPS">
             <Select 
               value={String(settings.fps)} 
@@ -263,6 +303,23 @@ const ProgressView = ({ progress, onCancel }: { progress: number; onCancel: () =
 )
 
 const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps['result']>; onClose: () => void }) => {
+  const { duration, cutRegions, speedRegions } = useEditorStore((state) => ({
+    duration: state.duration,
+    cutRegions: state.cutRegions,
+    speedRegions: state.speedRegions,
+  }))
+
+  const estimatedDuration = useMemo(() => {
+    if (duration === 0) return 0
+    let finalDuration = duration
+    Object.values(cutRegions).forEach((region) => { finalDuration -= region.duration })
+    Object.values(speedRegions).forEach((region) => {
+      finalDuration -= region.duration
+      finalDuration += region.duration / region.speed
+    })
+    return Math.max(0, finalDuration)
+  }, [duration, cutRegions, speedRegions])
+
   const isCancelled = !result.success && result.error === 'Export cancelled.'
 
   const handleOpenFolder = () => {
@@ -305,20 +362,28 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
         {getIcon()}
       </div>
       <h2 className="text-lg font-semibold text-foreground mb-2">{getTitle()}</h2>
-      <p className="text-sm text-muted-foreground mb-8 max-w-xs break-words leading-relaxed">{getMessage()}</p>
+      <div className="text-sm text-muted-foreground mb-8 max-w-xs break-words leading-relaxed">
+        <p>{getMessage()}</p>
+        {result.success && result.duration && (
+          <div className="mt-2 text-foreground font-medium flex flex-col items-center gap-1">
+            <span className="tabular-nums">Video length: {formatFullDurationMs(estimatedDuration)}</span>
+            <span className="tabular-nums">Total time taken: {formatFullDurationMs(result.duration)}</span>
+          </div>
+        )}
+      </div>
       <div className="flex w-full gap-3">
         {result.success ? (
           <>
-            <Button onClick={onClose} variant="secondary" className="flex-1">
+            <Button onClick={onClose} variant="secondary" className="flex-1 shadow-sm">
               Close
             </Button>
-            <Button onClick={handleOpenFolder} className="flex-1">
+            <Button onClick={handleOpenFolder} className="flex-1 shadow-sm">
               <Folder className="w-4 h-4 mr-2" />
               Open Folder
             </Button>
           </>
         ) : (
-          <Button onClick={onClose} className="flex-1">
+          <Button onClick={onClose} className="flex-1 shadow-sm">
             Close
           </Button>
         )}

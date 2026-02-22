@@ -4,6 +4,7 @@ import { app, BrowserWindow, protocol, ProtocolRequest, ProtocolResponse, Menu, 
 import log from 'electron-log/main'
 import path from 'node:path'
 import fsSync from 'node:fs'
+import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
 import { setupLogging } from './lib/logging'
 import { registerIpcHandlers } from './ipc'
@@ -18,6 +19,13 @@ setupLogging()
 // Enable WebCodecs in renderer/worker contexts
 app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('enable-blink-features', 'WebCodecs,WebCodecsExperimental')
+app.commandLine.appendSwitch('disable-frame-rate-limit')
+app.commandLine.appendSwitch('disable-gpu-vsync')
+
+const store = new Store()
+if (store.get('general.forceHighPerformanceGpu', false)) {
+  app.commandLine.appendSwitch('force_high_performance_gpu', 'true')
+}
 
 // --- App Lifecycle Events ---
 app.on('window-all-closed', () => {

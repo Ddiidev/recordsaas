@@ -11,7 +11,7 @@ export const useExportProcess = () => {
   const [isModalOpen, setModalOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [result, setResult] = useState<{ success: boolean; outputPath?: string; error?: string } | null>(null)
+  const [result, setResult] = useState<{ success: boolean; outputPath?: string; error?: string; duration?: number } | null>(null)
 
   // Effect to set up and tear down IPC listeners for export progress and completion
   useEffect(() => {
@@ -19,10 +19,10 @@ export const useExportProcess = () => {
       setProgress(progress)
     })
 
-    const cleanCompleteListener = window.electronAPI.onExportComplete(({ success, outputPath, error }) => {
+    const cleanCompleteListener = window.electronAPI.onExportComplete(({ success, outputPath, error, duration }) => {
       setIsExporting(false)
       setProgress(100)
-      setResult({ success, outputPath, error })
+      setResult({ success, outputPath, error, duration })
     })
 
     return () => {

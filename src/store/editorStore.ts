@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer'
 import { temporal } from 'zundo'
 import { shallow } from 'zustand/shallow'
 import { useShallow } from 'zustand/react/shallow'
+import debounce from 'lodash.debounce'
 
 import type { EditorState } from '../types'
 import type { EditorActions as AllActions } from '../types'
@@ -90,6 +91,7 @@ export const useEditorStore = create(
         }
       },
       equality: shallow,
+      handleSet: (handleSet) => debounce(handleSet, 500),
     },
   ),
 )

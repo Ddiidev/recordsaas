@@ -20,7 +20,7 @@ export function createEditorMenu() {
         {
           label: 'Learn More on GitHub',
           click: async () => {
-            await shell.openExternal('https://github.com/Ddiidev/screenarc-fork')
+            await shell.openExternal('https://github.com/Ddiidev/recordsaas')
           },
         },
       ],

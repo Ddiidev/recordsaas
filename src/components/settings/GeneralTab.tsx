@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import type { AppearanceMode } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
+import { Switch } from '../ui/switch'
 import { useShallow } from 'zustand/react/shallow'
 
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
@@ -20,15 +21,21 @@ export function GeneralTab() {
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
+  const [forceGPU, setForceGPU] = useState(false)
 
   useEffect(() => {
     let isMounted = true
 
     const loadSettings = async () => {
       try {
-        const savedValue = await window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds')
-        if (typeof savedValue === 'number' && isPreparationCountdownOption(savedValue) && isMounted) {
-          setPreparationCountdownSeconds(savedValue)
+        const savedCountdown = await window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds')
+        if (typeof savedCountdown === 'number' && isPreparationCountdownOption(savedCountdown) && isMounted) {
+          setPreparationCountdownSeconds(savedCountdown)
+        }
+
+        const savedForceGPU = await window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu')
+        if (typeof savedForceGPU === 'boolean' && isMounted) {
+          setForceGPU(savedForceGPU)
         }
       } catch (error) {
         console.error('Failed to load settings:', error)
@@ -48,6 +55,11 @@ export function GeneralTab() {
 
     setPreparationCountdownSeconds(parsedValue)
     window.electronAPI.setSetting('recorder.preparationCountdownSeconds', parsedValue)
+  }
+
+  const handleForceGPUChange = (checked: boolean) => {
+    setForceGPU(checked)
+    window.electronAPI.setSetting('general.forceHighPerformanceGpu', checked)
   }
 
   return (
@@ -89,6 +101,17 @@ export function GeneralTab() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">
+          <div>
+            <h3 className="font-medium text-foreground">Hardware Acceleration</h3>
+            <p className="text-sm text-muted-foreground">Force high-performance GPU for faster rendering (requires app restart).</p>
+          </div>
+          <Switch 
+            checked={forceGPU} 
+            onCheckedChange={handleForceGPUChange} 
+          />
         </div>
       </div>
     </div>

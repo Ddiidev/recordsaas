@@ -144,9 +144,9 @@ async function startActualRecording(
   recordingGeometry: RecordingGeometry,
   scaleFactor: number = 1,
 ) {
-  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.screenarc')
+  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
   await ensureDirectoryExists(recordingDir)
-  const baseName = `ScreenArc-recording-${Date.now()}`
+  const baseName = `RecordSaaS-recording-${Date.now()}`
 
   const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
   const webcamVideoPath = hasWebcam ? path.join(recordingDir, `${baseName}-webcam.mp4`) : undefined
@@ -306,7 +306,7 @@ function buildFfmpegArgs(
  * Creates the system tray icon and context menu for controlling an active recording.
  */
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(VITE_PUBLIC, 'screenarc-appicon-tray.png'))
+  const icon = nativeImage.createFromPath(path.join(VITE_PUBLIC, 'recordsaas-appicon-tray.png'))
   appState.tray = new Tray(icon)
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -322,7 +322,7 @@ function createTray() {
       },
     },
   ])
-  appState.tray.setToolTip('ScreenArc is recording...')
+  appState.tray.setToolTip('RecordSaaS is recording...')
   appState.tray.setContextMenu(contextMenu)
 }
 
@@ -771,7 +771,7 @@ export async function cleanupAndDiscard() {
  */
 export async function cleanupOrphanedRecordings() {
   log.info('[Cleanup] Starting orphaned recording cleanup...')
-  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.screenarc')
+  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
   const protectedFiles = new Set<string>()
 
   // Protect files from the currently active editor or recording session
@@ -784,7 +784,7 @@ export async function cleanupOrphanedRecordings() {
 
   try {
     const allFiles = await fsPromises.readdir(recordingDir)
-    const filePattern = /^ScreenArc-recording-\d+(-screen\.mp4|-webcam\.mp4|\.json)$/
+    const filePattern = /^RecordSaaS-recording-\d+(-screen\.mp4|-webcam\.mp4|\.json)$/
     const filesToDelete = allFiles
       .filter((file) => filePattern.test(file))
       .map((file) => path.join(recordingDir, file))
@@ -851,9 +851,9 @@ export async function loadVideoFromFile() {
   createSavingWindow()
 
   try {
-    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.screenarc')
+    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
     await ensureDirectoryExists(recordingDir)
-    const baseName = `ScreenArc-recording-${Date.now()}`
+    const baseName = `RecordSaaS-recording-${Date.now()}`
     const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
     const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
@@ -902,7 +902,7 @@ export async function loadVideoFromFile() {
 }
 
 /**
- * Opens a file dialog to allow the user to import an existing ScreenArc project.
+ * Opens a file dialog to allow the user to import an existing RecordSaaS project.
  */
 export async function importProjectFromFile() {
   log.info('[RecordingManager] Received import project from file request.')
@@ -910,9 +910,9 @@ export async function importProjectFromFile() {
   if (!recorderWindow) return { canceled: true }
 
   const { canceled, filePaths } = await dialog.showOpenDialog(recorderWindow, {
-    title: 'Select a ScreenArc Project to import',
+    title: 'Select a RecordSaaS Project to import',
     properties: ['openFile'],
-    filters: [{ name: 'ScreenArc Project', extensions: ['json'] }],
+    filters: [{ name: 'RecordSaaS Project', extensions: ['json'] }],
   })
 
   if (canceled || filePaths.length === 0) return { canceled: true }
@@ -925,14 +925,14 @@ export async function importProjectFromFile() {
   createSavingWindow()
 
   try {
-    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.screenarc')
+    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
     await ensureDirectoryExists(recordingDir)
     
     // Read the project JSON to parse paths
     const rawData = await fsPromises.readFile(sourceProjectPath, 'utf-8')
     const projectData = JSON.parse(rawData)
 
-    const baseName = `ScreenArc-recording-${Date.now()}`
+    const baseName = `RecordSaaS-recording-${Date.now()}`
     
     // Function to safely copy a referenced media file
     const importMediaFile = async (originalPath: string | null | undefined) => {
@@ -958,7 +958,7 @@ export async function importProjectFromFile() {
     
     const metadataPath = path.join(recordingDir, `${baseName}.json`)
     
-    // Save updated metadata/project file locally to ~/.screenarc
+    // Save updated metadata/project file locally to ~/.recordsaas
     await fsPromises.writeFile(metadataPath, JSON.stringify(projectData), 'utf-8')
 
     // Prepare session validation

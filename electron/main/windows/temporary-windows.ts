@@ -8,8 +8,8 @@ import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT } from '../lib/const
 function createTemporaryWindow(options: Electron.BrowserWindowConstructorOptions, htmlPath: string) {
   // Define the path to the icon, handling both development and production environments
   const iconPath = VITE_DEV_SERVER_URL
-    ? path.join(process.env.APP_ROOT!, 'public/screenarc-appicon.png')
-    : path.join(RENDERER_DIST, 'screenarc-appicon.png')
+    ? path.join(process.env.APP_ROOT!, 'public/recordsaas-appicon.png')
+    : path.join(RENDERER_DIST, 'recordsaas-appicon.png')
 
   const win = new BrowserWindow({
     ...options,

@@ -498,6 +498,7 @@ export function RendererPage() {
               'low': 0.6,
               'medium': 1.0,
               'high': 2.0, // Significant boost for high quality
+              'ultra high': 2.0, // Same bitrate as high, difference is in imageSmoothingQuality
             }
             const fpsMultiplier = f >= 60 ? 1.4 : 1.0 // Higher FPS needs more data
             const codecPenalty = 1.3 // Baseline profile needs ~30% more bitrate than High profile
@@ -531,12 +532,21 @@ export function RendererPage() {
         }
 
         for (let frame = 0; frame < totalFrames; frame++) {
-          // Backpressure handling to prevent hanging on slower systems
+          // Backpressure handling using MessageChannel for sub-millisecond polling
+          // (setTimeout has ~15ms minimum resolution on Windows)
           if (videoEncoder && videoEncoder.encodeQueueSize > 2) {
-            // Wait for the queue to drain
-            while (videoEncoder.encodeQueueSize > 2) {
-              await new Promise((resolve) => setTimeout(resolve, 5))
-            }
+            await new Promise<void>((resolve) => {
+              const ch = new MessageChannel()
+              ch.port1.onmessage = () => {
+                if (videoEncoder.encodeQueueSize <= 2) {
+                  ch.port1.close()
+                  resolve()
+                } else {
+                  ch.port2.postMessage(null)
+                }
+              }
+              ch.port2.postMessage(null)
+            })
           }
 
           lastProgress = Math.min(99, ((frame + 1) / totalFrames) * 100)
@@ -594,6 +604,7 @@ export function RendererPage() {
             outputHeight,
             bgImage,
             webcamFrameDimensions,
+            exportSettings.quality,
           )
 
           if (videoEncoder) {

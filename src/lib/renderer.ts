@@ -274,12 +274,13 @@ export const drawScene = async (
   outputHeight: number,
   preloadedBgImage: HTMLImageElement | null,
   webcamDimensions?: { width: number; height: number },
+  exportQuality?: string,
 ): Promise<void> => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
-  // Enable high-quality rendering
+  // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
+  ctx.imageSmoothingQuality = exportQuality === 'ultra high' ? 'high' : 'medium'
 
   // --- 1. Draw Background ---
   await drawBackground(ctx, outputWidth, outputHeight, state.frameStyles.background, preloadedBgImage)
@@ -304,8 +305,31 @@ export const drawScene = async (
   const frameY = (outputHeight - frameContentHeight) / 2
 
   // --- 3. Main video frame transform and drawing ---
-  ctx.save()
+  const { shadowBlur, shadowOffsetX, shadowOffsetY, borderRadius, shadowColor, borderWidth, borderColor } = frameStyles
 
+  // Draw shadow if needed (unscaled, unclipped)
+  if (shadowBlur > 0) {
+    ctx.save()
+    ctx.translate(frameX, frameY)
+    ctx.shadowColor = shadowColor
+    ctx.shadowBlur = shadowBlur
+    ctx.shadowOffsetX = shadowOffsetX
+    ctx.shadowOffsetY = shadowOffsetY
+    const shadowPath = new Path2D()
+    shadowPath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
+    ctx.fillStyle = 'rgba(0,0,0,1)'
+    ctx.fill(shadowPath)
+    ctx.restore()
+  }
+
+  // Set up the clipping path for the frame content
+  ctx.save()
+  ctx.translate(frameX, frameY)
+  const framePath = new Path2D()
+  framePath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
+  ctx.clip(framePath)
+
+  // Now apply the zoom transforms *inside* the clipped bounds
   const { scale, translateX, translateY, transformOrigin } = calculateZoomTransform(
     currentTime,
     state.zoomRegions,
@@ -321,42 +345,13 @@ export const drawScene = async (
   const originPxX = originXMul * frameContentWidth
   const originPxY = originYMul * frameContentHeight
 
-  ctx.translate(frameX, frameY)
   ctx.translate(originPxX, originPxY)
   ctx.scale(scale, scale)
   ctx.translate(translateX, translateY)
   ctx.translate(-originPxX, -originPxY)
 
-  const { shadowBlur, shadowOffsetX, shadowOffsetY, borderRadius, shadowColor, borderWidth, borderColor } = frameStyles
-
-  // Draw shadow if needed
-  if (shadowBlur > 0) {
-    ctx.save()
-    ctx.shadowColor = shadowColor
-    ctx.shadowBlur = shadowBlur
-    ctx.shadowOffsetX = shadowOffsetX
-    ctx.shadowOffsetY = shadowOffsetY
-    const shadowPath = new Path2D()
-    shadowPath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
-    ctx.fillStyle = 'rgba(0,0,0,1)'
-    ctx.fill(shadowPath)
-    ctx.restore()
-  }
-
-  // Draw the video and border
-  ctx.save()
-  const path = new Path2D()
-  path.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
-  ctx.clip(path)
+  // Draw the video
   ctx.drawImage(videoElement, 0, 0, frameContentWidth, frameContentHeight)
-
-  // Draw border on top of the video content
-  if (borderWidth > 0) {
-    ctx.strokeStyle = borderColor
-    ctx.lineWidth = borderWidth * 2
-    ctx.stroke(path)
-  }
-  ctx.restore()
 
   // --- 4. Draw Click Animations ---
   if (state.cursorStyles.clickRippleEffect && state.recordingGeometry) {
@@ -453,7 +448,19 @@ export const drawScene = async (
     }
   }
 
-  ctx.restore() // Restore from video's transform
+  ctx.restore() // Restore from zoom/clip transform
+  
+  // Draw border on top of the clipped frame
+  if (borderWidth > 0) {
+    ctx.save()
+    ctx.translate(frameX, frameY)
+    const borderPath = new Path2D()
+    borderPath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
+    ctx.strokeStyle = borderColor
+    ctx.lineWidth = borderWidth * 2 // border is centered on the edge
+    ctx.stroke(borderPath)
+    ctx.restore()
+  }
 
   // --- 6. Draw Webcam ---
   const { webcamPosition, webcamStyles, isWebcamVisible } = state
