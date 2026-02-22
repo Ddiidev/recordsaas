@@ -1,3 +1,10 @@
+## [2.0.3](https://github.com/Ddiidev/recordsaas/compare/v2.0.2...v2.0.3) (2026-02-22)
+
+
+### Bug Fixes
+
+* **build:** regenerate app icons with correct dimensions for electron-builder ([#4](https://github.com/Ddiidev/recordsaas/issues/4)) ([2796139](https://github.com/Ddiidev/recordsaas/commit/2796139b38127a23dc28721b950aa1573df954ea))
+
 ## [2.0.2](https://github.com/Ddiidev/recordsaas/compare/v2.0.1...v2.0.2) (2026-02-22)
 
 
