@@ -1,3 +1,10 @@
+## [2.0.4](https://github.com/Ddiidev/recordsaas/compare/v2.0.3...v2.0.4) (2026-02-23)
+
+
+### Performance Improvements
+
+* remove async/await from render pipeline and reduce webcam syncs ([#5](https://github.com/Ddiidev/recordsaas/issues/5)) ([c07765f](https://github.com/Ddiidev/recordsaas/commit/c07765f8ff39a14c9f9acafe0cd486df4aa1baf3))
+
 ## [2.0.3](https://github.com/Ddiidev/recordsaas/compare/v2.0.2...v2.0.3) (2026-02-22)
 
 
