@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, memo, useState, useCallback } from 'react'
-import { useEditorStore, usePlaybackState } from '../../store/editorStore'
+import { useEditorStore } from '../../store/editorStore'
 import { Movie } from 'tabler-icons-react'
 import { FullscreenIcon, ExitFullscreenIcon } from '../ui/icons'
 import {
@@ -89,7 +89,7 @@ export const Preview = memo(
     )
 
     const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack } = useEditorStore.getState()
-    const { isPlaying, isCurrentlyCut } = usePlaybackState()
+    const isPlaying = useEditorStore((state) => state.isPlaying)
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -97,6 +97,7 @@ export const Preview = memo(
     const audioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
     const lastUiSyncAtRef = useRef(0)
+    const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
 
     // --- Start of Changes for Fullscreen Controls ---
@@ -189,11 +190,9 @@ export const Preview = memo(
 
     const syncCurrentTimeToStore = useCallback(
       (time: number, force: boolean = false) => {
-        const now = performance.now()
         const playing = useEditorStore.getState().isPlaying
 
-        if (force || !playing || now - lastUiSyncAtRef.current >= PLAYBACK_UI_SYNC_INTERVAL_MS) {
-          lastUiSyncAtRef.current = now
+        if (force || !playing) {
           setCurrentTime(time)
         }
       },
@@ -254,9 +253,11 @@ export const Preview = memo(
     useEffect(() => {
       if (!isPlaying) {
         lastUiSyncAtRef.current = 0
+        setPlaybackUiTime(currentTime)
       }
     }, [
       isPlaying,
+      currentTime,
     ])
 
     useEffect(() => {
@@ -299,29 +300,25 @@ export const Preview = memo(
       }
     }, [volume, isMuted, videoRef, audioUrl])
 
-    useEffect(() => {
-      const video = videoRef.current
-      if (!video) return
-      if (isPlaying && isCurrentlyCut) {
-        const allCutRegions = Object.values(useEditorStore.getState().cutRegions)
-        const activeCutRegion = getTopActiveRegionAtTime(allCutRegions, video.currentTime, timelineLanes)
-        if (activeCutRegion) {
-          const newTime = activeCutRegion.startTime + activeCutRegion.duration
-          video.currentTime = newTime
-          syncCurrentTimeToStore(newTime, true)
-          // Sync audio with the jump
-          if (audioRef.current) {
-            audioRef.current.currentTime = newTime
-          }
-        }
-      }
-    }, [isCurrentlyCut, isPlaying, videoRef, timelineLanes, syncCurrentTimeToStore])
-
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
       const audio = audioRef.current
       let playbackTime = video.currentTime
+
+      // Handle cut regions without depending on store currentTime updates during playback
+      if (isPlaying) {
+        const activeCutRegion = getTopActiveRegionAtTime(Object.values(cutRegions), playbackTime, timelineLanes)
+        if (activeCutRegion) {
+          playbackTime = activeCutRegion.startTime + activeCutRegion.duration
+          video.currentTime = playbackTime
+          // Sync audio with the jump
+          if (audio) {
+            audio.currentTime = playbackTime
+          }
+          syncCurrentTimeToStore(playbackTime, true)
+        }
+      }
 
       // Handle speed regions
       const activeSpeedRegion = getTopActiveRegionAtTime(Object.values(speedRegions), playbackTime, timelineLanes)
@@ -357,7 +354,17 @@ export const Preview = memo(
         }
         audio.playbackRate = video.playbackRate // Sync audio speed
       }
-      syncCurrentTimeToStore(playbackTime)
+
+      if (isPlaying) {
+        const now = performance.now()
+        if (now - lastUiSyncAtRef.current >= PLAYBACK_UI_SYNC_INTERVAL_MS) {
+          lastUiSyncAtRef.current = now
+          setPlaybackUiTime(playbackTime)
+        }
+      } else {
+        setPlaybackUiTime(playbackTime)
+        syncCurrentTimeToStore(playbackTime)
+      }
     }
 
     const handleLoadedMetadata = () => {
@@ -418,12 +425,17 @@ export const Preview = memo(
 
     const handleVideoPlay = useCallback(() => {
       setPlaying(true)
-    }, [setPlaying])
+      const video = videoRef.current
+      if (video) {
+        setPlaybackUiTime(video.currentTime)
+      }
+    }, [setPlaying, videoRef])
 
     const handleVideoPause = useCallback(() => {
       setPlaying(false)
       const video = videoRef.current
       if (video) {
+        setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
       }
     }, [setPlaying, videoRef, syncCurrentTimeToStore])
@@ -432,6 +444,7 @@ export const Preview = memo(
       setPlaying(false)
       const video = videoRef.current
       if (video) {
+        setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
       }
     }, [setPlaying, videoRef, syncCurrentTimeToStore])
@@ -439,6 +452,7 @@ export const Preview = memo(
     const handleScrub = (value: number) => {
       if (videoRef.current) {
         videoRef.current.currentTime = value
+        setPlaybackUiTime(value)
         syncCurrentTimeToStore(value, true)
       }
       if (audioRef.current) {
@@ -453,6 +467,7 @@ export const Preview = memo(
         (r) => r.trimType === 'start',
       )
       const rewindTime = startTrimRegion ? startTrimRegion.startTime + startTrimRegion.duration : 0
+      setPlaybackUiTime(rewindTime)
       syncCurrentTimeToStore(rewindTime, true)
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
@@ -461,6 +476,8 @@ export const Preview = memo(
         audioRef.current.currentTime = rewindTime
       }
     }
+
+    const previewTime = isPlaying ? playbackUiTime : currentTime
 
     return (
       <div
@@ -497,7 +514,7 @@ export const Preview = memo(
             <BlurOverlayEditor
               canvasRef={canvasRef}
               blurRegions={blurRegions}
-              currentTime={currentTime}
+              currentTime={previewTime}
               timelineLanes={timelineLanes}
               frameStyles={frameStyles}
               videoDimensions={videoDimensions}
@@ -592,7 +609,7 @@ export const Preview = memo(
               </Button>
 
               <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4">
-                <span className="text-foreground font-semibold">{formatTime(currentTime, true)}</span>
+                <span className="text-foreground font-semibold">{formatTime(previewTime, true)}</span>
                 <span className="text-muted-foreground/50">/</span>
                 <span className="text-muted-foreground">{formatTime(duration, true)}</span>
               </div>
@@ -600,7 +617,7 @@ export const Preview = memo(
                 min={0}
                 max={duration}
                 step={0.01}
-                value={currentTime}
+                value={previewTime}
                 onChange={handleScrub}
                 disabled={duration === 0}
                 className="flex-1"
