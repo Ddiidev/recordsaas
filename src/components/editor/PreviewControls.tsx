@@ -1,5 +1,5 @@
 import React from 'react'
-import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search } from 'tabler-icons-react'
+import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search, Refresh } from 'tabler-icons-react'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -42,6 +42,7 @@ export function PreviewControls() {
     addCutRegion,
     addSpeedRegion,
     addBlurRegion,
+    addSwapRegion,
     timelineZoom,
     setTimelineZoom,
     selectedRegionId,
@@ -77,6 +78,10 @@ export function PreviewControls() {
           <ToolbarButton title="Add Blur Region" onClick={() => addBlurRegion()} disabled={!!selectedRegionId}>
             <Search className="w-4 h-4" />
             <span>Blur</span>
+          </ToolbarButton>
+          <ToolbarButton title="Add Camera Swap" onClick={() => addSwapRegion()} disabled={!!selectedRegionId}>
+            <Refresh className="w-4 h-4" />
+            <span>Swap</span>
           </ToolbarButton>
           <ToolbarButton
             variant="icon"

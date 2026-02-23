@@ -1,6 +1,6 @@
 import { BLUR_REGION, TIMELINE, ZOOM } from '../../lib/constants'
 import type { TimelineState, TimelineActions, Slice } from '../../types'
-import type { BlurRegion, CutRegion, ZoomRegion, SpeedRegion, TimelineLane, TimelineRegion } from '../../types'
+import type { BlurRegion, CutRegion, ZoomRegion, SpeedRegion, CameraSwapRegion, TimelineLane, TimelineRegion } from '../../types'
 import {
   normalizeTimelineLanes,
   createDefaultTimelineLane,
@@ -14,6 +14,7 @@ export const initialTimelineState: TimelineState = {
   cutRegions: {},
   speedRegions: {},
   blurRegions: {},
+  swapRegions: {},
   previewCutRegion: null,
   selectedRegionId: null,
   activeZoomRegionId: null,
@@ -26,11 +27,13 @@ const getAllRegions = (state: {
   cutRegions: Record<string, CutRegion>
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
 }): TimelineRegion[] => [
   ...Object.values(state.zoomRegions),
   ...Object.values(state.cutRegions),
   ...Object.values(state.speedRegions),
   ...Object.values(state.blurRegions),
+  ...Object.values(state.swapRegions),
 ]
 
 const getRegionById = (
@@ -39,10 +42,11 @@ const getRegionById = (
     cutRegions: Record<string, CutRegion>
     speedRegions: Record<string, SpeedRegion>
     blurRegions: Record<string, BlurRegion>
+    swapRegions: Record<string, CameraSwapRegion>
   },
   id: string,
 ): TimelineRegion | null =>
-  state.zoomRegions[id] || state.cutRegions[id] || state.speedRegions[id] || state.blurRegions[id] || null
+  state.zoomRegions[id] || state.cutRegions[id] || state.speedRegions[id] || state.blurRegions[id] || state.swapRegions[id] || null
 
 const ensureRegionLaneIds = (state: {
   timelineLanes: TimelineLane[]
@@ -50,6 +54,7 @@ const ensureRegionLaneIds = (state: {
   cutRegions: Record<string, CutRegion>
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
 }) => {
   const fallbackLaneId = getFallbackLaneId(state.timelineLanes)
   getAllRegions(state).forEach((region) => {
@@ -69,6 +74,7 @@ const recalculateZIndices = (state: {
   cutRegions: Record<string, CutRegion>
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
 }) => {
   state.timelineLanes = normalizeTimelineLanes(state.timelineLanes)
   ensureRegionLaneIds(state)
@@ -90,6 +96,8 @@ const recalculateZIndices = (state: {
         state.speedRegions[region.id].zIndex = newZIndex
       } else if (state.blurRegions[region.id]) {
         state.blurRegions[region.id].zIndex = newZIndex
+      } else if (state.swapRegions[region.id]) {
+        state.swapRegions[region.id].zIndex = newZIndex
       }
     })
   })
@@ -363,9 +371,62 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       recalculateZIndices(state)
     })
   },
+  addSwapRegion: () => {
+    const { currentTime, duration } = get()
+    if (duration === 0) return
+
+    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
+    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
+    const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
+
+    const id = `swap-${Date.now()}`
+    const newRegion: CameraSwapRegion = {
+      id,
+      type: 'swap',
+      laneId: preferredLaneId,
+      startTime: currentTime,
+      duration: 15.0,
+      showDesktopOverlay: true,
+      transition: 'fade',
+      transitionDuration: 0.3,
+      zIndex: 0,
+    }
+
+    if (newRegion.startTime + newRegion.duration > duration) {
+      newRegion.duration = Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - newRegion.startTime)
+    }
+
+    set((state) => {
+      const allRegs = getAllRegions(state)
+      const endTime = newRegion.startTime + newRegion.duration
+      const isOccupied = (laneId: string) => 
+        allRegs.some((r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime)
+
+      let resolvedLaneId = newRegion.laneId
+      if (isOccupied(resolvedLaneId)) {
+        const freeLane = state.timelineLanes.find((l) => !isOccupied(l.id))
+        if (freeLane) {
+          resolvedLaneId = freeLane.id
+        } else {
+          const normalizedLanes = normalizeTimelineLanes(state.timelineLanes)
+          const nextOrder = normalizedLanes.length
+          resolvedLaneId = `lane-${Date.now()}`
+          state.timelineLanes = [
+            ...normalizedLanes,
+            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false }
+          ]
+        }
+      }
+      newRegion.laneId = resolvedLaneId
+
+      state.swapRegions[id] = newRegion
+      state.selectedRegionId = id
+      recalculateZIndices(state)
+    })
+  },
   updateRegion: (id, updates) => {
     set((state) => {
-      const region = state.zoomRegions[id] || state.cutRegions[id] || state.speedRegions[id] || state.blurRegions[id]
+      const region = state.zoomRegions[id] || state.cutRegions[id] || state.speedRegions[id] || state.blurRegions[id] || state.swapRegions[id]
       if (region) {
         const oldDuration = region.duration
         const oldLaneId = region.laneId
@@ -382,6 +443,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       delete state.cutRegions[id]
       delete state.speedRegions[id]
       delete state.blurRegions[id]
+      delete state.swapRegions[id]
       if (state.selectedRegionId === id) {
         state.selectedRegionId = null
       }

@@ -34,3 +34,4 @@ dist-ssr
 *.sw?
 AGENTS.MD
 agent.md
+.codex/

@@ -87,6 +87,7 @@ export function SidePanel() {
     cutRegions,
     blurRegions,
     speedRegions,
+    swapRegions,
     webcamVideoUrl,
     hasAudioTrack,
     setSelectedRegionId,
@@ -99,6 +100,7 @@ export function SidePanel() {
       cutRegions: state.cutRegions,
       blurRegions: state.blurRegions,
       speedRegions: state.speedRegions,
+      swapRegions: state.swapRegions,
       webcamVideoUrl: state.webcamVideoUrl,
       hasAudioTrack: state.hasAudioTrack,
       setSelectedRegionId: state.setSelectedRegionId,
@@ -110,8 +112,8 @@ export function SidePanel() {
   // Optimize region lookup using useMemo
   const selectedRegion = useMemo(() => {
     if (!selectedRegionId) return null
-    return zoomRegions[selectedRegionId] || cutRegions[selectedRegionId] || blurRegions[selectedRegionId] || speedRegions[selectedRegionId]
-  }, [selectedRegionId, zoomRegions, cutRegions, blurRegions, speedRegions])
+    return zoomRegions[selectedRegionId] || cutRegions[selectedRegionId] || blurRegions[selectedRegionId] || speedRegions[selectedRegionId] || swapRegions[selectedRegionId]
+  }, [selectedRegionId, zoomRegions, cutRegions, blurRegions, speedRegions, swapRegions])
 
   // Auto switch to 'general' tab when a region is selected
   useEffect(() => {

@@ -117,7 +117,8 @@ export const useTimelineInteraction = ({
             const getObstacles = (lane: string) => [
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
-              ...Object.values(state.blurRegions)
+              ...Object.values(state.blurRegions),
+              ...Object.values(state.swapRegions)
             ].filter(r => r.id !== dragRegion.id && r.laneId === lane)
             
             const findValid = (lane: string) => {
@@ -164,7 +165,8 @@ export const useTimelineInteraction = ({
             const obstacles = [
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
-              ...Object.values(state.blurRegions)
+              ...Object.values(state.blurRegions),
+              ...Object.values(state.swapRegions)
             ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001)
             if (obstacles.length > 0) {
               const nextObs = obstacles.reduce((min, o) => o.startTime < min.startTime ? o : min, obstacles[0])
@@ -183,7 +185,8 @@ export const useTimelineInteraction = ({
             const obstacles = [
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
-              ...Object.values(state.blurRegions)
+              ...Object.values(state.blurRegions),
+              ...Object.values(state.swapRegions)
             ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime + r.duration <= dragRegion.initialStartTime + 0.001)
             if (obstacles.length > 0) {
               const prevObs = obstacles.reduce((max, o) => (o.startTime + o.duration) > (max.startTime + max.duration) ? o : max, obstacles[0])
