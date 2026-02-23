@@ -52,6 +52,7 @@ export const Preview = memo(
       volume,
       isMuted,
       setCurrentTime,
+      setCurrentTimeThrottled,
       setSelectedRegionId,
       updateRegion,
       cursorStyles,
@@ -81,6 +82,7 @@ export const Preview = memo(
         volume: state.volume,
         isMuted: state.isMuted,
         setCurrentTime: state.setCurrentTime,
+        setCurrentTimeThrottled: state.setCurrentTimeThrottled,
         setSelectedRegionId: state.setSelectedRegionId,
         updateRegion: state.updateRegion,
         cursorStyles: state.cursorStyles,
@@ -194,9 +196,11 @@ export const Preview = memo(
 
         if (force || !playing) {
           setCurrentTime(time)
+        } else {
+          setCurrentTimeThrottled(time)
         }
       },
-      [setCurrentTime],
+      [setCurrentTime, setCurrentTimeThrottled],
     )
 
     const renderCanvas = useCallback(() => {
@@ -360,6 +364,7 @@ export const Preview = memo(
         if (now - lastUiSyncAtRef.current >= PLAYBACK_UI_SYNC_INTERVAL_MS) {
           lastUiSyncAtRef.current = now
           setPlaybackUiTime(playbackTime)
+          syncCurrentTimeToStore(playbackTime)
         }
       } else {
         setPlaybackUiTime(playbackTime)
