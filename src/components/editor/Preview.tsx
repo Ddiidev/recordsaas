@@ -184,7 +184,7 @@ export const Preview = memo(
       }
     }, [frameStyles.background])
 
-    const renderCanvas = useCallback(async () => {
+    const renderCanvas = useCallback(() => {
       const canvas = canvasRef.current
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -194,7 +194,7 @@ export const Preview = memo(
         if (state.isPlaying) animationFrameId.current = requestAnimationFrame(renderCanvas)
         return
       }
-      await drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage)
+      drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage)
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
@@ -313,7 +313,10 @@ export const Preview = memo(
         }
       }
       if (webcamVideoRef.current) {
-        webcamVideoRef.current.currentTime = newTime
+        // Only sync webcam when drift exceeds 0.3s to avoid expensive seeks every frame
+        if (Math.abs(webcamVideoRef.current.currentTime - newTime) > 0.3) {
+          webcamVideoRef.current.currentTime = newTime
+        }
         webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
       }
       if (audio) {

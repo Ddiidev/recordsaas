@@ -12,7 +12,7 @@ let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
 
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel',
+  kind: 'sample' | 'pixel' | 'screen',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -28,6 +28,19 @@ const getOrCreateCanvas = (
     if (blurSampleCanvas.width !== roundedWidth) blurSampleCanvas.width = roundedWidth
     if (blurSampleCanvas.height !== roundedHeight) blurSampleCanvas.height = roundedHeight
     return { canvas: blurSampleCanvas, ctx: blurSampleCtx }
+  }
+
+  if (kind === 'screen') {
+    if (!(window as any).__screenCacheCanvas) {
+       ;(window as any).__screenCacheCanvas = document.createElement('canvas')
+       ;(window as any).__screenCacheCtx = (window as any).__screenCacheCanvas.getContext('2d')
+    }
+    const canvas = (window as any).__screenCacheCanvas as HTMLCanvasElement
+    const ctx = (window as any).__screenCacheCtx as CanvasRenderingContext2D
+    if (!canvas || !ctx) return null
+    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
+    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
+    return { canvas, ctx }
   }
 
   if (!blurPixelCanvas) {
@@ -160,13 +173,13 @@ function lerp(start: number, end: number, t: number): number {
 /**
  * Draws the background with optimized rendering
  */
-const drawBackground = async (
+const drawBackground = (
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   backgroundState: EditorState['frameStyles']['background'],
   preloadedImage: HTMLImageElement | null,
-): Promise<void> => {
+): void => {
   ctx.clearRect(0, 0, width, height)
 
   switch (backgroundState.type) {
@@ -264,7 +277,7 @@ const drawBackground = async (
 /**
  * Main rendering function with enhanced visuals
  */
-export const drawScene = async (
+export const drawScene = (
   ctx: CanvasRenderingContext2D,
   state: RenderableState,
   videoElement: CanvasImageSource,
@@ -275,7 +288,7 @@ export const drawScene = async (
   preloadedBgImage: HTMLImageElement | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
-): Promise<void> => {
+): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
@@ -283,7 +296,7 @@ export const drawScene = async (
   ctx.imageSmoothingQuality = exportQuality === 'ultra high' ? 'high' : 'medium'
 
   // --- 1. Draw Background ---
-  await drawBackground(ctx, outputWidth, outputHeight, state.frameStyles.background, preloadedBgImage)
+  drawBackground(ctx, outputWidth, outputHeight, state.frameStyles.background, preloadedBgImage)
 
   // --- 2. Calculate Frame and Content Dimensions ---
   const { frameStyles, videoDimensions } = state
@@ -304,165 +317,164 @@ export const drawScene = async (
   const frameX = (outputWidth - frameContentWidth) / 2
   const frameY = (outputHeight - frameContentHeight) / 2
 
-  // --- 3. Main video frame transform and drawing ---
-  const { shadowBlur, shadowOffsetX, shadowOffsetY, borderRadius, shadowColor, borderWidth, borderColor } = frameStyles
-
-  // Draw shadow if needed (unscaled, unclipped)
-  if (shadowBlur > 0) {
-    ctx.save()
-    ctx.translate(frameX, frameY)
-    ctx.shadowColor = shadowColor
-    ctx.shadowBlur = shadowBlur
-    ctx.shadowOffsetX = shadowOffsetX
-    ctx.shadowOffsetY = shadowOffsetY
-    const shadowPath = new Path2D()
-    shadowPath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
-    ctx.fillStyle = 'rgba(0,0,0,1)'
-    ctx.fill(shadowPath)
-    ctx.restore()
-  }
-
-  // Set up the clipping path for the frame content
-  ctx.save()
-  ctx.translate(frameX, frameY)
-  const framePath = new Path2D()
-  framePath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
-  ctx.clip(framePath)
-
-  // Now apply the zoom transforms *inside* the clipped bounds
-  const { scale, translateX, translateY, transformOrigin } = calculateZoomTransform(
-    currentTime,
-    state.zoomRegions,
+  // --- 3. Determine Swap Region and Transitions ---
+  const activeSwapRegions = sortRegionsByLanePrecedence(
+    Object.values(state.swapRegions || {}).filter((region) => isRegionActiveAtTime(region, currentTime)),
     state.timelineLanes,
-    state.metadata,
-    state.recordingGeometry || state.videoDimensions,
-    { width: frameContentWidth, height: frameContentHeight },
-  )
+  ).reverse()
+  const activeSwapRegion = activeSwapRegions.length > 0 ? activeSwapRegions[0] : null
 
-  const [originXStr, originYStr] = transformOrigin.split(' ')
-  const originXMul = parseFloat(originXStr) / 100
-  const originYMul = parseFloat(originYStr) / 100
-  const originPxX = originXMul * frameContentWidth
-  const originPxY = originYMul * frameContentHeight
+  let isSwapped = false
+  let swapProgress = 0
 
-  ctx.translate(originPxX, originPxY)
-  ctx.scale(scale, scale)
-  ctx.translate(translateX, translateY)
-  ctx.translate(-originPxX, -originPxY)
-
-  // Draw the video
-  ctx.drawImage(videoElement, 0, 0, frameContentWidth, frameContentHeight)
-
-  // --- 4. Draw Click Animations ---
-  if (state.cursorStyles.clickRippleEffect && state.recordingGeometry) {
-    const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
-    const rippleEasing = EASING_MAP.Balanced // Ripple uses a standard ease-out
-
-    const recentRippleClicks = state.metadata.filter(
-      (event) =>
-        event.type === 'click' &&
-        event.pressed &&
-        currentTime >= event.timestamp &&
-        currentTime < event.timestamp + clickRippleDuration,
-    )
-
-    for (const click of recentRippleClicks) {
-      const progress = (currentTime - click.timestamp) / clickRippleDuration
-      const easedProgress = rippleEasing(progress)
-      const currentRadius = easedProgress * clickRippleSize
-      const currentOpacity = 1 - easedProgress
-
-      // Scale cursor position from original recording geometry to the current frame's content size
-      const cursorX = (click.x / state.recordingGeometry.width) * frameContentWidth
-      const cursorY = (click.y / state.recordingGeometry.height) * frameContentHeight
-
-      const colorResult = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(clickRippleColor)
-      if (colorResult) {
-        const [r, g, b, baseAlpha] = colorResult.slice(1).map(Number)
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${baseAlpha * currentOpacity})`
+  if (activeSwapRegion) {
+    const TRANSITION_DURATION = activeSwapRegion.transitionDuration ?? 0.3
+    isSwapped = true
+    swapProgress = 1
+    if (activeSwapRegion.transition !== 'none') {
+      const timeIn = currentTime - activeSwapRegion.startTime
+      const timeOut = activeSwapRegion.startTime + activeSwapRegion.duration - currentTime
+      if (timeIn < TRANSITION_DURATION) {
+        swapProgress = timeIn / TRANSITION_DURATION
+      } else if (timeOut < TRANSITION_DURATION) {
+        swapProgress = timeOut / TRANSITION_DURATION
       }
-
-      ctx.beginPath()
-      ctx.arc(cursorX, cursorY, currentRadius, 0, 2 * Math.PI)
-      ctx.fill()
     }
   }
 
-  // --- 5. Draw Cursor ---
-  const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
+  const showDesktopOverlay = activeSwapRegion ? activeSwapRegion.showDesktopOverlay : true
 
-  if (state.cursorStyles.showCursor && lastEventIndex > -1 && state.recordingGeometry) {
-    const event = state.metadata[lastEventIndex]
-    if (event && currentTime - event.timestamp < 0.1) {
-      const cursorData = state.cursorBitmapsToRender.get(event.cursorImageKey!)
+  // --- 4. Prepare Screen Canvas (Video + Clicks + Cursor + Zoom) ---
+  const screenCache = getOrCreateCanvas('screen', frameContentWidth, frameContentHeight)
+  if (screenCache) {
+    const sCtx = screenCache.ctx
+    sCtx.imageSmoothingEnabled = true
+    sCtx.imageSmoothingQuality = ctx.imageSmoothingQuality
+    sCtx.clearRect(0, 0, frameContentWidth, frameContentHeight)
 
-      if (cursorData && cursorData.imageBitmap && cursorData.width > 0) {
-        const cursorX = (event.x / state.recordingGeometry.width) * frameContentWidth
-        const cursorY = (event.y / state.recordingGeometry.height) * frameContentHeight
-        const drawX = Math.round(cursorX - cursorData.xhot)
-        const drawY = Math.round(cursorY - cursorData.yhot)
+    sCtx.save()
+    const { scale, translateX, translateY, transformOrigin } = calculateZoomTransform(
+      currentTime,
+      state.zoomRegions,
+      state.timelineLanes,
+      state.metadata,
+      state.recordingGeometry || state.videoDimensions,
+      { width: frameContentWidth, height: frameContentHeight },
+    )
+    const [originXStr, originYStr] = transformOrigin.split(' ')
+    const originPxX = (parseFloat(originXStr) / 100) * frameContentWidth
+    const originPxY = (parseFloat(originYStr) / 100) * frameContentHeight
 
-        ctx.save()
+    sCtx.translate(originPxX, originPxY)
+    sCtx.scale(scale, scale)
+    sCtx.translate(translateX, translateY)
+    sCtx.translate(-originPxX, -originPxY)
 
-        // Handle click scale animation
-        let cursorScale = 1
-        if (state.cursorStyles.clickScaleEffect) {
-          const { clickScaleDuration, clickScaleAmount, clickScaleEasing } = state.cursorStyles
-          const mostRecentClick = state.metadata
-            .filter(
-              (e) =>
-                e.type === 'click' &&
-                e.pressed &&
-                e.timestamp <= currentTime &&
-                e.timestamp > currentTime - clickScaleDuration,
-            )
-            .pop()
+    sCtx.drawImage(videoElement, 0, 0, frameContentWidth, frameContentHeight)
 
-          if (mostRecentClick) {
-            const progress = (currentTime - mostRecentClick.timestamp) / clickScaleDuration
-            const easingFn = EASING_MAP[clickScaleEasing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
-            const easedProgress = easingFn(progress)
-            const scaleValue = 1 - (1 - clickScaleAmount) * Math.sin(easedProgress * Math.PI)
-            cursorScale = scaleValue
+    if (state.cursorStyles.clickRippleEffect && state.recordingGeometry) {
+      const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
+      const recentRippleClicks = []
+      const startIndex = findLastMetadataIndex(state.metadata, currentTime)
+      if (startIndex > -1) {
+        for (let i = startIndex; i >= 0; i--) {
+          const event = state.metadata[i]
+          if (currentTime - event.timestamp >= clickRippleDuration) break
+          if (event.type === 'click' && event.pressed && currentTime >= event.timestamp) {
+            recentRippleClicks.push(event)
           }
         }
+      }
+      for (const click of recentRippleClicks) {
+        const progress = (currentTime - click.timestamp) / clickRippleDuration
+        const easedProgress = EASING_MAP.Balanced(progress)
+        const currentRadius = easedProgress * clickRippleSize
+        const currentOpacity = 1 - easedProgress
 
-        // Apply drop shadow
-        const { shadowBlur, shadowOffsetX, shadowOffsetY, shadowColor } = state.cursorStyles
-        if (shadowBlur > 0 || shadowOffsetX !== 0 || shadowOffsetY !== 0) {
-          ctx.filter = `drop-shadow(${shadowOffsetX}px ${shadowOffsetY}px ${shadowBlur}px ${shadowColor})`
+        const cursorX = (click.x / state.recordingGeometry.width) * frameContentWidth
+        const cursorY = (click.y / state.recordingGeometry.height) * frameContentHeight
+        const colorResult = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(clickRippleColor)
+        if (colorResult) {
+          const [r, g, b, baseAlpha] = colorResult.slice(1).map(Number)
+          sCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${baseAlpha * currentOpacity})`
         }
 
-        // Apply scale transform if needed
-        if (cursorScale !== 1) {
-          const scaleCenterX = drawX + cursorData.xhot
-          const scaleCenterY = drawY + cursorData.yhot
-          ctx.translate(scaleCenterX, scaleCenterY)
-          ctx.scale(cursorScale, cursorScale)
-          ctx.translate(-scaleCenterX, -scaleCenterY)
-        }
-
-        ctx.drawImage(cursorData.imageBitmap, drawX, drawY)
-        ctx.restore()
+        sCtx.beginPath()
+        sCtx.arc(cursorX, cursorY, currentRadius, 0, 2 * Math.PI)
+        sCtx.fill()
       }
     }
+
+    const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
+    if (state.cursorStyles.showCursor && lastEventIndex > -1 && state.recordingGeometry) {
+      const event = state.metadata[lastEventIndex]
+      if (event && currentTime - event.timestamp < 0.1) {
+        const cursorData = state.cursorBitmapsToRender.get(event.cursorImageKey!)
+        if (cursorData && cursorData.imageBitmap && cursorData.width > 0) {
+          const cursorX = (event.x / state.recordingGeometry.width) * frameContentWidth
+          const cursorY = (event.y / state.recordingGeometry.height) * frameContentHeight
+          const drawX = Math.round(cursorX - cursorData.xhot)
+          const drawY = Math.round(cursorY - cursorData.yhot)
+
+          sCtx.save()
+          let cursorScale = 1
+          if (state.cursorStyles.clickScaleEffect) {
+            const { clickScaleDuration, clickScaleAmount, clickScaleEasing } = state.cursorStyles
+            let mostRecentClick = undefined
+            if (lastEventIndex > -1) {
+              for (let i = lastEventIndex; i >= 0; i--) {
+                const e = state.metadata[i]
+                if (currentTime - e.timestamp >= clickScaleDuration) break
+                if (e.type === 'click' && e.pressed && e.timestamp <= currentTime) {
+                  mostRecentClick = e
+                  break
+                }
+              }
+            }
+            if (mostRecentClick) {
+              const progress = (currentTime - mostRecentClick.timestamp) / clickScaleDuration
+              const easingFn = EASING_MAP[clickScaleEasing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+              cursorScale = 1 - (1 - clickScaleAmount) * Math.sin(easingFn(progress) * Math.PI)
+            }
+          }
+
+          const { shadowBlur, shadowOffsetX, shadowOffsetY, shadowColor } = state.cursorStyles
+          if (shadowBlur > 0 || shadowOffsetX !== 0 || shadowOffsetY !== 0) {
+            sCtx.filter = `drop-shadow(${shadowOffsetX}px ${shadowOffsetY}px ${shadowBlur}px ${shadowColor})`
+          }
+
+          if (cursorScale !== 1) {
+            const scaleCenterX = drawX + cursorData.xhot
+            const scaleCenterY = drawY + cursorData.yhot
+            sCtx.translate(scaleCenterX, scaleCenterY)
+            sCtx.scale(cursorScale, cursorScale)
+            sCtx.translate(-scaleCenterX, -scaleCenterY)
+          }
+
+          sCtx.drawImage(cursorData.imageBitmap, drawX, drawY)
+          sCtx.restore()
+        }
+      }
+    }
+    sCtx.restore()
   }
 
-  ctx.restore() // Restore from zoom/clip transform
-  
-  // Draw border on top of the clipped frame
-  if (borderWidth > 0) {
-    ctx.save()
-    ctx.translate(frameX, frameY)
-    const borderPath = new Path2D()
-    borderPath.roundRect(0, 0, frameContentWidth, frameContentHeight, borderRadius)
-    ctx.strokeStyle = borderColor
-    ctx.lineWidth = borderWidth * 2 // border is centered on the edge
-    ctx.stroke(borderPath)
-    ctx.restore()
+  // --- 5. Prepare Configs for Layout Swapping ---
+  const mainRectConfig = {
+    x: frameX,
+    y: frameY,
+    width: frameContentWidth,
+    height: frameContentHeight,
+    radius: frameStyles.borderRadius,
+    shadowBlur: frameStyles.shadowBlur,
+    shadowOffsetX: frameStyles.shadowOffsetX,
+    shadowOffsetY: frameStyles.shadowOffsetY,
+    shadowColor: frameStyles.shadowColor,
+    borderWidth: frameStyles.borderWidth,
+    borderColor: frameStyles.borderColor,
+    zIndex: 0,
   }
 
-  // --- 6. Draw Webcam ---
   const { webcamPosition, webcamStyles, isWebcamVisible } = state
   const activeZoomRegion = getTopActiveRegionAtTime(Object.values(state.zoomRegions), currentTime, state.timelineLanes)
   const webcamDims = (() => {
@@ -481,56 +493,44 @@ export const drawScene = async (
     return null
   })()
 
-  if (isWebcamVisible && webcamVideoElement && webcamDims && webcamDims.width > 0 && state.recordingGeometry) {
-    let finalWebcamScale = 1
-    if (webcamStyles.scaleOnZoom) {
-      if (activeZoomRegion) {
-        const { startTime, duration, transitionDuration } = activeZoomRegion
-        const zoomInEndTime = startTime + transitionDuration
-        const zoomOutStartTime = startTime + duration - transitionDuration
-        const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+  let finalWebcamScale = 1
+  let pipRectConfig: typeof mainRectConfig | null = null
 
-        if (currentTime < zoomInEndTime) {
-          const progress = (currentTime - startTime) / transitionDuration
-          finalWebcamScale = lerp(1, DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, easingFn(progress))
-        } else if (currentTime >= zoomOutStartTime) {
-          const progress = (currentTime - zoomOutStartTime) / transitionDuration
-          finalWebcamScale = lerp(DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, 1, easingFn(progress))
-        } else {
-          finalWebcamScale = DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT
-        }
+  if (isWebcamVisible && webcamVideoElement && webcamDims && webcamDims.width > 0 && state.recordingGeometry) {
+    if (webcamStyles.scaleOnZoom && activeZoomRegion) {
+      const { startTime, duration, transitionDuration } = activeZoomRegion
+      const zoomInEndTime = startTime + transitionDuration
+      const zoomOutStartTime = startTime + duration - transitionDuration
+      const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+      if (currentTime < zoomInEndTime) {
+        finalWebcamScale = lerp(1, DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, easingFn((currentTime - startTime) / transitionDuration))
+      } else if (currentTime >= zoomOutStartTime) {
+        finalWebcamScale = lerp(DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, 1, easingFn((currentTime - zoomOutStartTime) / transitionDuration))
+      } else {
+        finalWebcamScale = DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT
       }
     }
 
     const baseSize = Math.min(outputWidth, outputHeight)
-    // Interpolate both position and size between normal and zoomed states
     let startSize = webcamStyles.size
     let targetSize = webcamStyles.sizeOnZoom
     let t = 0
-    // removed unused isZooming
-    if (webcamStyles.scaleOnZoom) {
-      if (activeZoomRegion) {
-        const { startTime, duration, transitionDuration } = activeZoomRegion
-        const zoomInEndTime = startTime + transitionDuration
-        const zoomOutStartTime = startTime + duration - transitionDuration
-        const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
-        if (currentTime < zoomInEndTime) {
-          // Zooming in
-          t = easingFn((currentTime - startTime) / transitionDuration)
-        } else if (currentTime >= zoomOutStartTime) {
-          // Zooming out
-          t = easingFn((currentTime - zoomOutStartTime) / transitionDuration)
-          // Swap start/target for reverse interpolation
-          ;[startSize, targetSize] = [targetSize, startSize]
-        } else {
-          // Fully zoomed
-          startSize = targetSize
-          t = 1
-        }
+
+    if (webcamStyles.scaleOnZoom && activeZoomRegion) {
+      const { startTime, duration, transitionDuration } = activeZoomRegion
+      const zoomInEndTime = startTime + transitionDuration
+      const zoomOutStartTime = startTime + duration - transitionDuration
+      const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+      if (currentTime < zoomInEndTime) {
+        t = easingFn((currentTime - startTime) / transitionDuration)
+      } else if (currentTime >= zoomOutStartTime) {
+        t = easingFn((currentTime - zoomOutStartTime) / transitionDuration)
+        ;[startSize, targetSize] = [targetSize, startSize]
+      } else {
+        startSize = targetSize; t = 1
       }
     }
 
-    // Only animate size, not position
     let webcamWidth, webcamHeight
     if (webcamStyles.shape === 'rectangle') {
       webcamWidth = baseSize * (lerp(startSize, targetSize, t) / 100)
@@ -539,80 +539,189 @@ export const drawScene = async (
       webcamWidth = baseSize * (lerp(startSize, targetSize, t) / 100)
       webcamHeight = webcamWidth
     }
-    // Always use the selected position
-    const webcamRect = getWebcamRectForPosition(
-      webcamPosition.pos,
-      webcamWidth,
-      webcamHeight,
-      outputWidth,
-      outputHeight,
-    )
-    // Use fixed position from webcamRect, apply scale for drawing
-    const webcamX = webcamRect.x
-    const webcamY = webcamRect.y
+
+    const webcamRect = getWebcamRectForPosition(webcamPosition.pos, webcamWidth, webcamHeight, outputWidth, outputHeight)
     const scaledWebcamWidth = webcamRect.width * finalWebcamScale
     const scaledWebcamHeight = webcamRect.height * finalWebcamScale
 
     const maxRadius = Math.min(scaledWebcamWidth, scaledWebcamHeight) / 2
-    let webcamRadius = 0
-    if (webcamStyles.shape === 'circle') {
-      webcamRadius = maxRadius
-    } else {
-      webcamRadius = maxRadius * (webcamStyles.borderRadius / 50)
-    }
+    const webcamRadius = webcamStyles.shape === 'circle' ? maxRadius : maxRadius * (webcamStyles.borderRadius / 50)
 
-    if (webcamStyles.shadowBlur > 0) {
+    pipRectConfig = {
+      x: webcamStyles.isFlipped ? outputWidth - webcamRect.x - scaledWebcamWidth : webcamRect.x,
+      y: webcamRect.y,
+      width: scaledWebcamWidth,
+      height: scaledWebcamHeight,
+      radius: webcamRadius,
+      shadowBlur: webcamStyles.shadowBlur,
+      shadowOffsetX: webcamStyles.shadowOffsetX,
+      shadowOffsetY: webcamStyles.shadowOffsetY,
+      shadowColor: webcamStyles.shadowColor,
+      borderWidth: webcamStyles.border ? webcamStyles.borderWidth : 0,
+      borderColor: webcamStyles.borderColor || 'rgba(0,0,0,0)',
+      zIndex: 1,
+    }
+  }
+
+  // --- 6. Draw Media Helper and Transitions ---
+  const lerpConfig = (a: typeof mainRectConfig, b: typeof mainRectConfig, p: number) => ({
+    x: lerp(a.x, b.x, p),
+    y: lerp(a.y, b.y, p),
+    width: lerp(a.width, b.width, p),
+    height: lerp(a.height, b.height, p),
+    radius: lerp(a.radius, b.radius, p),
+    shadowBlur: lerp(a.shadowBlur, b.shadowBlur, p),
+    shadowOffsetX: lerp(a.shadowOffsetX, b.shadowOffsetX, p),
+    shadowOffsetY: lerp(a.shadowOffsetY, b.shadowOffsetY, p),
+    borderWidth: lerp(a.borderWidth, b.borderWidth, p),
+    shadowColor: p > 0.5 ? b.shadowColor : a.shadowColor,
+    borderColor: p > 0.5 ? b.borderColor : a.borderColor,
+    zIndex: p > 0.5 ? b.zIndex : a.zIndex,
+  })
+
+  const drawMediaToConfig = (
+    config: typeof mainRectConfig,
+    source: CanvasImageSource,
+    sW: number,
+    sH: number,
+    isFlipped: boolean = false,
+    globalAlpha: number = 1
+  ) => {
+    if (config.width <= 0 || config.height <= 0 || sW <= 0 || sH <= 0 || globalAlpha <= 0) return
+    ctx.save()
+    ctx.globalAlpha = globalAlpha
+
+    if (config.shadowBlur > 0) {
       ctx.save()
-      ctx.shadowColor = webcamStyles.shadowColor
-      ctx.shadowBlur = webcamStyles.shadowBlur
-      ctx.shadowOffsetX = webcamStyles.shadowOffsetX
-      ctx.shadowOffsetY = webcamStyles.shadowOffsetY
-      const webcamShadowPath = new Path2D()
-      webcamShadowPath.roundRect(webcamX, webcamY, scaledWebcamWidth, scaledWebcamHeight, webcamRadius)
-      ctx.fillStyle = 'rgba(0,0,0,1)'
-      ctx.fill(webcamShadowPath)
+      ctx.shadowColor = config.shadowColor
+      ctx.shadowBlur = config.shadowBlur
+      ctx.shadowOffsetX = config.shadowOffsetX
+      ctx.shadowOffsetY = config.shadowOffsetY
+      const shadowPath = new Path2D()
+      shadowPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
+      // Use fill for shadow rendering to apply exactly behind the clip area
+      ctx.fillStyle = 'black'
+      ctx.fill(shadowPath)
       ctx.restore()
-    }
-
-    const webcamAR = webcamDims.width / webcamDims.height
-    const targetAR = webcamWidth / webcamHeight
-
-    let sx = 0,
-      sy = 0,
-      sWidth = webcamDims.width,
-      sHeight = webcamDims.height
-
-    if (webcamAR > targetAR) {
-      sWidth = webcamDims.height * targetAR
-      sx = (webcamDims.width - sWidth) / 2
-    } else {
-      sHeight = webcamDims.width / targetAR
-      sy = (webcamDims.height - sHeight) / 2
     }
 
     ctx.save()
+    const clipPath = new Path2D()
+    clipPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
+    ctx.clip(clipPath)
 
-    if (webcamStyles.isFlipped) {
-      ctx.translate(outputWidth, 0)
+    const targetAR = config.width / config.height
+    const sourceAR = sW / sH
+    let sx = 0, sy = 0, drawW = sW, drawH = sH
+
+    if (sourceAR > targetAR) {
+      drawW = sH * targetAR
+      sx = (sW - drawW) / 2
+    } else {
+      drawH = sW / targetAR
+      sy = (sH - drawH) / 2
+    }
+
+    if (isFlipped) {
+      ctx.translate(config.x * 2 + config.width, 0)
       ctx.scale(-1, 1)
     }
 
-    const drawX = webcamStyles.isFlipped ? outputWidth - webcamX - webcamWidth : webcamX
-    const webcamPath = new Path2D()
-    webcamPath.roundRect(drawX, webcamY, webcamWidth, webcamHeight, webcamRadius)
+    ctx.drawImage(source, sx, sy, drawW, drawH, config.x, config.y, config.width, config.height)
+    ctx.restore()
 
-    if (webcamStyles.border && webcamStyles.borderWidth > 0) {
+    if (config.borderWidth > 0) {
       ctx.save()
-      ctx.lineWidth = webcamStyles.borderWidth * 2 // multiply by 2 because stroke is centered
-      ctx.strokeStyle = webcamStyles.borderColor
-      ctx.stroke(webcamPath)
+      const borderPath = new Path2D()
+      borderPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
+      ctx.strokeStyle = config.borderColor
+      ctx.lineWidth = config.borderWidth * 2
+      ctx.stroke(borderPath)
       ctx.restore()
     }
-
-    ctx.clip(webcamPath)
-    ctx.drawImage(webcamVideoElement, sx, sy, sWidth, sHeight, drawX, webcamY, webcamWidth, webcamHeight)
     ctx.restore()
   }
+
+  // --- 7. Resolve Final Compositions ---
+  const draws: { zIndex: number; draw: () => void }[] = []
+  
+  // Base states
+  const desktopSource = screenCache?.canvas
+  const desktopDims = { width: frameContentWidth, height: frameContentHeight }
+  const desktopFlipped = false
+
+  const cameraSource = webcamVideoElement
+  const cameraDims = webcamDims
+
+  // We can only slide/scale if PIP config exists
+  const hasPipConfig = pipRectConfig !== null
+  const transitionType = activeSwapRegion?.transition || 'none'
+  const isAnimatedTransition = swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
+  const progressAnim = transitionType === 'slide' ? EASING_MAP.Balanced(swapProgress) :
+                       transitionType === 'scale' ? EASING_MAP.Balanced(swapProgress) : swapProgress
+
+  if (!isSwapped && !isAnimatedTransition) {
+     // Normal setup
+     if (desktopSource) {
+       draws.push({ zIndex: mainRectConfig.zIndex, draw: () => drawMediaToConfig(mainRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped) })
+     }
+     if (pipRectConfig && cameraSource && cameraDims) {
+       draws.push({ zIndex: pipRectConfig.zIndex, draw: () => drawMediaToConfig(pipRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
+     }
+  } else if (isSwapped && !isAnimatedTransition) {
+     // Fully Swapped Setup
+     if (desktopSource && showDesktopOverlay && pipRectConfig) {
+        draws.push({ zIndex: pipRectConfig.zIndex, draw: () => drawMediaToConfig(pipRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped) })
+     }
+     if (cameraSource && cameraDims) {
+        draws.push({ zIndex: mainRectConfig.zIndex, draw: () => drawMediaToConfig(mainRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
+     }
+  } else if (hasPipConfig) {
+     // Transitions Between States
+     if (transitionType === 'fade') {
+         // Crossfade opacity
+         const tSwapped = progressAnim
+         const tNormal = 1 - progressAnim
+
+         // Normal Layout components
+         if (desktopSource) {
+            draws.push({ zIndex: mainRectConfig.zIndex - 0.1, draw: () => drawMediaToConfig(mainRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal) })
+         }
+         if (cameraSource && cameraDims) {
+            draws.push({ zIndex: pipRectConfig!.zIndex - 0.1, draw: () => drawMediaToConfig(pipRectConfig!, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped, tNormal) })
+         }
+
+         // Swapped Layout components
+         if (desktopSource && showDesktopOverlay) {
+            draws.push({ zIndex: pipRectConfig!.zIndex + 0.1, draw: () => drawMediaToConfig(pipRectConfig!, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tSwapped) })
+         }
+         if (cameraSource && cameraDims) {
+            draws.push({ zIndex: mainRectConfig.zIndex + 0.1, draw: () => drawMediaToConfig(mainRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped, tSwapped) })
+         }
+     } else {
+         // Slide / Scale (Spatial interpolation)
+         let currentDesktopConfig = mainRectConfig
+         let currentCameraConfig = pipRectConfig!
+
+         if (swapProgress > 0) {
+             currentDesktopConfig = lerpConfig(mainRectConfig, pipRectConfig!, progressAnim)
+             currentCameraConfig = lerpConfig(pipRectConfig!, mainRectConfig, progressAnim)
+         }
+
+         if (desktopSource && (showDesktopOverlay || progressAnim < 1)) {
+            // Fade out the overlay at the end if it's supposed to be hidden
+            // If scale/slide and showDesktopOverlay=false, it should shrink to PIP and fade out
+            const alpha = (!showDesktopOverlay) ? (1 - progressAnim) : 1
+            draws.push({ zIndex: currentDesktopConfig.zIndex, draw: () => drawMediaToConfig(currentDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, alpha) })
+         }
+         if (cameraSource && cameraDims) {
+            draws.push({ zIndex: currentCameraConfig.zIndex, draw: () => drawMediaToConfig(currentCameraConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
+         }
+     }
+  }
+
+  // Draw layers sorted by zIndex
+  draws.sort((a,b) => a.zIndex - b.zIndex).forEach(d => d.draw())
 
   // --- 7. Draw Blur Assets ---
   const activeBlurRegions = sortRegionsByLanePrecedence(
