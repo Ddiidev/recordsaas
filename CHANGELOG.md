@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/Ddiidev/recordsaas/compare/v2.0.4...v2.1.0) (2026-02-23)
+
+
+### Features
+
+* **timeline:** add camera swap regions support across editor, store, and timeline UI ([#6](https://github.com/Ddiidev/recordsaas/issues/6)) ([1a4e27a](https://github.com/Ddiidev/recordsaas/commit/1a4e27a6f75cc31c2c115688c08567a687670107))
+
 ## [2.0.4](https://github.com/Ddiidev/recordsaas/compare/v2.0.3...v2.0.4) (2026-02-23)
 
 
