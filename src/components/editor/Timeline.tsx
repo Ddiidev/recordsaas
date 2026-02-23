@@ -5,6 +5,7 @@ import { ZoomRegionBlock } from './timeline/ZoomRegionBlock'
 import { CutRegionBlock } from './timeline/CutRegionBlock'
 import { SpeedRegionBlock } from './timeline/SpeedRegionBlock'
 import { BlurRegionBlock } from './timeline/BlurRegionBlock'
+import { SwapRegionBlock } from './timeline/SwapRegionBlock'
 import { Playhead } from './timeline/Playhead'
 import { cn } from '../../lib/utils'
 import { Scissors, ChevronUp, ChevronDown, Trash, DotsVertical } from 'tabler-icons-react'
@@ -217,7 +218,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     }
   }, [laneActionMenu, sortedLanes])
 
-  const { zoomRegions, cutRegions, speedRegions, blurRegions } = useAllRegions()
+  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions } = useAllRegions()
 
   const allRegionsToRender = useMemo(() => {
     const combined = [
@@ -225,12 +226,13 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       ...Object.values(cutRegions),
       ...Object.values(speedRegions),
       ...Object.values(blurRegions),
+      ...Object.values(swapRegions),
     ]
     if (previewCutRegion) {
       combined.push({ ...previewCutRegion, laneId: previewCutRegion.laneId || fallbackLaneId })
     }
     return combined
-  }, [zoomRegions, cutRegions, speedRegions, blurRegions, previewCutRegion, fallbackLaneId])
+  }, [zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, previewCutRegion, fallbackLaneId])
 
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
@@ -239,7 +241,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       zoomRegions[dragMovePreview.regionId] ||
       cutRegions[dragMovePreview.regionId] ||
       speedRegions[dragMovePreview.regionId] ||
-      blurRegions[dragMovePreview.regionId]
+      blurRegions[dragMovePreview.regionId] ||
+      swapRegions[dragMovePreview.regionId]
 
     if (!sourceRegion) return null
 
@@ -249,7 +252,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       startTime: dragMovePreview.startTime,
       duration: dragMovePreview.duration,
     } as TimelineRegion
-  }, [dragMovePreview, zoomRegions, cutRegions, speedRegions, blurRegions])
+  }, [dragMovePreview, zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions])
 
   const noopRegionMouseDown = useCallback(
     (
@@ -507,6 +510,20 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                         )
                       }
 
+                      if (region.type === 'swap') {
+                        return (
+                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
+                            <SwapRegionBlock
+                              region={region}
+                              isSelected={isSelected}
+                              isBeingDragged={draggingRegionId === region.id}
+                              onMouseDown={handleRegionMouseDown}
+                              setRef={(el) => regionRefs.current.set(region.id, el)}
+                            />
+                          </div>
+                        )
+                      }
+
                       return null
                     })}
 
@@ -571,6 +588,20 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                                 isSelected={selectedRegionId === laneMovePreviewRegion.id}
                                 isBeingDragged
                                 onMouseDown={noopRegionMouseDown}
+                                setRef={noopSetRegionRef}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (laneMovePreviewRegion.type === 'swap') {
+                          return (
+                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                              <SwapRegionBlock
+                                region={laneMovePreviewRegion as any}
+                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                isBeingDragged
+                                onMouseDown={noopRegionMouseDown as any}
                                 setRef={noopSetRegionRef}
                               />
                             </div>

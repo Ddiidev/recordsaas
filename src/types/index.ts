@@ -114,7 +114,19 @@ export interface BlurRegion {
   zIndex: number
 }
 
-export type TimelineRegion = ZoomRegion | CutRegion | SpeedRegion | BlurRegion
+export interface CameraSwapRegion {
+  id: string
+  type: 'swap'
+  laneId: string
+  startTime: number
+  duration: number
+  showDesktopOverlay: boolean
+  transition: 'none' | 'fade' | 'slide' | 'scale'
+  zIndex: number
+  transitionDuration?: number
+}
+
+export type TimelineRegion = ZoomRegion | CutRegion | SpeedRegion | BlurRegion | CameraSwapRegion
 
 export interface MetaDataItem {
   timestamp: number
@@ -257,6 +269,7 @@ export interface TimelineState {
   cutRegions: Record<string, CutRegion>
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
   previewCutRegion: CutRegion | null
   selectedRegionId: string | null
   activeZoomRegionId: string | null
@@ -273,6 +286,7 @@ export interface TimelineActions {
   addCutRegion: (regionData?: Partial<CutRegion>) => void
   addSpeedRegion: () => void
   addBlurRegion: () => void
+  addSwapRegion: () => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void
@@ -352,6 +366,7 @@ export type RenderableState = Pick<
   | 'cutRegions'
   | 'speedRegions'
   | 'blurRegions'
+  | 'swapRegions'
   | 'timelineLanes'
   | 'metadata'
   | 'recordingGeometry'

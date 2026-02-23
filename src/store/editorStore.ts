@@ -67,6 +67,7 @@ export const useEditorStore = create(
           cutRegions,
           speedRegions,
           blurRegions,
+          swapRegions,
           timelineLanes,
           presets,
           activePresetId,
@@ -82,6 +83,7 @@ export const useEditorStore = create(
           cutRegions,
           speedRegions,
           blurRegions,
+          swapRegions,
           timelineLanes,
           presets,
           activePresetId,
@@ -126,5 +128,6 @@ export const useAllRegions = () =>
       cutRegions: state.cutRegions,
       speedRegions: state.speedRegions,
       blurRegions: state.blurRegions,
+      swapRegions: state.swapRegions,
     })),
   )

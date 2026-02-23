@@ -1,15 +1,16 @@
 // Settings panel for editing timeline regions (zoom, cut, and blur)
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useEditorStore } from '../../store/editorStore'
-import type { TimelineRegion, ZoomRegion, BlurRegion, BlurRegionStyle, SpeedRegion } from '../../types'
+import type { TimelineRegion, ZoomRegion, BlurRegion, BlurRegionStyle, SpeedRegion, CameraSwapRegion } from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext } from 'tabler-icons-react'
+import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh } from 'tabler-icons-react'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { BLUR_REGION } from '../../lib/constants'
+import { Switch } from '../ui/switch'
 
 interface RegionSettingsPanelProps {
   region: TimelineRegion
@@ -259,12 +260,104 @@ function SpeedSettings({ region }: { region: SpeedRegion }) {
   )
 }
 
+function SwapSettings({ region }: { region: CameraSwapRegion }) {
+  const { updateRegion, deleteRegion } = useEditorStore.getState()
+  const [durationText, setDurationText] = useState((region.transitionDuration ?? 0.3).toFixed(1))
+
+  useEffect(() => {
+    setDurationText((region.transitionDuration ?? 0.3).toFixed(1))
+  }, [region.transitionDuration])
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Keep the screen visible in a smaller window
+          </p>
+        </div>
+        <Switch
+          checked={region.showDesktopOverlay}
+          onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
+        />
+      </div>
+
+      <div className="space-y-2.5">
+        <span className="text-sm font-medium text-sidebar-foreground">Transition Animation</span>
+        <Select
+          value={region.transition}
+          onValueChange={(value) => updateRegion(region.id, { transition: value as CameraSwapRegion['transition'] })}
+        >
+          <SelectTrigger className="h-10 text-sm border-border bg-card shadow-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">None (Instant)</SelectItem>
+            <SelectItem value="fade">Fade</SelectItem>
+            <SelectItem value="slide">Slide</SelectItem>
+            <SelectItem value="scale">Scale</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {region.transition !== 'none' && (
+        <div className="space-y-4 pt-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-sidebar-foreground">Transition Duration (s)</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={durationText}
+              onChange={(e) => {
+                const raw = e.target.value.replace(',', '.')
+                setDurationText(raw)
+                const val = parseFloat(raw)
+                if (!isNaN(val) && val >= 0.1 && val <= 2.0) {
+                  updateRegion(region.id, { transitionDuration: Number(val.toFixed(1)) })
+                }
+              }}
+              onBlur={() => {
+                const val = parseFloat(durationText.replace(',', '.'))
+                const clamped = isNaN(val) ? 0.3 : Math.max(0.1, Math.min(2.0, val))
+                const rounded = Number(clamped.toFixed(1))
+                setDurationText(rounded.toFixed(1))
+                updateRegion(region.id, { transitionDuration: rounded })
+              }}
+              className="w-16 h-8 px-2 text-xs font-semibold text-primary tabular-nums bg-transparent border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary text-right"
+            />
+          </div>
+          <Slider
+            min={0.1}
+            max={2.0}
+            step={0.1}
+            value={region.transitionDuration ?? 0.3}
+            onChange={(value) => updateRegion(region.id, { transitionDuration: Number(value.toFixed(1)) })}
+          />
+        </div>
+      )}
+
+      <div className="pt-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => deleteRegion(region.id)}
+          className="w-full h-10 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <Trash className="w-4 h-4" />
+          <span>Delete Region</span>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
-  const RegionIcon = region.type === 'zoom' ? Camera : region.type === 'cut' ? Scissors : region.type === 'speed' ? PlayerTrackNext : Search
+  const RegionIcon = region.type === 'zoom' ? Camera : region.type === 'cut' ? Scissors : region.type === 'speed' ? PlayerTrackNext : region.type === 'swap' ? Refresh : Search
   const regionColor =
-    region.type === 'zoom' ? 'text-primary' : region.type === 'cut' ? 'text-destructive' : region.type === 'speed' ? 'text-speed-accent' : 'text-amber-500'
+    region.type === 'zoom' ? 'text-primary' : region.type === 'cut' ? 'text-destructive' : region.type === 'speed' ? 'text-speed-accent' : region.type === 'swap' ? 'text-orange-500' : 'text-amber-500'
   const regionBg =
-    region.type === 'zoom' ? 'bg-primary/10' : region.type === 'cut' ? 'bg-destructive/10' : region.type === 'speed' ? 'bg-speed-accent/10' : 'bg-amber-500/10'
+    region.type === 'zoom' ? 'bg-primary/10' : region.type === 'cut' ? 'bg-destructive/10' : region.type === 'speed' ? 'bg-speed-accent/10' : region.type === 'swap' ? 'bg-orange-500/10' : 'bg-amber-500/10'
 
   return (
     <div className="h-full flex flex-col">
@@ -283,7 +376,9 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                   ? 'Cut segment settings'
                   : region.type === 'speed'
                     ? 'Playback speed controls'
-                    : 'Blur asset controls'}
+                    : region.type === 'swap'
+                      ? 'Camera swap settings'
+                      : 'Blur asset controls'}
             </p>
           </div>
         </div>
@@ -299,6 +394,9 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
 
         {/* Speed-specific Controls */}
         {region.type === 'speed' && <SpeedSettings region={region as SpeedRegion} />}
+
+        {/* Swap-specific Controls */}
+        {region.type === 'swap' && <SwapSettings region={region} />}
 
         {/* Cut Region Info */}
         {region.type === 'cut' && (
