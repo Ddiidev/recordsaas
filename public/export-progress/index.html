@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Export Progress</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="window">
+    <div class="content" id="content">
+      <div class="header">
+        <div id="progress-inline-text" class="progress-inline-text">Rendering 0%</div>
+        <button id="minimize-btn" class="minimize-btn" type="button" aria-label="Minimize progress window">min</button>
+      </div>
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div id="progress-fill" class="progress-fill" aria-hidden="true"></div>
+      </div>
+    </div>
+    <button id="collapse-btn" class="collapse-btn" type="button" aria-label="Collapse progress widget">&gt;</button>
+  </div>
+
+  <script src="./index.js"></script>
+</body>
+</html>

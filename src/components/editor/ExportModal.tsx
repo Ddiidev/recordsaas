@@ -364,9 +364,9 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
       <h2 className="text-lg font-semibold text-foreground mb-2">{getTitle()}</h2>
       <div className="text-sm text-muted-foreground mb-8 max-w-xs break-words leading-relaxed">
         <p>{getMessage()}</p>
-        {result.success && result.duration && (
+        {typeof result.duration === 'number' && (
           <div className="mt-2 text-foreground font-medium flex flex-col items-center gap-1">
-            <span className="tabular-nums">Video length: {formatFullDurationMs(estimatedDuration)}</span>
+            {result.success && <span className="tabular-nums">Video length: {formatFullDurationMs(estimatedDuration)}</span>}
             <span className="tabular-nums">Total time taken: {formatFullDurationMs(result.duration)}</span>
           </div>
         )}

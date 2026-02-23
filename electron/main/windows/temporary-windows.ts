@@ -1,6 +1,6 @@
 // Logic to create temporary windows like countdown, saving, selection.
 
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import path from 'node:path'
 import { appState } from '../state'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT } from '../lib/constants'
@@ -52,4 +52,34 @@ export function createSelectionWindow() {
   appState.selectionWin.on('closed', () => {
     appState.selectionWin = null
   })
+}
+
+export function createExportProgressWindow() {
+  if (appState.exportProgressWin && !appState.exportProgressWin.isDestroyed()) {
+    return appState.exportProgressWin
+  }
+
+  const { workArea } = screen.getPrimaryDisplay()
+  const width = 220
+  const height = 42
+  const margin = 12
+  const x = Math.round(workArea.x + workArea.width - width - margin)
+  const y = Math.round(workArea.y + workArea.height - height - margin)
+
+  appState.exportProgressWin = createTemporaryWindow(
+    { width, height, x, y, show: false, minimizable: true, movable: true },
+    'export-progress/index.html',
+  )
+
+  appState.exportProgressWin.once('ready-to-show', () => {
+    appState.exportProgressWin?.setAlwaysOnTop(true, 'screen-saver')
+    appState.exportProgressWin?.show()
+    appState.exportProgressWin?.focus()
+  })
+
+  appState.exportProgressWin.on('closed', () => {
+    appState.exportProgressWin = null
+  })
+
+  return appState.exportProgressWin
 }

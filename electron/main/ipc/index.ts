@@ -18,6 +18,7 @@ export function registerIpcHandlers() {
   ipcMain.on('window:open-recorder', appHandlers.openRecorderWindow)
   ipcMain.handle('window:isMaximized', appHandlers.handleIsMaximized)
   ipcMain.on('window:update-title-bar-overlay', appHandlers.updateTitleBarOverlay)
+  ipcMain.on('export-progress:set-collapsed', appHandlers.setExportProgressCollapsed)
 
   // Desktop
   ipcMain.handle('desktop:get-displays', desktopHandlers.getDisplays)

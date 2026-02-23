@@ -1,17 +1,29 @@
 // Contains business logic for video export.
 
 import log from 'electron-log/main'
-import { app, BrowserWindow, IpcMainInvokeEvent, ipcMain } from 'electron'
+import { app, BrowserWindow, IpcMainInvokeEvent, ipcMain, Menu, Tray, nativeImage, shell, powerSaveBlocker } from 'electron'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
+import { constants as osConstants, getPriority, setPriority } from 'node:os'
+import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, calculateExportDimensions } from '../lib/utils'
 import { spawnSync } from 'node:child_process'
-import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT } from '../lib/constants'
+import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
+import { createExportProgressWindow } from '../windows/temporary-windows'
 
 const FFMPEG_PATH = getFFmpegPath()
+const EXPORT_PROGRESS_INTERVAL_MS = 300
+const EXPORT_PROGRESS_STEP_PERCENT = 2
+const POSIX_PRIORITY_CANDIDATES = [-10, -5]
+const WINDOWS_PRIORITY_CANDIDATES = [
+  osConstants.priority.PRIORITY_HIGH,
+  osConstants.priority.PRIORITY_ABOVE_NORMAL,
+]
+const WINDOWS_NORMAL_PRIORITY = osConstants.priority.PRIORITY_NORMAL
+const store = new Store()
 
 type LaneLike = { id: string; order: number }
 type CutLike = { startTime: number; duration: number; laneId?: string; zIndex?: number }
@@ -100,6 +112,32 @@ const buildAudioTimelineSegments = (
   return segments
 }
 
+const getTargetPriorityCandidates = () =>
+  process.platform === 'win32' ? WINDOWS_PRIORITY_CANDIDATES : POSIX_PRIORITY_CANDIDATES
+
+const getNormalPriority = () => (process.platform === 'win32' ? WINDOWS_NORMAL_PRIORITY : 0)
+
+const trySetProcessPriority = (pid: number, priority: number, label: string) => {
+  try {
+    setPriority(pid, priority)
+    log.info(`[ExportManager] Priority set for ${label}: pid=${pid}, priority=${priority}`)
+    return true
+  } catch (error) {
+    log.warn(`[ExportManager] Failed to set priority for ${label}:`, error)
+    return false
+  }
+}
+
+const trySetProcessPriorityWithFallback = (pid: number, priorities: number[], label: string) => {
+  for (const priority of priorities) {
+    if (trySetProcessPriority(pid, priority, label)) {
+      return true
+    }
+  }
+
+  return false
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function startExport(event: IpcMainInvokeEvent, { projectState, exportSettings, outputPath }: any) {
   log.info('[ExportManager] Starting export process...')
@@ -112,9 +150,215 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   const exportStartTime = Date.now()
+  const getElapsedDurationSeconds = () => (Date.now() - exportStartTime) / 1000
 
   const editorWindow = BrowserWindow.fromWebContents(event.sender)
   if (!editorWindow) return
+  const playExportCompletionSound = Boolean(store.get('general.playExportCompletionSound', true))
+  const wasEditorVisibleBeforeExport = editorWindow.isVisible()
+  const wasEditorMinimizedBeforeExport = editorWindow.isMinimized()
+  const wasEditorSkipTaskbarBeforeExport =
+    (editorWindow as unknown as { isSkipTaskbar?: () => boolean }).isSkipTaskbar?.() ?? false
+  const targetPriorityCandidates = getTargetPriorityCandidates()
+  const normalPriorityFallback = getNormalPriority()
+  let originalMainProcessPriority = normalPriorityFallback
+  let mainPriorityBoostApplied = false
+  let ffmpegClosed = false
+  let exportCompleted = false
+  let uiCleanedUp = false
+  let powerSaveBlockerId: number | null = null
+  let lastProgressBroadcastAt = 0
+  let lastProgressBroadcast = -1
+  let cancellationHandler: () => void = () => {}
+
+  const playCompletionSound = (completionType: 'success' | 'error' | 'cancelled') => {
+    if (!playExportCompletionSound || completionType === 'cancelled') return
+    try {
+      shell.beep()
+    } catch (error) {
+      log.warn('[ExportManager] Failed to play export completion sound:', error)
+    }
+  }
+
+  const sendExportComplete = (
+    payload: { success: boolean; outputPath?: string; error?: string; duration?: number },
+    completionType: 'success' | 'error' | 'cancelled',
+  ) => {
+    if (editorWindow && !editorWindow.isDestroyed()) {
+      editorWindow.webContents.send('export:complete', payload)
+    } else {
+      log.warn('[ExportManager] Editor window was destroyed. Could not send export:complete message.')
+    }
+
+    const exportProgressWindow = appState.exportProgressWin
+    if (exportProgressWindow && !exportProgressWindow.isDestroyed()) {
+      exportProgressWindow.webContents.send('export:complete', payload)
+    }
+
+    playCompletionSound(completionType)
+  }
+
+  const updateExportTrayTooltip = (progress: number) => {
+    if (!appState.exportTray) return
+    try {
+      appState.exportTray.setToolTip(`Exporting... ${Math.round(progress)}%`)
+    } catch (error) {
+      log.warn('[ExportManager] Failed to update export tray tooltip:', error)
+    }
+  }
+
+  const sendProgressUpdate = (progress: number, stage: string, force: boolean = false) => {
+    const safeProgress = clamp(progress, 0, 100)
+    const now = Date.now()
+    const elapsed = now - lastProgressBroadcastAt
+    const progressDelta = Math.abs(safeProgress - lastProgressBroadcast)
+
+    const shouldSend =
+      force ||
+      lastProgressBroadcast < 0 ||
+      elapsed >= EXPORT_PROGRESS_INTERVAL_MS ||
+      progressDelta >= EXPORT_PROGRESS_STEP_PERCENT ||
+      safeProgress >= 100
+
+    if (!shouldSend) return
+
+    lastProgressBroadcastAt = now
+    lastProgressBroadcast = safeProgress
+
+    const payload = { progress: safeProgress, stage }
+
+    if (editorWindow && !editorWindow.isDestroyed()) {
+      editorWindow.webContents.send('export:progress', payload)
+    }
+
+    const exportProgressWindow = appState.exportProgressWin
+    if (exportProgressWindow && !exportProgressWindow.isDestroyed()) {
+      exportProgressWindow.webContents.send('export:progress', payload)
+    }
+
+    updateExportTrayTooltip(safeProgress)
+  }
+
+  const handleProgressWindowClose = (closeEvent: Electron.Event) => {
+    if (exportCompleted) return
+    closeEvent.preventDefault()
+    cancellationHandler()
+  }
+
+  const showExportProgressWindow = () => {
+    const progressWindow = createExportProgressWindow()
+    progressWindow.removeListener('close', handleProgressWindowClose)
+    progressWindow.on('close', handleProgressWindowClose)
+    if (!progressWindow.isVisible()) {
+      progressWindow.show()
+    }
+    progressWindow.focus()
+    return progressWindow
+  }
+
+  const createExportTray = () => {
+    if (appState.exportTray) return
+
+    try {
+      const iconPath = path.join(VITE_PUBLIC, 'recordsaas-appicon-tray.png')
+      const icon = nativeImage.createFromPath(iconPath)
+      if (icon.isEmpty()) {
+        throw new Error(`Tray icon not found or invalid: ${iconPath}`)
+      }
+
+      const tray = new Tray(icon)
+      appState.exportTray = tray
+      tray.setToolTip('Exporting... 0%')
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          {
+            label: 'Show Export Progress',
+            click: () => {
+              showExportProgressWindow()
+            },
+          },
+          { type: 'separator' },
+          {
+            label: 'Cancel Export',
+            click: () => {
+              cancellationHandler()
+            },
+          },
+        ]),
+      )
+      tray.on('click', () => {
+        showExportProgressWindow()
+      })
+    } catch (error) {
+      log.warn('[ExportManager] Failed to create export tray, continuing without tray:', error)
+      appState.exportTray = null
+    }
+  }
+
+  const cleanupExportUi = () => {
+    if (uiCleanedUp) return
+    uiCleanedUp = true
+
+    const exportProgressWindow = appState.exportProgressWin
+    if (exportProgressWindow && !exportProgressWindow.isDestroyed()) {
+      exportProgressWindow.removeListener('close', handleProgressWindowClose)
+      exportProgressWindow.close()
+    }
+
+    if (appState.exportTray) {
+      try {
+        appState.exportTray.destroy()
+      } catch (error) {
+        log.warn('[ExportManager] Failed to destroy export tray:', error)
+      }
+      appState.exportTray = null
+    }
+
+    if (editorWindow && !editorWindow.isDestroyed()) {
+      editorWindow.setSkipTaskbar(wasEditorSkipTaskbarBeforeExport)
+
+      if (wasEditorVisibleBeforeExport) {
+        editorWindow.show()
+      }
+
+      if (wasEditorMinimizedBeforeExport) {
+        editorWindow.minimize()
+      } else if (wasEditorVisibleBeforeExport) {
+        if (editorWindow.isMinimized()) {
+          editorWindow.restore()
+        }
+        editorWindow.focus()
+      }
+    }
+
+    if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlocker.stop(powerSaveBlockerId)
+      log.info(`[ExportManager] Stopped powerSaveBlocker id=${powerSaveBlockerId}`)
+      powerSaveBlockerId = null
+    }
+
+    if (mainPriorityBoostApplied) {
+      trySetProcessPriority(process.pid, originalMainProcessPriority, 'main-process-restore')
+      mainPriorityBoostApplied = false
+    }
+  }
+
+  try {
+    originalMainProcessPriority = getPriority(process.pid)
+  } catch (error) {
+    log.warn('[ExportManager] Could not read current main process priority. Using fallback restore value.', error)
+    originalMainProcessPriority = normalPriorityFallback
+  }
+
+  mainPriorityBoostApplied = trySetProcessPriorityWithFallback(process.pid, targetPriorityCandidates, 'main-process')
+
+  try {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    log.info(`[ExportManager] Started powerSaveBlocker id=${powerSaveBlockerId}`)
+  } catch (error) {
+    log.warn('[ExportManager] Failed to start powerSaveBlocker:', error)
+    powerSaveBlockerId = null
+  }
 
   if (appState.renderWorker) {
     appState.renderWorker.close()
@@ -313,31 +557,13 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   log.info('[ExportManager] Spawning FFmpeg with args:', ffmpegArgs.join(' '))
   const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
-  let ffmpegClosed = false
-  let exportCompleted = false
+  if (typeof ffmpeg.pid === 'number') {
+    trySetProcessPriorityWithFallback(ffmpeg.pid, targetPriorityCandidates, 'ffmpeg')
+  }
 
   ffmpeg.stderr.on('data', (data) => log.info(`[FFmpeg stderr]: ${data.toString()}`))
 
-  const cancellationHandler = () => {
-    log.warn('[ExportManager] Received "export:cancel". Terminating export.')
-    exportCompleted = true
-    if (ffmpeg && !ffmpeg.killed) {
-      ffmpeg.kill('SIGKILL')
-    }
-    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.close()
-    }
-    appState.renderWorker = null
-
-    if (editorWindow && !editorWindow.isDestroyed()) {
-      editorWindow.webContents.send('export:complete', { success: false, error: 'Export cancelled.' })
-    }
-
-    if (fs.existsSync(outputPath)) {
-      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete cancelled export file:', err))
-    }
-
-    // Cleanup processed audio temp dir if created
+  const cleanupProcessedAudio = () => {
     try {
       if (processedAudioPath) {
         const tmpDir = path.dirname(processedAudioPath)
@@ -351,19 +577,53 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const frameListener = (_e: any, { frame, progress }: { frame: Buffer; progress: number }) => {
     if (!ffmpegClosed && ffmpeg.stdin.writable) ffmpeg.stdin.write(frame)
-    if (editorWindow && !editorWindow.isDestroyed()) {
-      editorWindow.webContents.send('export:progress', { progress, stage: 'Rendering...' })
-    }
+    sendProgressUpdate(progress, 'Rendering...')
   }
 
   const finishListener = () => {
     log.info('[ExportManager] Render finished. Closing FFmpeg stdin.')
+    const finalizingProgress = lastProgressBroadcast < 0 ? 0 : Math.max(lastProgressBroadcast, 99)
+    sendProgressUpdate(finalizingProgress, 'Finalizing export...', true)
     if (!ffmpegClosed && ffmpeg.stdin.writable) {
       ffmpeg.stdin.end()
     }
   }
 
+  const cleanupListeners = () => {
+    ipcMain.removeListener('export:frame-data', frameListener)
+    ipcMain.removeListener('export:render-finished', finishListener)
+    ipcMain.removeListener('export:cancel', cancellationHandler)
+    ipcMain.removeListener('export:render-error', renderErrorListener)
+  }
+
+  cancellationHandler = () => {
+    if (exportCompleted) return
+
+    log.warn('[ExportManager] Received "export:cancel". Terminating export.')
+    exportCompleted = true
+
+    if (ffmpeg && !ffmpeg.killed) {
+      ffmpeg.kill('SIGKILL')
+    }
+    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
+      appState.renderWorker.close()
+    }
+    appState.renderWorker = null
+
+    sendExportComplete({ success: false, error: 'Export cancelled.', duration: getElapsedDurationSeconds() }, 'cancelled')
+    cleanupExportUi()
+
+    if (fs.existsSync(outputPath)) {
+      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete cancelled export file:', err))
+    }
+
+    cleanupProcessedAudio()
+    cleanupListeners()
+  }
+
   const renderErrorListener = (_e: unknown, { error }: { error: string }) => {
+    if (exportCompleted) return
+
     log.error('[ExportManager] Render error:', error)
     exportCompleted = true
     if (ffmpeg && !ffmpeg.killed) {
@@ -374,15 +634,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
     appState.renderWorker = null
 
-    if (editorWindow && !editorWindow.isDestroyed()) {
-      editorWindow.webContents.send('export:complete', { success: false, error })
-    }
-
-    // Clean up all listeners
-    ipcMain.removeListener('export:frame-data', frameListener)
-    ipcMain.removeListener('export:render-finished', finishListener)
-    ipcMain.removeListener('export:cancel', cancellationHandler)
-    ipcMain.removeListener('export:render-error', renderErrorListener)
+    sendExportComplete({ success: false, error, duration: getElapsedDurationSeconds() }, 'error')
+    cleanupExportUi()
+    cleanupProcessedAudio()
+    cleanupListeners()
   }
 
   ipcMain.on('export:frame-data', frameListener)
@@ -394,15 +649,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     ffmpegClosed = true
     log.info(`[ExportManager] FFmpeg process exited with code ${code}.`)
 
-    // Cleanup processed audio temporary directory if created
-    try {
-      if (processedAudioPath) {
-        const tmpDir = path.dirname(processedAudioPath)
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
-      }
-    } catch (err) {
-      log.error('[ExportManager] Failed to cleanup processed audio temp:', err)
-    }
+    cleanupProcessedAudio()
 
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
       appState.renderWorker.close()
@@ -410,32 +657,32 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     appState.renderWorker = null
 
     if (!exportCompleted) {
-      // Check if the editor window still exists before sending a message
-      if (editorWindow && !editorWindow.isDestroyed()) {
-        const renderDuration = (Date.now() - exportStartTime) / 1000;
-        if (code === null) {
-          // Cancelled by SIGKILL
-          editorWindow.webContents.send('export:complete', { success: false, error: 'Export cancelled.' })
-        } else if (code === 0) {
-          log.info(`[ExportManager] Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
-          editorWindow.webContents.send('export:complete', { success: true, outputPath, duration: renderDuration })
-        } else {
-          editorWindow.webContents.send('export:complete', { success: false, error: `FFmpeg exited with code ${code}` })
-        }
+      exportCompleted = true
+      const renderDuration = getElapsedDurationSeconds()
+      if (code === null) {
+        sendExportComplete({ success: false, error: 'Export cancelled.', duration: renderDuration }, 'cancelled')
+      } else if (code === 0) {
+        log.info(`[ExportManager] Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
+        sendProgressUpdate(100, 'Export completed', true)
+        sendExportComplete({ success: true, outputPath, duration: renderDuration }, 'success')
       } else {
-        log.warn('[ExportManager] Editor window was destroyed. Could not send export:complete message.')
+        sendExportComplete({ success: false, error: `FFmpeg exited with code ${code}`, duration: renderDuration }, 'error')
       }
     }
 
-    // Clean up all listeners
-    ipcMain.removeListener('export:frame-data', frameListener)
-    ipcMain.removeListener('export:render-finished', finishListener)
-    ipcMain.removeListener('export:cancel', cancellationHandler)
-    ipcMain.removeListener('export:render-error', renderErrorListener)
+    cleanupExportUi()
+    cleanupListeners()
   })
 
   ipcMain.once('render:ready', () => {
     log.info('[ExportManager] Worker ready. Sending project state.')
+    showExportProgressWindow()
+    createExportTray()
+    sendProgressUpdate(0, 'Preparing export...', true)
+    if (!editorWindow.isDestroyed()) {
+      editorWindow.setSkipTaskbar(true)
+      editorWindow.hide()
+    }
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
       appState.renderWorker.webContents.send('render:start', { projectState, exportSettings })
     }

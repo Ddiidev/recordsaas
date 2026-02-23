@@ -30,9 +30,11 @@ interface AppState {
   renderWorker: BrowserWindow | null
   savingWin: BrowserWindow | null
   selectionWin: BrowserWindow | null
+  exportProgressWin: BrowserWindow | null
 
   // System
   tray: Tray | null
+  exportTray: Tray | null
 
   // Processes & Streams
   ffmpegProcess: ChildProcessWithoutNullStreams | null
@@ -58,7 +60,9 @@ export const appState: AppState = {
   renderWorker: null,
   savingWin: null,
   selectionWin: null,
+  exportProgressWin: null,
   tray: null,
+  exportTray: null,
   ffmpegProcess: null,
   mouseTracker: null,
   recordedMouseEvents: [],
