@@ -1,7 +1,7 @@
 import { EASING_MAP } from './easing'
 import { DEFAULTS } from './constants'
-import { ZoomRegion, MetaDataItem, TimelineLane } from '../types'
-import { getTopActiveRegionAtTime } from './timeline-lanes'
+import { ZoomRegion, MetaDataItem } from '../types'
+import { getTopActiveRegionAtTime, type LanePrecedenceContext } from './timeline-lanes'
 
 // --- HELPER FUNCTIONS ---
 
@@ -148,13 +148,13 @@ const PAN_SMOOTHING_FACTOR = 0.1 // 0.1 provides very smooth but responsive move
 
 export const calculateZoomTransform = (
   currentTime: number,
-  zoomRegions: Record<string, ZoomRegion>,
-  timelineLanes: TimelineLane[],
+  zoomRegions: ZoomRegion[],
+  laneContext: LanePrecedenceContext,
   metadata: MetaDataItem[],
   recordingGeometry: { width: number; height: number },
   frameContentDimensions: { width: number; height: number },
 ): { scale: number; translateX: number; translateY: number; transformOrigin: string } => {
-  const activeRegion = getTopActiveRegionAtTime(Object.values(zoomRegions), currentTime, timelineLanes)
+  const activeRegion = getTopActiveRegionAtTime(zoomRegions, currentTime, laneContext)
 
   const defaultTransform = {
     scale: 1,

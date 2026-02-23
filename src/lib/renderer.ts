@@ -2,7 +2,12 @@ import { EditorState, RenderableState, WebcamPosition } from '../types'
 import { calculateZoomTransform, findLastMetadataIndex } from './transform'
 import { EASING_MAP } from './easing'
 import { DEFAULTS } from './constants'
-import { getTopActiveRegionAtTime, isRegionActiveAtTime, sortRegionsByLanePrecedence } from './timeline-lanes'
+import {
+  createLanePrecedenceContext,
+  getTopActiveRegionAtTime,
+  isRegionActiveAtTime,
+  sortRegionsByLanePrecedence,
+} from './timeline-lanes'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -291,6 +296,11 @@ export const drawScene = (
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
+  const laneContext = createLanePrecedenceContext(state.timelineLanes)
+  const swapRegions = Object.values(state.swapRegions || {})
+  const zoomRegions = Object.values(state.zoomRegions)
+  const blurRegions = Object.values(state.blurRegions)
+
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = exportQuality === 'ultra high' ? 'high' : 'medium'
@@ -318,11 +328,7 @@ export const drawScene = (
   const frameY = (outputHeight - frameContentHeight) / 2
 
   // --- 3. Determine Swap Region and Transitions ---
-  const activeSwapRegions = sortRegionsByLanePrecedence(
-    Object.values(state.swapRegions || {}).filter((region) => isRegionActiveAtTime(region, currentTime)),
-    state.timelineLanes,
-  ).reverse()
-  const activeSwapRegion = activeSwapRegions.length > 0 ? activeSwapRegions[0] : null
+  const activeSwapRegion = getTopActiveRegionAtTime(swapRegions, currentTime, laneContext)
 
   let isSwapped = false
   let swapProgress = 0
@@ -355,8 +361,8 @@ export const drawScene = (
     sCtx.save()
     const { scale, translateX, translateY, transformOrigin } = calculateZoomTransform(
       currentTime,
-      state.zoomRegions,
-      state.timelineLanes,
+      zoomRegions,
+      laneContext,
       state.metadata,
       state.recordingGeometry || state.videoDimensions,
       { width: frameContentWidth, height: frameContentHeight },
@@ -476,7 +482,7 @@ export const drawScene = (
   }
 
   const { webcamPosition, webcamStyles, isWebcamVisible } = state
-  const activeZoomRegion = getTopActiveRegionAtTime(Object.values(state.zoomRegions), currentTime, state.timelineLanes)
+  const activeZoomRegion = getTopActiveRegionAtTime(zoomRegions, currentTime, laneContext)
   const webcamDims = (() => {
     if (webcamDimensions) return webcamDimensions
     if (!webcamVideoElement) return null
@@ -725,8 +731,8 @@ export const drawScene = (
 
   // --- 7. Draw Blur Assets ---
   const activeBlurRegions = sortRegionsByLanePrecedence(
-    Object.values(state.blurRegions).filter((region) => isRegionActiveAtTime(region, currentTime)),
-    state.timelineLanes,
+    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+    laneContext,
   ).reverse()
 
   for (const region of activeBlurRegions) {
