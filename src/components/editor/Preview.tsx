@@ -18,6 +18,8 @@ import { cn } from '../../lib/utils'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 
+const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
+
 export const Preview = memo(
   ({
     videoRef,
@@ -94,6 +96,7 @@ export const Preview = memo(
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
     const audioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
+    const lastUiSyncAtRef = useRef(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
 
     // --- Start of Changes for Fullscreen Controls ---
@@ -184,6 +187,19 @@ export const Preview = memo(
       }
     }, [frameStyles.background])
 
+    const syncCurrentTimeToStore = useCallback(
+      (time: number, force: boolean = false) => {
+        const now = performance.now()
+        const playing = useEditorStore.getState().isPlaying
+
+        if (force || !playing || now - lastUiSyncAtRef.current >= PLAYBACK_UI_SYNC_INTERVAL_MS) {
+          lastUiSyncAtRef.current = now
+          setCurrentTime(time)
+        }
+      },
+      [setCurrentTime],
+    )
+
     const renderCanvas = useCallback(() => {
       const canvas = canvasRef.current
       const video = videoRef.current
@@ -211,6 +227,11 @@ export const Preview = memo(
           cancelAnimationFrame(animationFrameId.current)
         }
       }
+    }, [isPlaying, renderCanvas])
+
+    useEffect(() => {
+      if (isPlaying) return
+      renderCanvas()
     }, [
       isPlaying,
       currentTime,
@@ -228,6 +249,14 @@ export const Preview = memo(
       videoDimensions,
       cursorStyles,
       cursorBitmapsToRender,
+    ])
+
+    useEffect(() => {
+      if (!isPlaying) {
+        lastUiSyncAtRef.current = 0
+      }
+    }, [
+      isPlaying,
     ])
 
     useEffect(() => {
@@ -279,23 +308,23 @@ export const Preview = memo(
         if (activeCutRegion) {
           const newTime = activeCutRegion.startTime + activeCutRegion.duration
           video.currentTime = newTime
-          setCurrentTime(newTime)
+          syncCurrentTimeToStore(newTime, true)
           // Sync audio with the jump
           if (audioRef.current) {
             audioRef.current.currentTime = newTime
           }
         }
       }
-    }, [isCurrentlyCut, isPlaying, videoRef, setCurrentTime, timelineLanes])
+    }, [isCurrentlyCut, isPlaying, videoRef, timelineLanes, syncCurrentTimeToStore])
 
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
       const audio = audioRef.current
-      const newTime = video.currentTime
+      let playbackTime = video.currentTime
 
       // Handle speed regions
-      const activeSpeedRegion = getTopActiveRegionAtTime(Object.values(speedRegions), newTime, timelineLanes)
+      const activeSpeedRegion = getTopActiveRegionAtTime(Object.values(speedRegions), playbackTime, timelineLanes)
       video.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1
 
       const endTrimRegion = getTopRegionByPredicate(
@@ -303,30 +332,32 @@ export const Preview = memo(
         timelineLanes,
         (r) => r.trimType === 'end',
       )
-      if (endTrimRegion && newTime >= endTrimRegion.startTime) {
-        video.currentTime = endTrimRegion.startTime
+      if (endTrimRegion && playbackTime >= endTrimRegion.startTime) {
+        playbackTime = endTrimRegion.startTime
+        video.currentTime = playbackTime
         video.pause()
         // Also pause audio
         if (audio) {
-          audio.currentTime = endTrimRegion.startTime
+          audio.currentTime = playbackTime
           audio.pause()
         }
+        syncCurrentTimeToStore(playbackTime, true)
       }
       if (webcamVideoRef.current) {
         // Only sync webcam when drift exceeds 0.3s to avoid expensive seeks every frame
-        if (Math.abs(webcamVideoRef.current.currentTime - newTime) > 0.3) {
-          webcamVideoRef.current.currentTime = newTime
+        if (Math.abs(webcamVideoRef.current.currentTime - playbackTime) > 0.3) {
+          webcamVideoRef.current.currentTime = playbackTime
         }
         webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
       }
       if (audio) {
         // Sync audio with video
-        if (Math.abs(audio.currentTime - newTime) > 0.1) {
-          audio.currentTime = newTime
+        if (Math.abs(audio.currentTime - playbackTime) > 0.1) {
+          audio.currentTime = playbackTime
         }
         audio.playbackRate = video.playbackRate // Sync audio speed
       }
-      setCurrentTime(newTime)
+      syncCurrentTimeToStore(playbackTime)
     }
 
     const handleLoadedMetadata = () => {
@@ -385,10 +416,30 @@ export const Preview = memo(
       }
     }, [videoRef])
 
+    const handleVideoPlay = useCallback(() => {
+      setPlaying(true)
+    }, [setPlaying])
+
+    const handleVideoPause = useCallback(() => {
+      setPlaying(false)
+      const video = videoRef.current
+      if (video) {
+        syncCurrentTimeToStore(video.currentTime, true)
+      }
+    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+
+    const handleVideoEnded = useCallback(() => {
+      setPlaying(false)
+      const video = videoRef.current
+      if (video) {
+        syncCurrentTimeToStore(video.currentTime, true)
+      }
+    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+
     const handleScrub = (value: number) => {
       if (videoRef.current) {
         videoRef.current.currentTime = value
-        setCurrentTime(value)
+        syncCurrentTimeToStore(value, true)
       }
       if (audioRef.current) {
         audioRef.current.currentTime = value
@@ -402,7 +453,7 @@ export const Preview = memo(
         (r) => r.trimType === 'start',
       )
       const rewindTime = startTrimRegion ? startTrimRegion.startTime + startTrimRegion.duration : 0
-      setCurrentTime(rewindTime)
+      syncCurrentTimeToStore(rewindTime, true)
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
       }
@@ -462,9 +513,9 @@ export const Preview = memo(
           src={videoUrl || undefined}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
+          onPlay={handleVideoPlay}
+          onPause={handleVideoPause}
+          onEnded={handleVideoEnded}
           style={{ display: 'none' }}
         />
         {audioUrl && (
