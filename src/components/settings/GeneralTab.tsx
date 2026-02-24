@@ -22,6 +22,7 @@ export function GeneralTab() {
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
   const [forceGPU, setForceGPU] = useState(false)
+  const [playExportCompletionSound, setPlayExportCompletionSound] = useState(true)
 
   useEffect(() => {
     let isMounted = true
@@ -33,9 +34,18 @@ export function GeneralTab() {
           setPreparationCountdownSeconds(savedCountdown)
         }
 
-        const savedForceGPU = await window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu')
+        const [savedForceGPU, savedPlayExportCompletionSound] = await Promise.all([
+          window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
+          window.electronAPI.getSetting<boolean>('general.playExportCompletionSound'),
+        ])
         if (typeof savedForceGPU === 'boolean' && isMounted) {
           setForceGPU(savedForceGPU)
+        }
+
+        if (isMounted) {
+          setPlayExportCompletionSound(
+            typeof savedPlayExportCompletionSound === 'boolean' ? savedPlayExportCompletionSound : true,
+          )
         }
       } catch (error) {
         console.error('Failed to load settings:', error)
@@ -60,6 +70,11 @@ export function GeneralTab() {
   const handleForceGPUChange = (checked: boolean) => {
     setForceGPU(checked)
     window.electronAPI.setSetting('general.forceHighPerformanceGpu', checked)
+  }
+
+  const handlePlayExportCompletionSoundChange = (checked: boolean) => {
+    setPlayExportCompletionSound(checked)
+    window.electronAPI.setSetting('general.playExportCompletionSound', checked)
   }
 
   return (
@@ -112,6 +127,14 @@ export function GeneralTab() {
             checked={forceGPU} 
             onCheckedChange={handleForceGPUChange} 
           />
+        </div>
+
+        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">
+          <div>
+            <h3 className="font-medium text-foreground">Export Completion Sound</h3>
+            <p className="text-sm text-muted-foreground">Play a sound when export finishes with success or error.</p>
+          </div>
+          <Switch checked={playExportCompletionSound} onCheckedChange={handlePlayExportCompletionSoundChange} />
         </div>
       </div>
     </div>

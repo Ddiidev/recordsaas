@@ -245,6 +245,7 @@ export interface PlaybackState {
 }
 export interface PlaybackActions {
   setCurrentTime: (time: number) => void
+  setCurrentTimeThrottled: (time: number) => void
   togglePlay: () => void
   setPlaying: (isPlaying: boolean) => void
   seekToPreviousFrame: () => void

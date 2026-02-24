@@ -16,7 +16,13 @@ export const useExportProcess = () => {
   // Effect to set up and tear down IPC listeners for export progress and completion
   useEffect(() => {
     const cleanProgressListener = window.electronAPI.onExportProgress(({ progress }) => {
-      setProgress(progress)
+      setProgress((currentProgress) => {
+        const safeProgress = Number.isFinite(progress) ? progress : currentProgress
+        if (Math.floor(safeProgress) === Math.floor(currentProgress)) {
+          return currentProgress
+        }
+        return safeProgress
+      })
     })
 
     const cleanCompleteListener = window.electronAPI.onExportComplete(({ success, outputPath, error, duration }) => {

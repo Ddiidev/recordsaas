@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, memo, useState, useCallback } from 'react'
-import { useEditorStore, usePlaybackState } from '../../store/editorStore'
+import { useEditorStore } from '../../store/editorStore'
 import { Movie } from 'tabler-icons-react'
 import { FullscreenIcon, ExitFullscreenIcon } from '../ui/icons'
 import {
@@ -17,6 +17,8 @@ import { drawScene } from '../../lib/renderer'
 import { cn } from '../../lib/utils'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
+
+const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 
 export const Preview = memo(
   ({
@@ -50,6 +52,7 @@ export const Preview = memo(
       volume,
       isMuted,
       setCurrentTime,
+      setCurrentTimeThrottled,
       setSelectedRegionId,
       updateRegion,
       cursorStyles,
@@ -79,6 +82,7 @@ export const Preview = memo(
         volume: state.volume,
         isMuted: state.isMuted,
         setCurrentTime: state.setCurrentTime,
+        setCurrentTimeThrottled: state.setCurrentTimeThrottled,
         setSelectedRegionId: state.setSelectedRegionId,
         updateRegion: state.updateRegion,
         cursorStyles: state.cursorStyles,
@@ -87,13 +91,15 @@ export const Preview = memo(
     )
 
     const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack } = useEditorStore.getState()
-    const { isPlaying, isCurrentlyCut } = usePlaybackState()
+    const isPlaying = useEditorStore((state) => state.isPlaying)
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
     const audioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
+    const lastUiSyncAtRef = useRef(0)
+    const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
 
     // --- Start of Changes for Fullscreen Controls ---
@@ -184,6 +190,19 @@ export const Preview = memo(
       }
     }, [frameStyles.background])
 
+    const syncCurrentTimeToStore = useCallback(
+      (time: number, force: boolean = false) => {
+        const playing = useEditorStore.getState().isPlaying
+
+        if (force || !playing) {
+          setCurrentTime(time)
+        } else {
+          setCurrentTimeThrottled(time)
+        }
+      },
+      [setCurrentTime, setCurrentTimeThrottled],
+    )
+
     const renderCanvas = useCallback(() => {
       const canvas = canvasRef.current
       const video = videoRef.current
@@ -211,6 +230,11 @@ export const Preview = memo(
           cancelAnimationFrame(animationFrameId.current)
         }
       }
+    }, [isPlaying, renderCanvas])
+
+    useEffect(() => {
+      if (isPlaying) return
+      renderCanvas()
     }, [
       isPlaying,
       currentTime,
@@ -228,6 +252,16 @@ export const Preview = memo(
       videoDimensions,
       cursorStyles,
       cursorBitmapsToRender,
+    ])
+
+    useEffect(() => {
+      if (!isPlaying) {
+        lastUiSyncAtRef.current = 0
+        setPlaybackUiTime(currentTime)
+      }
+    }, [
+      isPlaying,
+      currentTime,
     ])
 
     useEffect(() => {
@@ -270,32 +304,28 @@ export const Preview = memo(
       }
     }, [volume, isMuted, videoRef, audioUrl])
 
-    useEffect(() => {
-      const video = videoRef.current
-      if (!video) return
-      if (isPlaying && isCurrentlyCut) {
-        const allCutRegions = Object.values(useEditorStore.getState().cutRegions)
-        const activeCutRegion = getTopActiveRegionAtTime(allCutRegions, video.currentTime, timelineLanes)
-        if (activeCutRegion) {
-          const newTime = activeCutRegion.startTime + activeCutRegion.duration
-          video.currentTime = newTime
-          setCurrentTime(newTime)
-          // Sync audio with the jump
-          if (audioRef.current) {
-            audioRef.current.currentTime = newTime
-          }
-        }
-      }
-    }, [isCurrentlyCut, isPlaying, videoRef, setCurrentTime, timelineLanes])
-
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
       const audio = audioRef.current
-      const newTime = video.currentTime
+      let playbackTime = video.currentTime
+
+      // Handle cut regions without depending on store currentTime updates during playback
+      if (isPlaying) {
+        const activeCutRegion = getTopActiveRegionAtTime(Object.values(cutRegions), playbackTime, timelineLanes)
+        if (activeCutRegion) {
+          playbackTime = activeCutRegion.startTime + activeCutRegion.duration
+          video.currentTime = playbackTime
+          // Sync audio with the jump
+          if (audio) {
+            audio.currentTime = playbackTime
+          }
+          syncCurrentTimeToStore(playbackTime, true)
+        }
+      }
 
       // Handle speed regions
-      const activeSpeedRegion = getTopActiveRegionAtTime(Object.values(speedRegions), newTime, timelineLanes)
+      const activeSpeedRegion = getTopActiveRegionAtTime(Object.values(speedRegions), playbackTime, timelineLanes)
       video.playbackRate = activeSpeedRegion ? activeSpeedRegion.speed : 1
 
       const endTrimRegion = getTopRegionByPredicate(
@@ -303,30 +333,43 @@ export const Preview = memo(
         timelineLanes,
         (r) => r.trimType === 'end',
       )
-      if (endTrimRegion && newTime >= endTrimRegion.startTime) {
-        video.currentTime = endTrimRegion.startTime
+      if (endTrimRegion && playbackTime >= endTrimRegion.startTime) {
+        playbackTime = endTrimRegion.startTime
+        video.currentTime = playbackTime
         video.pause()
         // Also pause audio
         if (audio) {
-          audio.currentTime = endTrimRegion.startTime
+          audio.currentTime = playbackTime
           audio.pause()
         }
+        syncCurrentTimeToStore(playbackTime, true)
       }
       if (webcamVideoRef.current) {
         // Only sync webcam when drift exceeds 0.3s to avoid expensive seeks every frame
-        if (Math.abs(webcamVideoRef.current.currentTime - newTime) > 0.3) {
-          webcamVideoRef.current.currentTime = newTime
+        if (Math.abs(webcamVideoRef.current.currentTime - playbackTime) > 0.3) {
+          webcamVideoRef.current.currentTime = playbackTime
         }
         webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
       }
       if (audio) {
         // Sync audio with video
-        if (Math.abs(audio.currentTime - newTime) > 0.1) {
-          audio.currentTime = newTime
+        if (Math.abs(audio.currentTime - playbackTime) > 0.1) {
+          audio.currentTime = playbackTime
         }
         audio.playbackRate = video.playbackRate // Sync audio speed
       }
-      setCurrentTime(newTime)
+
+      if (isPlaying) {
+        const now = performance.now()
+        if (now - lastUiSyncAtRef.current >= PLAYBACK_UI_SYNC_INTERVAL_MS) {
+          lastUiSyncAtRef.current = now
+          setPlaybackUiTime(playbackTime)
+          syncCurrentTimeToStore(playbackTime)
+        }
+      } else {
+        setPlaybackUiTime(playbackTime)
+        syncCurrentTimeToStore(playbackTime)
+      }
     }
 
     const handleLoadedMetadata = () => {
@@ -385,10 +428,37 @@ export const Preview = memo(
       }
     }, [videoRef])
 
+    const handleVideoPlay = useCallback(() => {
+      setPlaying(true)
+      const video = videoRef.current
+      if (video) {
+        setPlaybackUiTime(video.currentTime)
+      }
+    }, [setPlaying, videoRef])
+
+    const handleVideoPause = useCallback(() => {
+      setPlaying(false)
+      const video = videoRef.current
+      if (video) {
+        setPlaybackUiTime(video.currentTime)
+        syncCurrentTimeToStore(video.currentTime, true)
+      }
+    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+
+    const handleVideoEnded = useCallback(() => {
+      setPlaying(false)
+      const video = videoRef.current
+      if (video) {
+        setPlaybackUiTime(video.currentTime)
+        syncCurrentTimeToStore(video.currentTime, true)
+      }
+    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+
     const handleScrub = (value: number) => {
       if (videoRef.current) {
         videoRef.current.currentTime = value
-        setCurrentTime(value)
+        setPlaybackUiTime(value)
+        syncCurrentTimeToStore(value, true)
       }
       if (audioRef.current) {
         audioRef.current.currentTime = value
@@ -402,7 +472,8 @@ export const Preview = memo(
         (r) => r.trimType === 'start',
       )
       const rewindTime = startTrimRegion ? startTrimRegion.startTime + startTrimRegion.duration : 0
-      setCurrentTime(rewindTime)
+      setPlaybackUiTime(rewindTime)
+      syncCurrentTimeToStore(rewindTime, true)
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
       }
@@ -410,6 +481,8 @@ export const Preview = memo(
         audioRef.current.currentTime = rewindTime
       }
     }
+
+    const previewTime = isPlaying ? playbackUiTime : currentTime
 
     return (
       <div
@@ -446,7 +519,7 @@ export const Preview = memo(
             <BlurOverlayEditor
               canvasRef={canvasRef}
               blurRegions={blurRegions}
-              currentTime={currentTime}
+              currentTime={previewTime}
               timelineLanes={timelineLanes}
               frameStyles={frameStyles}
               videoDimensions={videoDimensions}
@@ -462,9 +535,9 @@ export const Preview = memo(
           src={videoUrl || undefined}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
+          onPlay={handleVideoPlay}
+          onPause={handleVideoPause}
+          onEnded={handleVideoEnded}
           style={{ display: 'none' }}
         />
         {audioUrl && (
@@ -541,7 +614,7 @@ export const Preview = memo(
               </Button>
 
               <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4">
-                <span className="text-foreground font-semibold">{formatTime(currentTime, true)}</span>
+                <span className="text-foreground font-semibold">{formatTime(previewTime, true)}</span>
                 <span className="text-muted-foreground/50">/</span>
                 <span className="text-muted-foreground">{formatTime(duration, true)}</span>
               </div>
@@ -549,7 +622,7 @@ export const Preview = memo(
                 min={0}
                 max={duration}
                 step={0.01}
-                value={currentTime}
+                value={previewTime}
                 onChange={handleScrub}
                 disabled={duration === 0}
                 className="flex-1"
