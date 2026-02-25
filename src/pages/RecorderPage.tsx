@@ -36,7 +36,9 @@ const WINDOWS_SCALES = [
 ]
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
-const RECORDER_WINDOW_DEFAULT_SIZE = { width: 900, height: 360 }
+const RECORDER_WINDOW_COMPACT_SIZE = { width: 900, height: 360 }
+// Preview no longer controls window size; keep content scrollable instead
+// const RECORDER_WINDOW_PREVIEW_SIZE = { width: 900, height: 360 }
 const RECORDER_WINDOW_SETTINGS_SIZE = { width: 900, height: 700 }
 
 const isPreparationCountdownOption = (value: number): value is (typeof PREPARATION_COUNTDOWN_OPTIONS)[number] =>
@@ -70,6 +72,11 @@ export function RecorderPage() {
   const preparationCountdownIntervalRef = useRef<number | null>(null)
 
   const cursorScales = useMemo(() => (platform === 'win32' ? WINDOWS_SCALES : LINUX_SCALES), [platform])
+  const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
+  const handleSettingsClose = () => {
+    setSettingsModalOpen(false)
+    window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
+  }
 
   // Effect for initializing settings and devices from storage/system
   useEffect(() => {
@@ -192,11 +199,35 @@ export function RecorderPage() {
     if (isSettingsModalOpen) {
       window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_SETTINGS_SIZE)
     } else {
-      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_DEFAULT_SIZE)
+      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
     }
 
     return () => {
-      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_DEFAULT_SIZE)
+      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
+    }
+  }, [isSettingsModalOpen])
+
+  // Enable click-through only when Settings is closed
+  useEffect(() => {
+    if (isSettingsModalOpen) {
+      window.electronAPI.setRecorderIgnoreMouse(false)
+      return
+    }
+    const onMouseMove = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      const interactive = target?.closest('[data-interactive="true"]')
+      window.electronAPI.setRecorderIgnoreMouse(!interactive)
+    }
+    const onMouseLeave = () => {
+      window.electronAPI.setRecorderIgnoreMouse(true)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseleave', onMouseLeave)
+    window.electronAPI.setRecorderIgnoreMouse(true)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseleave', onMouseLeave)
+      window.electronAPI.setRecorderIgnoreMouse(false)
     }
   }, [isSettingsModalOpen])
 
@@ -631,7 +662,7 @@ export function RecorderPage() {
           <div
             className={cn(
               'mt-4 mx-auto w-48 aspect-square rounded-2xl overflow-hidden shadow-xl bg-black transition-all duration-300',
-              selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
+              isWebcamPreviewVisible
                 ? 'opacity-100 scale-100'
                 : 'opacity-0 scale-95 pointer-events-none',
             )}
@@ -653,7 +684,7 @@ export function RecorderPage() {
         </div>
       )}
 
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} isTransparent />
+      <SettingsModal isOpen={isSettingsModalOpen} onClose={handleSettingsClose} isTransparent />
       </div>
     </TooltipProvider>
   )
