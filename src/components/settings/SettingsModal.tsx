@@ -40,6 +40,7 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false }: Settin
 
   return (
     <div
+      data-interactive="true"
       className={cn(
         'fixed inset-0 z-50 flex items-center justify-center',
         isTransparent ? 'bg-transparent' : 'bg-background/80 backdrop-blur-[2px]'
@@ -47,6 +48,7 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false }: Settin
       onClick={onClose}
     >
       <div
+        data-interactive="true"
         className={cn(
           'w-full max-w-3xl h-[60vh] max-h-[500px] flex flex-row m-4 rounded-xl bg-card border shadow-2xl overflow-hidden relative',
           isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'

@@ -16,6 +16,7 @@ import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
 import { Button } from '../components/ui/button'
+import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 
 export function EditorPage() {
@@ -49,6 +50,16 @@ export function EditorPage() {
     startExport,
     cancelExport,
   } = useExportProcess()
+
+  // Timeline lanes setup and management
+  useEditorStore(
+    useShallow((state) => ({
+      lanes: state.timelineLanes,
+      addLane: state.addTimelineLane,
+      removeLane: state.removeTimelineLane,
+      moveLane: state.moveTimelineLane,
+    })),
+  )
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPresetModalOpen, setPresetModalOpen] = useState(false)
@@ -261,29 +272,29 @@ export function EditorPage() {
       >
         {getPresetButtonContent()}
       </Button>,
-      <Button
-        key="settings"
-        variant="ghost"
-        size="icon"
-        onClick={() => setSettingsModalOpen(true)}
-        aria-label="Open Settings"
-        title="Settings"
-        className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
-      >
-        <Settings className="w-4 h-4" />
-      </Button>,
+      <SimpleTooltip key="settings" content="Settings">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setSettingsModalOpen(true)}
+          aria-label="Open Settings"
+          className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+        >
+          <Settings className="w-4 h-4" />
+        </Button>
+      </SimpleTooltip>,
       <div key="separator" className="w-px h-6 bg-border mx-1" />,
-      <Button
-        key="home"
-        variant="ghost"
-        size="icon"
-        onClick={() => window.electronAPI.openRecorder()}
-        aria-label="Home"
-        title="Home"
-        className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
-      >
-        <Home className="w-4 h-4" />
-      </Button>,
+      <SimpleTooltip key="home" content="Home">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => window.electronAPI.openRecorder()}
+          aria-label="Home"
+          className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+        >
+          <Home className="w-4 h-4" />
+        </Button>
+      </SimpleTooltip>,
       updateInfo && <UpdateNotification key="update" info={updateInfo} />,
     ].filter(Boolean)
 
@@ -296,96 +307,98 @@ export function EditorPage() {
   }
 
   return (
-    <main className="h-screen w-screen bg-background flex flex-col overflow-hidden select-none">
-      {/*
-        Instead of conditionally rendering the entire layout, we now render it once
-        and use CSS classes to hide/show elements and expand the preview for fullscreen.
-        This prevents components like SidePanel from unmounting, preserving their internal state.
-      */}
-      <header
-        className={cn(
-          'relative h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
-          isPreviewFullScreen && 'hidden', // Hide header in fullscreen
-        )}
-        style={{ WebkitAppRegion: 'drag' }}
-      >
-        {/* Left side controls */}
-        <div className="flex items-center gap-4 h-full">
-          {platform === 'linux' && (
-            <div className="h-full flex items-center">
-              <WindowControls />
-            </div>
+    <TooltipProvider delayDuration={400}>
+      <main className="h-screen w-screen bg-background flex flex-col overflow-hidden select-none">
+        {/*
+          Instead of conditionally rendering the entire layout, we now render it once
+          and use CSS classes to hide/show elements and expand the preview for fullscreen.
+          This prevents components like SidePanel from unmounting, preserving their internal state.
+        */}
+        <header
+          className={cn(
+            'relative h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
+            isPreviewFullScreen && 'hidden', // Hide header in fullscreen
           )}
-          {platform === 'win32' && (
+          style={{ WebkitAppRegion: 'drag' }}
+        >
+          {/* Left side controls */}
+          <div className="flex items-center gap-4 h-full">
+            {platform === 'linux' && (
+              <div className="h-full flex items-center">
+                <WindowControls />
+              </div>
+            )}
+            {platform === 'win32' && (
+              <div
+                className="flex items-center gap-2 flex-row-reverse" // Use flex-row-reverse to get desired order
+                style={{ WebkitAppRegion: 'no-drag' }}
+              >
+                {renderHeaderActions()}
+              </div>
+            )}
+          </div>
+
+          {/* Centered Title */}
+          <h1 className="text-sm font-bold text-foreground pointer-events-none tracking-tight absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            Record<span className="text-primary">SaaS</span>
+          </h1>
+
+          {/* Right side controls (for non-Windows) */}
+          {platform !== 'win32' && (
             <div
-              className="flex items-center gap-2 flex-row-reverse" // Use flex-row-reverse to get desired order
+              className="flex items-center gap-2" // Use flex-row-reverse to get desired order
               style={{ WebkitAppRegion: 'no-drag' }}
             >
               {renderHeaderActions()}
             </div>
           )}
-        </div>
+        </header>
 
-        {/* Centered Title */}
-        <h1 className="text-sm font-bold text-foreground pointer-events-none tracking-tight absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          Record<span className="text-primary">SaaS</span>
-        </h1>
-
-        {/* Right side controls (for non-Windows) */}
-        {platform !== 'win32' && (
-          <div
-            className="flex items-center gap-2" // Use flex-row-reverse to get desired order
-            style={{ WebkitAppRegion: 'no-drag' }}
-          >
-            {renderHeaderActions()}
-          </div>
-        )}
-      </header>
-
-      <div className={cn('flex flex-row-reverse flex-1 overflow-hidden', isPreviewFullScreen && 'h-full w-full')}>
-        <div
-          className={cn(
-            'w-[28rem] flex-shrink-0 bg-sidebar border-l border-sidebar-border overflow-hidden',
-            isPreviewFullScreen && 'hidden', // Hide SidePanel in fullscreen
-          )}
-        >
-          <SidePanel />
-        </div>
-        <div className="flex-1 flex flex-col overflow-hidden bg-background">
+        <div className={cn('flex flex-row-reverse flex-1 overflow-hidden', isPreviewFullScreen && 'h-full w-full')}>
           <div
             className={cn(
-              'flex-1 flex items-center justify-center p-6 overflow-hidden min-h-0',
-              // Make the preview container expand to fill the screen in fullscreen mode
-              isPreviewFullScreen && 'fixed inset-0 z-50 bg-black p-0',
+              'w-[28rem] flex-shrink-0 bg-sidebar border-l border-sidebar-border overflow-hidden',
+              isPreviewFullScreen && 'hidden', // Hide SidePanel in fullscreen
             )}
           >
-            <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} />
+            <SidePanel />
           </div>
-          <div className={cn('flex-shrink-0', isPreviewFullScreen && 'hidden')}>
-            <PreviewControls />
-          </div>
-          <div
-            className={cn(
-              'flex-shrink-0 bg-card/60 border-t border-border/50 backdrop-blur-sm overflow-hidden',
-              isPreviewFullScreen && 'hidden', // Hide Timeline in fullscreen
-            )}
-          >
-            <Timeline videoRef={videoRef} />
+          <div className="flex-1 flex flex-col overflow-hidden bg-background">
+            <div
+              className={cn(
+                'flex-1 flex items-center justify-center p-6 overflow-hidden min-h-0',
+                // Make the preview container expand to fill the screen in fullscreen mode
+                isPreviewFullScreen && 'fixed inset-0 z-50 bg-black p-0',
+              )}
+            >
+              <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} />
+            </div>
+            <div className={cn('flex-shrink-0', isPreviewFullScreen && 'hidden')}>
+              <PreviewControls />
+            </div>
+            <div
+              className={cn(
+                'flex-shrink-0 bg-card/60 border-t border-border/50 backdrop-blur-sm overflow-hidden',
+                isPreviewFullScreen && 'hidden', // Hide Timeline in fullscreen
+              )}
+            >
+              <Timeline videoRef={videoRef} />
+            </div>
           </div>
         </div>
-      </div>
 
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={closeExportModal}
-        onStartExport={startExport}
-        onCancelExport={cancelExport}
-        isExporting={isExporting}
-        progress={exportProgress}
-        result={exportResult}
-      />
-      <PresetModal isOpen={isPresetModalOpen} onClose={() => setPresetModalOpen(false)} />
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} />
-    </main>
+        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} />
+        <PresetModal isOpen={isPresetModalOpen} onClose={() => setPresetModalOpen(false)} />
+        <ExportModal
+          isOpen={isExportModalOpen}
+          onClose={closeExportModal}
+          onStartExport={startExport}
+          onCancelExport={cancelExport}
+          isExporting={isExporting}
+          progress={exportProgress}
+          result={exportResult}
+        />
+      </main>
+    </TooltipProvider>
   )
 }

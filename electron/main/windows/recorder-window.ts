@@ -11,8 +11,8 @@ import { resetCursorScale } from '../features/cursor-manager'
 export function createRecorderWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
-  const windowWidth = 1100
-  const windowHeight = 700
+  const windowWidth = 900
+  const windowHeight = 180
   const x = Math.round((screenWidth - windowWidth) / 2)
   const y = Math.max(0, Math.round((screenHeight - windowHeight) / 2))
 
@@ -26,6 +26,7 @@ export function createRecorderWindow() {
     transparent: true,
     alwaysOnTop: false,
     resizable: false,
+    useContentSize: true,
     webPreferences: {
       nodeIntegration: true,
       preload: PRELOAD_SCRIPT,
@@ -61,6 +62,7 @@ export function createRecorderWindow() {
   ipcMain.on('recorder:set-size', (_event, { width, height }: { width: number; height: number }) => {
     if (appState.recorderWin) {
       log.info(`Resizing recorder window to ${width}x${height}`)
+      appState.recorderWin.setContentSize(width, height)
       appState.recorderWin.setSize(width, height, true)
     }
   })
@@ -75,6 +77,13 @@ export function createRecorderWindow() {
           win.setIgnoreMouseEvents(false)
         }
       }, 100)
+    }
+  })
+
+  ipcMain.on('recorder:set-ignore', (_event, ignore: boolean) => {
+    const win = appState.recorderWin
+    if (win && !win.isDestroyed()) {
+      win.setIgnoreMouseEvents(!!ignore, { forward: true })
     }
   })
 }

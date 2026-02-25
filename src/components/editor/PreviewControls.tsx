@@ -1,40 +1,9 @@
-import React from 'react'
 import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search, Refresh } from 'tabler-icons-react'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Slider } from '../ui/slider'
-import { cn } from '../../lib/utils'
-
-interface ToolbarButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'default' | 'icon'
-  children: React.ReactNode
-}
-
-const ToolbarButton = React.forwardRef<HTMLButtonElement, ToolbarButtonProps>(
-  ({ variant = 'default', className = '', disabled, children, ...props }, ref) => {
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          'inline-flex items-center justify-center font-semibold transition-colors duration-150',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-          'disabled:pointer-events-none disabled:opacity-40',
-          variant === 'icon' ? 'h-10 w-10 rounded-xl' : 'h-10 px-4 rounded-xl text-sm gap-2',
-          disabled
-            ? 'bg-card/80 text-muted-foreground/50 border border-border shadow-sm opacity-50'
-            : 'bg-card/90 text-foreground border border-border shadow-sm hover:bg-accent hover:text-accent-foreground hover:border-border hover:shadow-md',
-          className,
-        )}
-        disabled={disabled}
-        {...props}
-      >
-        {children}
-      </button>
-    )
-  },
-)
-ToolbarButton.displayName = 'ToolbarButton'
+import { ToolbarButton } from './ToolbarButton'
 
 export function PreviewControls() {
   const {
@@ -63,29 +32,29 @@ export function PreviewControls() {
     <div className="h-18 bg-card/95 backdrop-blur-xl border-t border-border/60 flex items-center justify-between px-6 shadow-lg">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <ToolbarButton title="Add Zoom Region" onClick={() => addZoomRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Zoom Region" onClick={() => addZoomRegion()} disabled={!!selectedRegionId}>
             <ZoomIn className="w-4 h-4" />
             <span>Zoom</span>
           </ToolbarButton>
-          <ToolbarButton title="Add Cut Region" onClick={() => addCutRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Cut Region" onClick={() => addCutRegion()} disabled={!!selectedRegionId}>
             <Scissors className="w-4 h-4" />
             <span>Trim</span>
           </ToolbarButton>
-          <ToolbarButton title="Add Speed Region" onClick={() => addSpeedRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Speed Region" onClick={() => addSpeedRegion()} disabled={!!selectedRegionId}>
             <PlayerTrackNext className="w-4 h-4" />
             <span>Speed</span>
           </ToolbarButton>
-          <ToolbarButton title="Add Blur Region" onClick={() => addBlurRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Blur Region" onClick={() => addBlurRegion()} disabled={!!selectedRegionId}>
             <Search className="w-4 h-4" />
             <span>Blur</span>
           </ToolbarButton>
-          <ToolbarButton title="Add Camera Swap" onClick={() => addSwapRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Camera Swap" onClick={() => addSwapRegion()} disabled={!!selectedRegionId}>
             <Refresh className="w-4 h-4" />
             <span>Swap</span>
           </ToolbarButton>
           <ToolbarButton
             variant="icon"
-            title="Delete Selected Region"
+            tooltip="Delete Selected Region"
             onClick={handleDelete}
             disabled={!selectedRegionId}
           >
@@ -96,12 +65,12 @@ export function PreviewControls() {
         <div className="h-8 w-px bg-border" />
 
         <div className="flex items-center gap-2">
-          <ToolbarButton variant="icon" title="Undo (Ctrl+Z)" onClick={() => undo()} disabled={pastStates.length === 0}>
+          <ToolbarButton variant="icon" tooltip="Undo (Ctrl+Z)" onClick={() => undo()} disabled={pastStates.length === 0}>
             <ArrowBackUp className="w-4 h-4" />
           </ToolbarButton>
           <ToolbarButton
             variant="icon"
-            title="Redo (Ctrl+Y)"
+            tooltip="Redo (Ctrl+Y)"
             onClick={() => redo()}
             disabled={futureStates.length === 0}
           >
