@@ -19,7 +19,7 @@ setupLogging()
 // Enable WebCodecs in renderer/worker contexts
 app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('enable-blink-features', 'WebCodecs,WebCodecsExperimental')
-// app.commandLine.appendSwitch('disable-gpu-vsync')
+app.commandLine.appendSwitch('disable-gpu-vsync')
 
 const store = new Store()
 if (store.get('general.forceHighPerformanceGpu', false)) {

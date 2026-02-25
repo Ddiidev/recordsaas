@@ -33,6 +33,40 @@ export const initialProjectState: ProjectState = {
   hasAudioTrack: false,
 }
 
+const extractProjectEvents = (parsedData: Record<string, unknown>): MetaDataItem[] => {
+  const events = parsedData.events
+  if (Array.isArray(events)) {
+    return events as MetaDataItem[]
+  }
+
+  const legacyMetadata = parsedData.metadata
+  if (Array.isArray(legacyMetadata)) {
+    return legacyMetadata as MetaDataItem[]
+  }
+
+  return []
+}
+
+const normalizeProjectEventTimestamps = (events: MetaDataItem[]): MetaDataItem[] => {
+  if (events.length === 0) return []
+
+  const maxTimestamp = events.reduce((max, item) => {
+    const timestamp = typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) ? item.timestamp : 0
+    return Math.max(max, timestamp)
+  }, 0)
+
+  // Heuristic: metadata from recorder/import is in ms, editor timeline is in seconds.
+  const shouldConvertFromMs = maxTimestamp > 1000
+
+  return events.map((item) => {
+    const timestamp = typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) ? item.timestamp : 0
+    return {
+      ...item,
+      timestamp: shouldConvertFromMs ? timestamp / 1000 : timestamp,
+    }
+  })
+}
+
 /**
  * Generates automatic zoom regions based on click events from metadata.
  * @param metadata - The array of mouse events.
@@ -213,39 +247,51 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
 
     try {
       const metadataContent = await window.electronAPI.readFile(metadataPath)
-      const parsedData = JSON.parse(metadataContent)
-
-      const processedMetadata = (parsedData.events || []).map((item: MetaDataItem) => ({
-        ...item,
-        timestamp: item.timestamp / 1000,
-      }))
+      const parsedData = JSON.parse(metadataContent) as Record<string, unknown>
+      const rawEvents = extractProjectEvents(parsedData)
+      if (rawEvents.length === 0) {
+        console.warn('[ProjectSlice] No events found in metadata payload (events/metadata).')
+      }
+      const processedMetadata = normalizeProjectEventTimestamps(rawEvents)
+      if (processedMetadata.length === 0) {
+        console.warn('[ProjectSlice] Processed metadata is empty after loading project.')
+      }
 
       const laneId = getFallbackLaneId(get().timelineLanes)
+      const fallbackGeometry: RecordingGeometry = {
+        x: 0,
+        y: 0,
+        width: get().videoDimensions.width,
+        height: get().videoDimensions.height,
+      }
+      const recordingGeometry = (parsedData.recordingGeometry || parsedData.geometry || fallbackGeometry) as RecordingGeometry
       const newZoomRegions = generateAutoZoomRegions(
         processedMetadata,
-        parsedData.geometry,
+        recordingGeometry,
         get().videoDimensions,
         laneId,
       )
 
-      const platform = parsedData.platform || (await window.electronAPI.getPlatform())
+      const platform = (parsedData.platform as NodeJS.Platform | undefined) || (await window.electronAPI.getPlatform())
       set((state) => {
         state.platform = platform
         state.metadata = processedMetadata
-        state.recordingGeometry = parsedData.recordingGeometry || parsedData.geometry || null
-        state.screenSize = parsedData.screenSize || null
-        state.syncOffset = parsedData.syncOffset || 0
-        state.zoomRegions = parsedData.zoomRegions || newZoomRegions
-        state.cutRegions = parsedData.cutRegions || {}
-        state.speedRegions = parsedData.speedRegions || {}
-        state.blurRegions = parsedData.blurRegions || {}
-        state.timelineLanes = parsedData.timelineLanes || [createDefaultTimelineLane()]
-        
-        if (parsedData.frameStyles) {
-          state.frameStyles = parsedData.frameStyles
+        state.recordingGeometry = recordingGeometry
+        state.screenSize = (parsedData.screenSize as typeof state.screenSize) || null
+        state.syncOffset = typeof parsedData.syncOffset === 'number' ? parsedData.syncOffset : 0
+        state.zoomRegions = (parsedData.zoomRegions as typeof state.zoomRegions) || newZoomRegions
+        state.cutRegions = (parsedData.cutRegions as typeof state.cutRegions) || {}
+        state.speedRegions = (parsedData.speedRegions as typeof state.speedRegions) || {}
+        state.blurRegions = (parsedData.blurRegions as typeof state.blurRegions) || {}
+        state.timelineLanes = (parsedData.timelineLanes as typeof state.timelineLanes) || [createDefaultTimelineLane()]
+
+        const frameStyles = parsedData.frameStyles as typeof state.frameStyles | undefined
+        if (frameStyles) {
+          state.frameStyles = frameStyles
         }
-        if (parsedData.aspectRatio) {
-          state.aspectRatio = parsedData.aspectRatio
+        const aspectRatio = parsedData.aspectRatio as typeof state.aspectRatio | undefined
+        if (aspectRatio) {
+          state.aspectRatio = aspectRatio
         }
 
         recalculateCanvasDimensions(state)
@@ -258,26 +304,40 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         if (cursorTheme) {
           const scale = (await window.electronAPI.getSetting<number>('recorder.cursorScale')) || 2
           const bitmaps = await prepareWindowsCursorBitmaps(cursorTheme, scale)
+          if (processedMetadata.length > 0 && bitmaps.size === 0) {
+            console.warn('[ProjectSlice] Cursor bitmap map is empty on Windows for a project with mouse events.')
+          }
           set((state) => {
             state.cursorTheme = cursorTheme
             state.cursorBitmapsToRender = bitmaps
           })
+        } else if (processedMetadata.length > 0) {
+          console.warn('[ProjectSlice] Failed to load Windows cursor theme while metadata contains mouse events.')
         }
       } else if (platform === 'darwin') {
         const cursorTheme = await window.electronAPI.loadCursorTheme(themeNameToLoad)
         if (cursorTheme) {
           const scale = (await window.electronAPI.getSetting<number>('recorder.cursorScale')) || 2
           const bitmaps = await prepareMacOSCursorBitmaps(cursorTheme, scale)
+          if (processedMetadata.length > 0 && bitmaps.size === 0) {
+            console.warn('[ProjectSlice] Cursor bitmap map is empty on macOS for a project with mouse events.')
+          }
           set((state) => {
             state.cursorTheme = cursorTheme
             state.cursorBitmapsToRender = bitmaps
           })
+        } else if (processedMetadata.length > 0) {
+          console.warn('[ProjectSlice] Failed to load macOS cursor theme while metadata contains mouse events.')
         }
       } else {
         // Linux
-        const bitmaps = await prepareCursorBitmaps(parsedData.cursorImages)
+        const cursorImages = (parsedData.cursorImages || {}) as ProjectState['cursorImages']
+        const bitmaps = await prepareCursorBitmaps(cursorImages)
+        if (processedMetadata.length > 0 && bitmaps.size === 0) {
+          console.warn('[ProjectSlice] Cursor bitmap map is empty on Linux for a project with mouse events.')
+        }
         set((state) => {
-          state.cursorImages = parsedData.cursorImages || {}
+          state.cursorImages = cursorImages
           state.cursorBitmapsToRender = bitmaps
         })
       }
