@@ -47,7 +47,7 @@ const isPreparationCountdownOption = (value: number): value is (typeof PREPARATI
 // --- Types ---
 type RecordingState = 'idle' | 'preparing' | 'recording'
 type ActionInProgress = 'none' | 'recording' | 'loading'
-type RecordingSource = 'area' | 'fullscreen'
+type RecordingSource = 'area' | 'fullscreen' | 'window'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
 
 export function RecorderPage() {

@@ -17,6 +17,32 @@ import type { RecordingSession, RecordingGeometry } from '../state'
 
 const FFMPEG_PATH = getFFmpegPath()
 
+type ImportedProjectPayload = {
+  videoPath?: string | null
+  metadataPath?: string | null
+  webcamVideoPath?: string | null
+  audioPath?: string | null
+  recordingGeometry?: RecordingGeometry
+  geometry?: RecordingGeometry
+  scaleFactor?: number
+  events?: any[]
+  metadata?: any[]
+  cursorImages?: Record<string, any>
+  platform?: NodeJS.Platform
+  screenSize?: { width: number; height: number } | null
+  syncOffset?: number
+  [key: string]: any
+}
+
+type RuntimeProjectMetadata = ImportedProjectPayload & {
+  platform: NodeJS.Platform
+  events: any[]
+  cursorImages: Record<string, any>
+  geometry: RecordingGeometry
+  recordingGeometry: RecordingGeometry
+  syncOffset: number
+}
+
 /**
  * Uses ffprobe to get the precise creation time of the video file.
  * @param videoPath The path to the video file.
@@ -927,60 +953,143 @@ export async function importProjectFromFile() {
   try {
     const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
     await ensureDirectoryExists(recordingDir)
-    
-    // Read the project JSON to parse paths
+
+    // Read project configuration
     const rawData = await fsPromises.readFile(sourceProjectPath, 'utf-8')
-    const projectData = JSON.parse(rawData)
+    const projectData = JSON.parse(rawData) as ImportedProjectPayload
 
     const baseName = `RecordSaaS-recording-${Date.now()}`
-    
-    // Function to safely copy a referenced media file
-    const importMediaFile = async (originalPath: string | null | undefined) => {
-      if (!originalPath) return undefined
-      
-      const fileName = path.basename(originalPath.replace('media://', ''))
-      const fullSourcePath = path.join(sourceProjectDir, fileName)
-      const targetPath = path.join(recordingDir, fileName)
+    const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
+    const resolveExistingSourcePath = async (originalPath: string | null | undefined): Promise<string | null> => {
+      if (!originalPath) return null
+      const normalized = originalPath.replace('media://', '')
+      const candidates = path.isAbsolute(normalized)
+        ? [normalized, path.join(sourceProjectDir, path.basename(normalized))]
+        : [path.join(sourceProjectDir, normalized), path.join(sourceProjectDir, path.basename(normalized))]
+
+      for (const candidate of new Set(candidates)) {
+        try {
+          await fsPromises.access(candidate)
+          return candidate
+        } catch {
+          // Try next candidate
+        }
+      }
+      return null
+    }
+
+    // Copy any referenced media file into the secure runtime directory.
+    const importMediaFile = async (originalPath: string | null | undefined, label: string): Promise<string | undefined> => {
+      const sourcePath = await resolveExistingSourcePath(originalPath)
+      if (!sourcePath) {
+        if (originalPath) {
+          log.error(`[RecordingManager] Failed to resolve imported ${label} path: ${originalPath}`)
+        }
+        return undefined
+      }
+
+      const targetPath = path.join(recordingDir, path.basename(sourcePath))
       try {
-        await fsPromises.copyFile(fullSourcePath, targetPath)
+        await fsPromises.copyFile(sourcePath, targetPath)
         return targetPath
       } catch (err) {
-        log.error(`[RecordingManager] Failed to copy imported media ${fileName}:`, err)
+        log.error(`[RecordingManager] Failed to copy imported ${label} from ${sourcePath}:`, err)
         return undefined
       }
     }
 
-    // Import media files securely
-    const screenVideoPath = await importMediaFile(projectData.videoPath)
-    const webcamVideoPath = await importMediaFile(projectData.webcamVideoPath)
-    const audioPath = await importMediaFile(projectData.audioPath)
-    
-    const metadataPath = path.join(recordingDir, `${baseName}.json`)
-    
-    // Save updated metadata/project file locally to ~/.recordsaas
-    await fsPromises.writeFile(metadataPath, JSON.stringify(projectData), 'utf-8')
+    // Import media assets.
+    const screenVideoPath = await importMediaFile(projectData.videoPath, 'main video')
+    if (!screenVideoPath) {
+      throw new Error('Could not import the main video file referenced by the selected project.')
+    }
+    const webcamVideoPath = await importMediaFile(projectData.webcamVideoPath, 'webcam video')
+    const audioPath = await importMediaFile(projectData.audioPath, 'audio track')
+
+    // Copy canonical metadata if available; this is the source of cursor/mouse events.
+    let hasCanonicalMetadataFile = false
+    const canonicalMetadataSource = await resolveExistingSourcePath(projectData.metadataPath)
+    if (canonicalMetadataSource) {
+      try {
+        await fsPromises.copyFile(canonicalMetadataSource, metadataPath)
+        hasCanonicalMetadataFile = true
+      } catch (err) {
+        log.error(`[RecordingManager] Failed to copy imported metadata from ${canonicalMetadataSource}:`, err)
+      }
+    } else {
+      log.warn('[RecordingManager] Import project metadata file was not found. Falling back to project JSON fields.')
+    }
+
+    let canonicalMetadata: ImportedProjectPayload | null = null
+    if (hasCanonicalMetadataFile) {
+      try {
+        const canonicalRaw = await fsPromises.readFile(metadataPath, 'utf-8')
+        canonicalMetadata = JSON.parse(canonicalRaw) as ImportedProjectPayload
+      } catch (err) {
+        log.error('[RecordingManager] Failed to parse canonical metadata. Falling back to project JSON fields.', err)
+      }
+    }
+
+    const fallbackEvents = Array.isArray(projectData.events)
+      ? projectData.events
+      : Array.isArray(projectData.metadata)
+        ? projectData.metadata
+        : []
+    const mergedEvents = Array.isArray(canonicalMetadata?.events) ? canonicalMetadata.events : fallbackEvents
+
+    const fallbackCursorImages =
+      projectData.cursorImages && typeof projectData.cursorImages === 'object' ? projectData.cursorImages : {}
+    const mergedCursorImages =
+      canonicalMetadata?.cursorImages && typeof canonicalMetadata.cursorImages === 'object'
+        ? canonicalMetadata.cursorImages
+        : fallbackCursorImages
+
+    const mergedGeometry =
+      canonicalMetadata?.recordingGeometry ||
+      canonicalMetadata?.geometry ||
+      projectData.recordingGeometry ||
+      projectData.geometry || { x: 0, y: 0, width: 0, height: 0 }
+
+    const mergedRuntimeMetadata: RuntimeProjectMetadata = {
+      ...projectData,
+      platform: (canonicalMetadata?.platform || projectData.platform || process.platform) as NodeJS.Platform,
+      screenSize: canonicalMetadata?.screenSize || projectData.screenSize || null,
+      syncOffset: typeof canonicalMetadata?.syncOffset === 'number'
+        ? canonicalMetadata.syncOffset
+        : typeof projectData.syncOffset === 'number'
+          ? projectData.syncOffset
+          : 0,
+      events: Array.isArray(mergedEvents) ? mergedEvents : [],
+      cursorImages: mergedCursorImages,
+      geometry: mergedGeometry,
+      recordingGeometry: mergedGeometry,
+    }
+
+    if (mergedRuntimeMetadata.events.length === 0) {
+      log.warn('[RecordingManager] Imported project contains no mouse events after metadata merge.')
+    }
+
+    // Persist merged runtime metadata consumed by the editor.
+    await fsPromises.writeFile(metadataPath, JSON.stringify(mergedRuntimeMetadata), 'utf-8')
 
     // Prepare session validation
     const session: RecordingSession = {
-      screenVideoPath: screenVideoPath || '', // Needs to exist
+      screenVideoPath,
       metadataPath,
       webcamVideoPath,
       audioPath,
-      recordingGeometry: projectData.recordingGeometry || projectData.geometry || { x: 0, y: 0, width: 0, height: 0 },
-      scaleFactor: projectData.scaleFactor || 1,
+      recordingGeometry: mergedGeometry,
+      scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
       originalProjectPath: sourceProjectDir
     }
 
-    // Only validate if there is a main video available
-    if (session.screenVideoPath) {
-      const isValid = await validateRecordingFiles(session)
-      if (!isValid) {
-        await cleanupEditorFiles(session)
-        appState.savingWin?.close()
-        recorderWindow.show()
-        return { canceled: true }
-      }
+    const isValid = await validateRecordingFiles(session)
+    if (!isValid) {
+      await cleanupEditorFiles(session)
+      appState.savingWin?.close()
+      recorderWindow.show()
+      return { canceled: true }
     }
 
     await new Promise((resolve) => setTimeout(resolve, 500))
