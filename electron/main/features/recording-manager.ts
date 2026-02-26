@@ -938,12 +938,16 @@ export async function importProjectFromFile() {
   const { canceled, filePaths } = await dialog.showOpenDialog(recorderWindow, {
     title: 'Select a RecordSaaS Project to import',
     properties: ['openFile'],
-    filters: [{ name: 'RecordSaaS Project', extensions: ['json'] }],
+    filters: [{ name: 'RecordSaaS Project', extensions: ['rsproj'] }],
   })
 
   if (canceled || filePaths.length === 0) return { canceled: true }
 
   const sourceProjectPath = filePaths[0]
+  if (path.extname(sourceProjectPath).toLowerCase() !== '.rsproj') {
+    dialog.showErrorBox('Invalid Project File', 'Please select a valid .rsproj file.')
+    return { canceled: true }
+  }
   log.info(`[RecordingManager] User selected project file: ${sourceProjectPath}`)
   const sourceProjectDir = path.dirname(sourceProjectPath)
 
