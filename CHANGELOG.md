@@ -1,10 +1,3 @@
-# [2.2.0](https://github.com/Ddiidev/recordsaas/compare/v2.1.0...v2.2.0) (2026-02-25)
-
-
-### Features
-
-* export progress widget performance and UI updates ([#8](https://github.com/Ddiidev/recordsaas/issues/8)) ([289ebc1](https://github.com/Ddiidev/recordsaas/commit/289ebc1f174fd43e72fb3dcda63ebca88cd2feb9))
-
 ## [2.0.3](https://github.com/Ddiidev/recordsaas/compare/v2.0.2...v2.0.3) (2026-02-22)
 
 

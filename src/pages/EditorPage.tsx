@@ -106,7 +106,7 @@ export function EditorPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const stateToSave = { ...storeState } as any
       delete stateToSave.cursorBitmapsToRender
-      delete stateToSave.cursorImages
+      stateToSave.events = storeState.metadata
       delete stateToSave.metadata
       
       const getBasename = (p: string) => p.split(/[/\\]/).pop() || p

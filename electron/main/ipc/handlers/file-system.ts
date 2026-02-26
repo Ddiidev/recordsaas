@@ -23,9 +23,9 @@ export async function handleSaveProject(
     // 1. Ensure target folder exists
     await fs.mkdir(targetFolder, { recursive: true })
 
-    // 2. Write project.json
+    // 2. Write project.rsproj (JSON content with custom extension)
     const path = await import('node:path')
-    const projectFilePath = path.join(targetFolder, 'project.json')
+    const projectFilePath = path.join(targetFolder, 'project.rsproj')
     await fs.writeFile(projectFilePath, projectData, 'utf-8')
 
     // 3. Copy media files to the target folder

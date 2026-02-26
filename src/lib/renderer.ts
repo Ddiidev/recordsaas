@@ -415,7 +415,17 @@ export const drawScene = (
     if (state.cursorStyles.showCursor && lastEventIndex > -1 && state.recordingGeometry) {
       const event = state.metadata[lastEventIndex]
       if (event && currentTime - event.timestamp < 0.1) {
-        const cursorData = state.cursorBitmapsToRender.get(event.cursorImageKey!)
+        let cursorData = event.cursorImageKey ? state.cursorBitmapsToRender.get(event.cursorImageKey) : undefined
+        if (!cursorData) {
+          if (state.platform === 'win32') {
+            cursorData = state.cursorBitmapsToRender.get('IDC_ARROW-0')
+          } else if (state.platform === 'darwin') {
+            cursorData = state.cursorBitmapsToRender.get('arrow-0')
+          }
+          if (!cursorData) {
+            cursorData = state.cursorBitmapsToRender.values().next().value
+          }
+        }
         if (cursorData && cursorData.imageBitmap && cursorData.width > 0) {
           const cursorX = (event.x / state.recordingGeometry.width) * frameContentWidth
           const cursorY = (event.y / state.recordingGeometry.height) * frameContentHeight

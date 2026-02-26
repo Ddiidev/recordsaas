@@ -39,6 +39,7 @@ const CURSOR_NAME_TO_IDC_MAP: Record<string, string> = {
   Hand: 'IDC_HAND',
   Help: 'IDC_HELP',
   IBeam: 'IDC_IBEAM',
+  No: 'IDC_NO',
   NO: 'IDC_NO',
   SizeAll: 'IDC_SIZEALL',
   SizeNESW: 'IDC_SIZENESW',
