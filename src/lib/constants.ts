@@ -22,6 +22,7 @@ export const WALLPAPERS_THUMBNAILS = WALLPAPERS.map((w) => w.thumbnailUrl)
 
 // Resolutions
 export const RESOLUTIONS = {
+  '480p': { width: 854, height: 480 },
   '720p': { width: 1280, height: 720 },
   '1080p': { width: 1920, height: 1080 },
   '2k': { width: 2560, height: 1440 },

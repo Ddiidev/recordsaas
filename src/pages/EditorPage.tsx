@@ -15,9 +15,11 @@ import { Stack3, Loader2, Check, Settings, Home } from 'tabler-icons-react'
 import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
+import { useDesktopAuth } from '../hooks/useDesktopAuth'
 import { Button } from '../components/ui/button'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
+import type { SettingsTab } from '../components/settings/SettingsModal'
 
 export function EditorPage() {
   const {
@@ -64,10 +66,26 @@ export function EditorPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isPresetModalOpen, setPresetModalOpen] = useState(false)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const [updateInfo, setUpdateInfo] = useState<{ version: string; url: string } | null>(null)
   const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
   const [isExportingProject, setIsExportingProject] = useState(false)
+  const { authState } = useDesktopAuth()
   const isImportedProject = !!useEditorStore((state) => state.originalProjectPath)
+
+  const openSettingsTab = (tab: SettingsTab) => {
+    setSettingsInitialTab(tab)
+    setSettingsModalOpen(true)
+  }
+
+  const handleOpenExport = () => {
+    if (!authState.isAuthenticated) {
+      openSettingsTab('account')
+      return
+    }
+
+    openExportModal()
+  }
 
   const handleExportProject = useCallback(async () => {
     try {
@@ -257,7 +275,13 @@ export function EditorPage() {
     const isWindows = platform === 'win32'
     const actions = [
       <ExportProjectButton key="export-project" isImportedProject={isImportedProject} isExporting={isExportingProject} onClick={handleExportProject} disabled={duration <= 0} />,
-      <ExportButton key="export" isExporting={isExporting} onClick={openExportModal} disabled={duration <= 0} />,
+      <ExportButton
+        key="export"
+        isExporting={isExporting}
+        onClick={handleOpenExport}
+        disabled={duration <= 0}
+        isLocked={!authState.isAuthenticated}
+      />,
       <Button
         key="presets"
         variant="secondary"
@@ -272,14 +296,14 @@ export function EditorPage() {
       >
         {getPresetButtonContent()}
       </Button>,
-      <SimpleTooltip key="settings" content="Settings">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setSettingsModalOpen(true)}
-          aria-label="Open Settings"
-          className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
-        >
+          <SimpleTooltip key="settings" content="Settings">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => openSettingsTab('general')}
+              aria-label="Open Settings"
+              className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+            >
           <Settings className="w-4 h-4" />
         </Button>
       </SimpleTooltip>,
@@ -387,11 +411,19 @@ export function EditorPage() {
           </div>
         </div>
 
-        <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} />
+        <SettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={() => {
+            setSettingsModalOpen(false)
+            setSettingsInitialTab('general')
+          }}
+          initialTab={settingsInitialTab}
+        />
         <PresetModal isOpen={isPresetModalOpen} onClose={() => setPresetModalOpen(false)} />
         <ExportModal
           isOpen={isExportModalOpen}
           onClose={closeExportModal}
+          tier={authState.canExport ? 'pro' : 'free'}
           onStartExport={startExport}
           onCancelExport={cancelExport}
           isExporting={isExporting}

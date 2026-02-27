@@ -14,6 +14,7 @@ import {
   Folder,
   Square,
   Settings,
+  UserCircle,
 } from 'tabler-icons-react'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
@@ -21,6 +22,8 @@ import { SettingsModal } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../lib/utils'
+import { useDesktopAuth } from '../hooks/useDesktopAuth'
+import type { SettingsTab } from '../components/settings/SettingsModal'
 import '../index.css'
 
 // --- Constants ---
@@ -36,10 +39,10 @@ const WINDOWS_SCALES = [
 ]
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
-const RECORDER_WINDOW_COMPACT_SIZE = { width: 900, height: 360 }
+const RECORDER_WINDOW_COMPACT_SIZE = { width: 960, height: 400 }
 // Preview no longer controls window size; keep content scrollable instead
 // const RECORDER_WINDOW_PREVIEW_SIZE = { width: 900, height: 360 }
-const RECORDER_WINDOW_SETTINGS_SIZE = { width: 900, height: 700 }
+const RECORDER_WINDOW_SETTINGS_SIZE = { width: 960, height: 700 }
 
 const isPreparationCountdownOption = (value: number): value is (typeof PREPARATION_COUNTDOWN_OPTIONS)[number] =>
   PREPARATION_COUNTDOWN_OPTIONS.includes(value as (typeof PREPARATION_COUNTDOWN_OPTIONS)[number])
@@ -61,12 +64,14 @@ export function RecorderPage() {
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [cursorScale, setCursorScale] = useState<number>(1)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
   const [preparationSecondsLeft, setPreparationSecondsLeft] = useState<number | null>(null)
 
   const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
+  const { authState } = useDesktopAuth()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
@@ -75,7 +80,13 @@ export function RecorderPage() {
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const handleSettingsClose = () => {
     setSettingsModalOpen(false)
+    setSettingsInitialTab('general')
     window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
+  }
+
+  const openSettingsTab = (tab: SettingsTab) => {
+    setSettingsInitialTab(tab)
+    setSettingsModalOpen(true)
   }
 
   // Effect for initializing settings and devices from storage/system
@@ -376,7 +387,7 @@ export function RecorderPage() {
 
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="relative h-screen w-screen bg-transparent select-none">
+      <div className="relative h-full w-full overflow-hidden bg-transparent select-none">
         <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
           <div data-interactive="true" className="relative">
           {/* Main Control Bar */}
@@ -632,7 +643,32 @@ export function RecorderPage() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      onClick={() => setSettingsModalOpen(true)}
+                      onClick={() => openSettingsTab('account')}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-lg shadow-lg overflow-hidden p-0 border border-primary"
+                    >
+                      {authState.user?.picture ? (
+                        <img
+                          src={authState.user.picture}
+                          alt={authState.user.name || authState.user.email}
+                          className="w-full h-full object-cover rounded-lg border border-primary"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <UserCircle size={18} />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    {authState.user?.name || 'Account'}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => openSettingsTab('general')}
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
@@ -684,7 +720,12 @@ export function RecorderPage() {
         </div>
       )}
 
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={handleSettingsClose} isTransparent />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={handleSettingsClose}
+        isTransparent
+        initialTab={settingsInitialTab}
+      />
       </div>
     </TooltipProvider>
   )

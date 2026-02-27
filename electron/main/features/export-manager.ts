@@ -9,6 +9,7 @@ import fsPromises from 'node:fs/promises'
 import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
 import { appState } from '../state'
+import { getExportAuthorizationDecision } from './auth-manager'
 import { getFFmpegPath, calculateExportDimensions } from '../lib/utils'
 import { spawnSync } from 'node:child_process'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
@@ -138,9 +139,68 @@ const trySetProcessPriorityWithFallback = (pid: number, priorities: number[], la
   return false
 }
 
+type ExportFormat = 'mp4' | 'gif'
+type ExportResolution = '480p' | '720p' | '1080p' | '2k'
+type ExportFps = 30 | 60
+type ExportQuality = 'low' | 'medium' | 'high' | 'ultra high'
+type ExportTier = 'pro' | 'free'
+
+type NormalizedExportSettings = {
+  format: ExportFormat
+  resolution: ExportResolution
+  fps: ExportFps
+  quality: ExportQuality
+}
+
+const sanitizeExportSettings = (raw: unknown, tier: ExportTier): NormalizedExportSettings => {
+  const input = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const format: ExportFormat = input.format === 'gif' ? 'gif' : 'mp4'
+  const quality: ExportQuality =
+    input.quality === 'low' || input.quality === 'high' || input.quality === 'ultra high'
+      ? input.quality
+      : 'medium'
+
+  if (tier === 'free') {
+    return {
+      format,
+      resolution: '480p',
+      fps: 30,
+      quality,
+    }
+  }
+
+  const resolution: ExportResolution =
+    input.resolution === '480p' ||
+    input.resolution === '720p' ||
+    input.resolution === '1080p' ||
+    input.resolution === '2k'
+      ? input.resolution
+      : '1080p'
+  const fps: ExportFps = input.fps === 60 ? 60 : 30
+
+  return {
+    format,
+    resolution,
+    fps,
+    quality,
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function startExport(event: IpcMainInvokeEvent, { projectState, exportSettings, outputPath }: any) {
   log.info('[ExportManager] Starting export process...')
+  const exportAuthDecision = await getExportAuthorizationDecision()
+  if (!exportAuthDecision.isAuthenticated) {
+    throw new Error('login_required')
+  }
+
+  const exportTier: ExportTier = exportAuthDecision.canExport ? 'pro' : 'free'
+  const sanitizedExportSettings = sanitizeExportSettings(exportSettings, exportTier)
+  const watermarkRequired = exportTier === 'pro' ? exportAuthDecision.watermarkRequired : false
+
+  if (exportTier === 'free') {
+    log.info('[ExportManager] Export requested in free tier mode (clamped to 480p/30).')
+  }
   
   // Create the directory if it doesn't exist
   const outputDir = path.dirname(outputPath)
@@ -385,7 +445,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
   }
 
-  const { resolution, fps, format } = exportSettings
+  const { resolution, fps, format } = sanitizedExportSettings
   const { width: outputWidth, height: outputHeight } = calculateExportDimensions(resolution, projectState.aspectRatio)
 
 
@@ -684,7 +744,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       editorWindow.hide()
     }
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings })
+      appState.renderWorker.webContents.send('render:start', {
+        projectState,
+        exportSettings: sanitizedExportSettings,
+        security: { watermarkRequired },
+      })
     }
   })
 }
