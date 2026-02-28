@@ -11,6 +11,8 @@ import { loadCursorThemeFromFile } from '../../lib/cursor-theme-parser'
 import { mapCursorNameToIDC } from '../../lib/win-cursor-manager'
 import { CursorTheme } from '../../types'
 
+const SHOULD_LOG_DSHOW_RAW_OUTPUT = /^(1|true|yes)$/i.test(process.env.RECORDSAAS_DEBUG_DSHOW || '')
+
 export function getDisplays() {
   const primaryDisplay = screen.getPrimaryDisplay()
   return screen.getAllDisplays().map((display, index) => ({
@@ -67,11 +69,8 @@ export async function getDshowDevices(): Promise<{
   const startTime = Date.now()
 
   return new Promise((resolve) => {
-    exec(command, (_error, _stdout, stderr) => {
+    exec(command, (execError, _stdout, stderr) => {
       const elapsed = Date.now() - startTime
-
-      // Log raw FFmpeg dshow output for diagnostics
-      log.debug(`[Desktop] dshow raw output:\n${stderr}`)
 
       // The command is expected to "fail" and output to stderr, which is normal for this command.
       const lines = stderr.split('\n')
@@ -99,6 +98,14 @@ export async function getDshowDevices(): Promise<{
           log.debug(`[Desktop] Parsed ${lastDevice.type} device: "${lastDevice.name}" (alt: "${alternativeName}")`)
           lastDevice = null // Reset for the next device
         }
+      }
+
+      if (video.length + audio.length === 0) {
+        log.warn(
+          `[Desktop] dshow returned 0 devices (${elapsed}ms). Exit: ${execError?.code ?? 'n/a'}. Raw output:\n${stderr}`,
+        )
+      } else if (SHOULD_LOG_DSHOW_RAW_OUTPUT) {
+        log.debug(`[Desktop] dshow raw output:\n${stderr}`)
       }
 
       log.info(`[Desktop] Found dshow devices: ${video.length} video, ${audio.length} audio (${elapsed}ms)`)

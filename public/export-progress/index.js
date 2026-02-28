@@ -1,5 +1,3 @@
-const { ipcRenderer } = require('electron')
-
 const progressFillEl = document.getElementById('progress-fill')
 const progressInlineTextEl = document.getElementById('progress-inline-text')
 const minimizeButtonEl = document.getElementById('minimize-btn')
@@ -29,11 +27,11 @@ const setupTheme = async () => {
   let appearanceMode = 'light'
 
   try {
-    const rawModeFromSetting = await ipcRenderer.invoke('settings:get', 'appearance.mode')
+    const rawModeFromSetting = await window.overlayAPI.invoke('settings:get', 'appearance.mode')
     if (rawModeFromSetting === 'light' || rawModeFromSetting === 'dark' || rawModeFromSetting === 'auto') {
       appearanceMode = rawModeFromSetting
     } else {
-      const appearanceObj = await ipcRenderer.invoke('settings:get', 'appearance')
+      const appearanceObj = await window.overlayAPI.invoke('settings:get', 'appearance')
       if (appearanceObj && typeof appearanceObj.mode === 'string') {
         appearanceMode = resolveThemeValue(appearanceObj.mode)
       }
@@ -93,21 +91,21 @@ minimizeButtonEl?.addEventListener('click', () => {
   if (!shouldMinimize) {
     return
   }
-  ipcRenderer.send('window:minimize')
+  window.overlayAPI.send('window:minimize')
 })
 
 collapseButtonEl?.addEventListener('click', () => {
   const nextCollapsed = !isCollapsed
   applyCollapsedVisualState(nextCollapsed)
-  ipcRenderer.send('export-progress:set-collapsed', { collapsed: nextCollapsed })
+  window.overlayAPI.send('export-progress:set-collapsed', { collapsed: nextCollapsed })
 })
 
-ipcRenderer.on('export:progress', (_event, payload) => {
+window.overlayAPI.on('export:progress', (payload) => {
   if (!payload) return
   applyProgress(payload.progress, payload.stage || 'Rendering...')
 })
 
-ipcRenderer.on('export:complete', (_event, payload) => {
+window.overlayAPI.on('export:complete', (payload) => {
   isFinished = true
 
   if (payload?.success) {
@@ -125,8 +123,8 @@ void setupTheme()
 applyCollapsedVisualState(false)
 
 window.addEventListener('beforeunload', () => {
-  ipcRenderer.removeAllListeners('export:progress')
-  ipcRenderer.removeAllListeners('export:complete')
+  window.overlayAPI.removeAllListeners('export:progress')
+  window.overlayAPI.removeAllListeners('export:complete')
   if (mediaThemeQuery && mediaThemeListener) {
     mediaThemeQuery.removeEventListener('change', mediaThemeListener)
   }

@@ -1,6 +1,11 @@
 // Handlers for recording-related IPC (recording).
 
-import { startRecording, loadVideoFromFile, stopRecording, importProjectFromFile } from '../../features/recording-manager'
+import {
+  startRecording,
+  loadVideoFromFile,
+  stopRecording,
+  importProjectFromFile,
+} from '../../features/recording-manager'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handleStartRecording(_event: any, options: any) {

@@ -3,7 +3,7 @@
 import { BrowserWindow, screen } from 'electron'
 import path from 'node:path'
 import { appState } from '../state'
-import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT } from '../lib/constants'
+import { VITE_DEV_SERVER_URL, RENDERER_DIST, OVERLAY_PRELOAD_SCRIPT } from '../lib/constants'
 
 function createTemporaryWindow(options: Electron.BrowserWindowConstructorOptions, htmlPath: string) {
   // Define the path to the icon, handling both development and production environments
@@ -19,9 +19,8 @@ function createTemporaryWindow(options: Electron.BrowserWindowConstructorOptions
     alwaysOnTop: true,
     resizable: false,
     webPreferences: {
-      nodeIntegration: true,
-      preload: PRELOAD_SCRIPT,
-      contextIsolation: false,
+      preload: OVERLAY_PRELOAD_SCRIPT,
+      sandbox: false,
     },
   })
 

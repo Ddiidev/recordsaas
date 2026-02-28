@@ -4,7 +4,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 
 const switchVariants = cva(
-  'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-md border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
+  'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center overflow-hidden rounded-md border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
@@ -39,18 +39,6 @@ const switchVariants = cva(
   },
 )
 
-const thumbVariants = cva(
-  'pointer-events-none block h-5 w-5 rounded-md bg-background shadow-md ring-0 transition-transform',
-  {
-    variants: {
-      isChecked: {
-        true: 'translate-x-5',
-        false: 'translate-x-0',
-      },
-    },
-  },
-)
-
 export interface SwitchProps
   extends React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>,
     VariantProps<typeof switchVariants> {}
@@ -69,8 +57,7 @@ const Switch = React.forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>, 
     >
       <SwitchPrimitives.Thumb
         className={cn(
-          thumbVariants({ isChecked: checked }),
-          'block h-5 w-5 rounded-[4px] bg-white shadow-md border border-border/20 dark:border-white/20 ring-0 transition-transform',
+          'pointer-events-none absolute left-[2px] block h-4 w-4 translate-x-0 rounded-[4px] border border-border/20 bg-white shadow-sm ring-0 transition-transform duration-200 will-change-transform data-[state=checked]:translate-x-5 data-[state=checked]:shadow-[0_2px_10px_rgba(0,0,0,0.28)] dark:border-white/20',
         )}
       />
     </SwitchPrimitives.Root>

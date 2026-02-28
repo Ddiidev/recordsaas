@@ -8,6 +8,7 @@ import os from 'node:os'
 import { appState } from '../state'
 
 const LOG_RETENTION_DAYS = 7
+const DEFAULT_CONSOLE_LOG_LEVEL = (process.env.RECORDSAAS_LOG_LEVEL || 'info') as typeof log.transports.console.level
 
 /**
  * Returns the logs directory path: `{userData}/logs/`
@@ -46,6 +47,7 @@ function getAppStateSnapshot(): Record<string, unknown> {
     ffmpegRunning: !!appState.ffmpegProcess,
     mouseTrackerActive: !!appState.mouseTracker,
     hasRecordingSession: !!appState.currentRecordingSession,
+    recordingSystemAudioMode: appState.currentRecordingSession?.systemAudioCaptureMode || null,
     hasEditorSession: !!appState.currentEditorSessionFiles,
     isCleanupInProgress: appState.isCleanupInProgress,
   }
@@ -107,7 +109,7 @@ export function setupLogging() {
   log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {text}'
   log.transports.file.maxSize = 0 // Disable size-based rotation (we use hourly)
 
-  log.transports.console.level = 'debug'
+  log.transports.console.level = DEFAULT_CONSOLE_LOG_LEVEL
 
   // Improved exception handlers with system context and app state
   process.on('uncaughtException', (error) => {

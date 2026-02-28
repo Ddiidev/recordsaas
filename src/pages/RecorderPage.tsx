@@ -143,7 +143,16 @@ export function RecorderPage() {
       setCursorScale(1)
       window.electronAPI.setCursorScale(1)
     }
-  }, [isInitializing, webcams, mics, platform, cursorScales, selectedWebcamId, selectedMicId, cursorScale])
+  }, [
+    isInitializing,
+    webcams,
+    mics,
+    platform,
+    cursorScales,
+    selectedWebcamId,
+    selectedMicId,
+    cursorScale,
+  ])
 
   // Effect to manage IPC listeners for recording completion
   useEffect(() => {
@@ -311,7 +320,9 @@ export function RecorderPage() {
       const webcam = selectedWebcamId !== 'none' ? webcams.find((d) => d.id === selectedWebcamId) : undefined
       const mic = selectedMicId !== 'none' ? mics.find((d) => d.id === selectedMicId) : undefined
 
-      log.info(`[Recorder] Starting recording: source=${source}, webcam=${webcam?.name ?? 'none'}, mic=${mic?.name ?? 'none'}`)
+      log.info(
+        `[Recorder] Starting recording: source=${source}, webcam=${webcam?.name ?? 'none'}, mic=${mic?.name ?? 'none'}`,
+      )
       const result = await window.electronAPI.startRecording({
         source,
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
@@ -351,7 +362,7 @@ export function RecorderPage() {
     }
   }
 
-  const handleStop = () => {
+  const handleStop = async () => {
     setActionInProgress('recording')
     window.electronAPI.stopRecording()
   }
@@ -547,6 +558,7 @@ export function RecorderPage() {
                   ))}
                 </SelectContent>
               </Select>
+
             </div>
 
             <div className="w-px h-8 bg-border/50"></div>
@@ -702,13 +714,32 @@ export function RecorderPage() {
           {/* Webcam Preview */}
           <div
             className={cn(
-              'mt-4 mx-auto w-48 aspect-square rounded-2xl overflow-hidden shadow-xl bg-black transition-all duration-300',
+              'relative mt-4 mx-auto w-48 aspect-square rounded-3xl overflow-hidden bg-black shadow-xl transition-all duration-300',
               isWebcamPreviewVisible
                 ? 'opacity-100 scale-100'
                 : 'opacity-0 scale-95 pointer-events-none',
             )}
+            style={{ isolation: 'isolate' }}
           >
-            <video ref={webcamPreviewRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            <video
+              ref={webcamPreviewRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover rounded-3xl"
+              style={{
+                borderRadius: '1.5rem',
+                clipPath: 'inset(0 round 1.5rem)',
+                transform: 'translateZ(0)',
+              }}
+            />
+            <div
+              aria-hidden="true"
+              className={cn(
+                'pointer-events-none absolute inset-0 z-10 rounded-3xl border-2 border-emerald-400/90 shadow-[0_0_20px_rgba(52,211,153,0.45)]',
+                isWebcamPreviewVisible && 'animate-pulse',
+              )}
+            />
           </div>
         </div>
       </div>

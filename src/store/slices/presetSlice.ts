@@ -3,6 +3,7 @@ import type { PresetState, PresetActions, Slice } from '../../types'
 import type { Preset, FrameStyles, WebcamStyles, WebcamPosition } from '../../types'
 import { initialFrameState } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
+import { normalizeBackgroundMediaFields } from '../../lib/media'
 
 const DEFAULT_PRESET_ID = 'default-preset-v1'
 
@@ -42,6 +43,13 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
         if (p.id !== DEFAULT_PRESET_ID && p.isDefault) {
           delete p.isDefault
           wasModified = true
+        }
+        if (p.styles?.background) {
+          const { background, changed } = normalizeBackgroundMediaFields(p.styles.background)
+          if (changed) {
+            p.styles = { ...p.styles, background }
+            wasModified = true
+          }
         }
         if (p.styles && p.styles.borderColor === undefined) {
           p.styles.borderColor = DEFAULT_PRESET_STYLES.borderColor

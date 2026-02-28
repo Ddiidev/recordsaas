@@ -17,7 +17,12 @@ export interface RecordingSession {
   screenVideoPath: string
   metadataPath: string
   webcamVideoPath?: string
+  micAudioPath?: string
+  systemAudioPath?: string
+  // Legacy alias kept for compatibility with old flow/imports.
   audioPath?: string
+  requiresSystemAudioFallback?: boolean
+  systemAudioCaptureMode?: 'native_system_audio' | 'fallback_system_audio' | 'system_audio_disabled'
   recordingGeometry: RecordingGeometry
   scaleFactor: number  // Display scale factor (for Windows DPI scaling)
   originalProjectPath?: string

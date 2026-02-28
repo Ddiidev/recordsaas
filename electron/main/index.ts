@@ -1,12 +1,13 @@
 // Entry point of the Electron application.
 
-import { app, BrowserWindow, protocol, ProtocolRequest, ProtocolResponse, Menu, screen, dialog } from 'electron'
+import { app, BrowserWindow, protocol, Menu, screen, dialog } from 'electron'
 import log from 'electron-log/main'
 import path from 'node:path'
 import fsSync from 'node:fs'
 import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
 import { setupLogging } from './lib/logging'
+import { normalizeMediaRequestPath } from './lib/media-path'
 import { registerIpcHandlers } from './ipc'
 import { handleAuthDeepLink, initializeAuthManager } from './features/auth-manager'
 import { createRecorderWindow } from './windows/recorder-window'
@@ -22,6 +23,13 @@ app.setName('RecordSaaS')
 app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('enable-blink-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('disable-gpu-vsync')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'media',
+    privileges: { secure: true, standard: true, supportFetchAPI: true, bypassCSP: true },
+  },
+])
 
 const store = new Store()
 if (store.get('general.forceHighPerformanceGpu', false)) {
@@ -159,30 +167,26 @@ app.whenReady().then(async () => {
         },
       },
     ])
-    app.dock.setMenu(dockMenu)
+    app.dock?.setMenu(dockMenu)
   }
 
   // Initialize platform-specific dependencies asynchronously
   initializeMouseTrackerDependencies()
 
   // Register custom protocol for media files
-  protocol.registerFileProtocol(
-    'media',
-    (request: ProtocolRequest, callback: (response: string | ProtocolResponse) => void) => {
-      const url = request.url.replace('media://', '')
-      const decodedUrl = decodeURIComponent(url)
-      const resourcePath = path.join(VITE_PUBLIC, decodedUrl)
+  protocol.registerFileProtocol('media', (request, callback) => {
+    const normalizedPath = normalizeMediaRequestPath(request.url)
+    const resourcePath = path.join(VITE_PUBLIC, normalizedPath)
 
-      if (path.isAbsolute(decodedUrl) && fsSync.existsSync(decodedUrl)) {
-        return callback(decodedUrl)
-      }
-      if (fsSync.existsSync(resourcePath)) {
-        return callback(resourcePath)
-      }
-      log.error(`[Protocol] Could not find file: ${decodedUrl}`)
-      return callback({ error: -6 }) // FILE_NOT_FOUND
-    },
-  )
+    if (path.isAbsolute(normalizedPath) && fsSync.existsSync(normalizedPath)) {
+      return callback(normalizedPath)
+    }
+    if (fsSync.existsSync(resourcePath)) {
+      return callback(resourcePath)
+    }
+    log.error(`[Protocol] Could not find file. request="${request.url}" normalized="${normalizedPath}"`)
+    return callback({ error: -6 }) // FILE_NOT_FOUND
+  })
 
   registerIpcHandlers()
   createRecorderWindow()

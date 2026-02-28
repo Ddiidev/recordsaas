@@ -3,6 +3,7 @@
 
 import fs from 'node:fs/promises'
 import log from 'electron-log/main'
+import { normalizeMediaPath } from '../../lib/media-path'
 
 export async function handleReadFile(_event: any, filePath: string): Promise<string> {
   return fs.readFile(filePath, 'utf-8')
@@ -31,10 +32,7 @@ export async function handleSaveProject(
     // 3. Copy media files to the target folder
     for (const file of mediaFiles) {
       if (file) {
-        let sourcePath = file
-        if (sourcePath.startsWith('media://')) {
-          sourcePath = sourcePath.replace('media://', '')
-        }
+        let sourcePath = normalizeMediaPath(file.replace(/^media:(\/\/)?/i, ''))
 
         const fileName = path.basename(sourcePath)
         const destPath = path.join(targetFolder, fileName)

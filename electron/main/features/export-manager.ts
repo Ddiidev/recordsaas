@@ -476,123 +476,149 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     )
   }
 
-  // If there's an audio track, preprocess it to apply cuts and speed regions
-  // so the final audio matches the exported video timeline.
-  // This generates a temporary processed audio file (if needed) and uses it
-  // as the audio input for FFmpeg.
-  let processedAudioPath: string | null = null
-  if (projectState.audioPath) {
-    try {
-      processedAudioPath = await (async function prepareProcessedAudio(): Promise<string | null> {
-        const audioPath = projectState.audioPath
-        if (!audioPath) return null
+  const processedAudioTempDirs = new Set<string>()
+  const audioTracksForMux: Array<{ label: 'mic' | 'system' | 'legacy'; path: string; volume: number; muted: boolean }> =
+    []
 
-        // Build timeline boundaries from cuts and speed regions, respecting lane precedence.
-        const duration = projectState.duration
-        const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
-        const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
-        const timelineLanes = projectState.timelineLanes as LaneLike[] | undefined
-        const segments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes)
+  const prepareProcessedAudio = async (audioPath: string, label: string): Promise<string | null> => {
+    const duration = projectState.duration
+    const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
+    const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
+    const timelineLanes = projectState.timelineLanes as LaneLike[] | undefined
+    const segments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes)
 
-        if (segments.length === 0) return null
+    if (segments.length === 0) return null
 
-        // Safe Approach: Create separate segment files and concat them.
-        // This avoids complex filter string limits and escaping issues.
-        const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
-        const segmentFiles: string[] = []
+    const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), `recordsaas-audio-${label}-`))
+    const segmentFiles: string[] = []
 
-        // Helper to build atempo filter chain
-        const buildAtempoFilter = (factor: number) => {
-           if (Math.abs(factor - 1) < 0.01) return null
-           const filters: number[] = []
-           let remaining = factor
-           while (remaining > 2.0) { filters.push(2.0); remaining /= 2.0 }
-           while (remaining < 0.5) { filters.push(0.5); remaining /= 0.5 }
-           filters.push(remaining)
-           return filters.map((f) => `atempo=${f}`).join(',')
-        }
-
-        let i = 0
-        for (const seg of segments) {
-          const outPath = path.join(tmpDir, `seg-${i}.m4a`)
-          // Note: using -ss and -t with input seeking is fast but less precise for some container formats.
-          // For AAC/M4A, we place -ss BEFORE -i for fast seek, but we must ensure we are accurate.
-          // To be perfectly accurate (frame accurate), we should re-encode.
-          // We use -vn to discard video if any.
-          
-          const args: string[] = [
-             '-y', 
-             '-ss', seg.start.toFixed(4), 
-             '-t', seg.duration.toFixed(4), 
-             '-i', audioPath, 
-             '-vn'
-          ]
-
-          const atempo = buildAtempoFilter(seg.speed)
-          if (atempo) {
-            args.push('-af', atempo, '-c:a', 'aac', '-b:a', '192k')
-          } else {
-             // Always re-encode for precise cuts, otherwise -c copy snaps to keyframes/packets
-            args.push('-c:a', 'aac', '-b:a', '192k')
-          }
-          args.push(outPath)
-
-          log.info(`[ExportManager] Processing audio segment ${i}: start=${seg.start}, dur=${seg.duration}, speed=${seg.speed}`)
-          const res = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-          
-          if (res.status !== 0) {
-            log.error('[ExportManager] Failed to create audio segment:', res.stdout, res.stderr)
-            // Cleanup: best effort
-            try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-            return null
-          }
-          segmentFiles.push(outPath)
-          i++
-        }
-
-        // Create concat list file (critical: forward slashes)
-        const listFile = path.join(tmpDir, 'concat.txt')
-        const listContent = segmentFiles
-          .map((f) => {
-            const normalizedPath = f.replace(/\\/g, '/')
-            return `file '${normalizedPath.replace(/'/g, "'\\''")}'`
-          })
-          .join('\n')
-        
-        fs.writeFileSync(listFile, listContent)
-
-        const finalOut = path.join(tmpDir, 'processed.m4a')
-        log.info('[ExportManager] Concatenating audio segments...')
-        
-        const concatRes = spawnSync(FFMPEG_PATH, [
-            '-y', 
-            '-f', 'concat', 
-            '-safe', '0', 
-            '-i', listFile, 
-            '-c', 'copy', 
-            finalOut
-        ], { encoding: 'utf-8' })
-
-        if (concatRes.status !== 0) {
-          log.error('[ExportManager] Failed to concat audio:', concatRes.stdout, concatRes.stderr)
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-          return null
-        }
-
-        // Attach temp dir for cleanup NOT as a property of string, but we manage it implicitly. 
-        // We can't attach prop to string primitive.
-        // We will cleanup based on the directory of the file later.
-        return finalOut
-      })()
-    } catch (e) {
-      log.error('[ExportManager] Error preparing processed audio:', e)
-      processedAudioPath = null
+    const buildAtempoFilter = (factor: number) => {
+      if (Math.abs(factor - 1) < 0.01) return null
+      const filters: number[] = []
+      let remaining = factor
+      while (remaining > 2.0) {
+        filters.push(2.0)
+        remaining /= 2.0
+      }
+      while (remaining < 0.5) {
+        filters.push(0.5)
+        remaining /= 0.5
+      }
+      filters.push(remaining)
+      return filters.map((f) => `atempo=${f}`).join(',')
     }
 
-    if (processedAudioPath) {
-      ffmpegArgs.push('-i', processedAudioPath)
-    } else {
-      ffmpegArgs.push('-i', projectState.audioPath)
+    let i = 0
+    for (const seg of segments) {
+      const outPath = path.join(tmpDir, `seg-${i}.m4a`)
+      const args: string[] = ['-y', '-ss', seg.start.toFixed(4), '-t', seg.duration.toFixed(4), '-i', audioPath, '-vn']
+
+      const atempo = buildAtempoFilter(seg.speed)
+      if (atempo) {
+        args.push('-af', atempo, '-c:a', 'aac', '-b:a', '192k')
+      } else {
+        args.push('-c:a', 'aac', '-b:a', '192k')
+      }
+      args.push(outPath)
+
+      log.info(
+        `[ExportManager] Processing ${label} audio segment ${i}: start=${seg.start}, dur=${seg.duration}, speed=${seg.speed}`,
+      )
+      const res = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
+
+      if (res.status !== 0) {
+        log.error(`[ExportManager] Failed to create ${label} audio segment:`, res.stdout, res.stderr)
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true })
+        } catch {
+          // ignore cleanup errors
+        }
+        return null
+      }
+      segmentFiles.push(outPath)
+      i++
+    }
+
+    const listFile = path.join(tmpDir, 'concat.txt')
+    const listContent = segmentFiles
+      .map((filePath) => {
+        const normalizedPath = filePath.replace(/\\/g, '/')
+        return `file '${normalizedPath.replace(/'/g, "'\\''")}'`
+      })
+      .join('\n')
+    fs.writeFileSync(listFile, listContent)
+
+    const finalOut = path.join(tmpDir, 'processed.m4a')
+    log.info(`[ExportManager] Concatenating processed ${label} audio segments...`)
+    const concatRes = spawnSync(
+      FFMPEG_PATH,
+      ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalOut],
+      { encoding: 'utf-8' },
+    )
+
+    if (concatRes.status !== 0) {
+      log.error(`[ExportManager] Failed to concat ${label} audio:`, concatRes.stdout, concatRes.stderr)
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors
+      }
+      return null
+    }
+
+    processedAudioTempDirs.add(tmpDir)
+    return finalOut
+  }
+
+  const masterVolume = typeof projectState.masterVolume === 'number' ? projectState.masterVolume : projectState.volume ?? 1
+  const masterMuted = Boolean(projectState.masterMuted ?? projectState.isMuted ?? false)
+
+  const micAudioPath = projectState.micAudioPath || projectState.audioPath
+  const systemAudioPath = projectState.systemAudioPath || null
+
+  if (micAudioPath) {
+    try {
+      const processed = await prepareProcessedAudio(micAudioPath, 'mic')
+      const finalPath = processed || micAudioPath
+      ffmpegArgs.push('-i', finalPath)
+      audioTracksForMux.push({
+        label: 'mic',
+        path: finalPath,
+        volume: masterVolume * (typeof projectState.micVolume === 'number' ? projectState.micVolume : 1),
+        muted: masterMuted || Boolean(projectState.micMuted ?? false),
+      })
+    } catch (error) {
+      log.error('[ExportManager] Error preparing microphone audio track:', error)
+      ffmpegArgs.push('-i', micAudioPath)
+      audioTracksForMux.push({
+        label: 'mic',
+        path: micAudioPath,
+        volume: masterVolume * (typeof projectState.micVolume === 'number' ? projectState.micVolume : 1),
+        muted: masterMuted || Boolean(projectState.micMuted ?? false),
+      })
+    }
+  }
+
+  if (systemAudioPath) {
+    try {
+      const processed = await prepareProcessedAudio(systemAudioPath, 'system')
+      const finalPath = processed || systemAudioPath
+      ffmpegArgs.push('-i', finalPath)
+      audioTracksForMux.push({
+        label: 'system',
+        path: finalPath,
+        volume: masterVolume * (typeof projectState.systemVolume === 'number' ? projectState.systemVolume : 1),
+        muted: masterMuted || Boolean(projectState.systemMuted ?? false),
+      })
+    } catch (error) {
+      log.error('[ExportManager] Error preparing system audio track:', error)
+      ffmpegArgs.push('-i', systemAudioPath)
+      audioTracksForMux.push({
+        label: 'system',
+        path: systemAudioPath,
+        volume: masterVolume * (typeof projectState.systemVolume === 'number' ? projectState.systemVolume : 1),
+        muted: masterMuted || Boolean(projectState.systemMuted ?? false),
+      })
     }
   }
 
@@ -605,10 +631,30 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     ffmpegArgs.push('-c:v', 'copy', '-bsf:v', 'setts=dts=N:pts=N')
     log.info('[ExportManager] Using video stream copy (Renderer pre-encoded)')
 
-    // If audio present
-    if (projectState.audioPath) {
-      // Use input #1 (audio) which is either processed or original
-      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-shortest')
+    if (audioTracksForMux.length > 0) {
+      const filterChains: string[] = []
+      const mapTargets: string[] = []
+
+      audioTracksForMux.forEach((track, index) => {
+        const inputIndex = index + 1 // #0 is renderer video stream
+        const rawVolume = track.muted ? 0 : track.volume
+        const clampedVolume = Number.isFinite(rawVolume) ? clamp(rawVolume, 0, 2) : 1
+        if (Math.abs(clampedVolume - 1) < 0.0001) {
+          mapTargets.push(`${inputIndex}:a:0`)
+          return
+        }
+
+        const label = `a${index}`
+        filterChains.push(`[${inputIndex}:a]volume=${clampedVolume.toFixed(4)}[${label}]`)
+        mapTargets.push(`[${label}]`)
+      })
+
+      ffmpegArgs.push('-map', '0:v:0')
+      if (filterChains.length > 0) {
+        ffmpegArgs.push('-filter_complex', filterChains.join(';'))
+      }
+      mapTargets.forEach((target) => ffmpegArgs.push('-map', target))
+      ffmpegArgs.push('-c:a', 'aac', '-shortest')
     }
   } else {
     ffmpegArgs.push('-vf', 'split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse')
@@ -625,9 +671,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   const cleanupProcessedAudio = () => {
     try {
-      if (processedAudioPath) {
-        const tmpDir = path.dirname(processedAudioPath)
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
+      for (const tmpDir of processedAudioTempDirs) {
+        if (fs.existsSync(tmpDir)) {
+          fs.rmSync(tmpDir, { recursive: true, force: true })
+        }
       }
     } catch (err) {
       log.error('[ExportManager] Failed to cleanup processed audio temp:', err)

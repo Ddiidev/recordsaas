@@ -11,6 +11,10 @@ type ProjectPayload = {
   videoPath: string
   metadataPath: string
   webcamVideoPath?: string
+  micAudioPath?: string
+  systemAudioPath?: string
+  audioPath?: string
+  originalProjectPath?: string
 }
 
 type ExportPayload = {
@@ -72,6 +76,9 @@ type UpdateInfo = {
 type DshowDevice = {
   name: string
   alternativeName: string
+}
+
+type RecordingStartedPayload = {
 }
 
 // --- Auth ---
@@ -140,8 +147,8 @@ export const electronAPI = {
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
 
-  onRecordingStarted: (callback: () => void) => {
-    const listener = () => callback()
+  onRecordingStarted: (callback: (payload: RecordingStartedPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: RecordingStartedPayload) => callback(payload || {})
     ipcRenderer.on('recording-started', listener)
     return () => {
       ipcRenderer.removeListener('recording-started', listener)
@@ -162,7 +169,6 @@ export const electronAPI = {
     return () => ipcRenderer.removeListener('recorder:release-webcam', listener)
   },
   sendWebcamReleasedConfirmation: () => ipcRenderer.send('recorder:webcam-released'),
-
   // --- Editor window ---
   onProjectOpen: (callback: (payload: ProjectPayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: ProjectPayload) => callback(payload)

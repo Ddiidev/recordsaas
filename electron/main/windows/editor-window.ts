@@ -21,6 +21,8 @@ export function createEditorWindow(
   metadataPath: string,
   recordingGeometry: RecordingGeometry,
   webcamVideoPath?: string,
+  micAudioPath?: string,
+  systemAudioPath?: string,
   audioPath?: string,
   scaleFactor: number = 1,
   originalProjectPath?: string
@@ -37,6 +39,8 @@ export function createEditorWindow(
     metadataPath,
     recordingGeometry,
     webcamVideoPath,
+    micAudioPath,
+    systemAudioPath,
     audioPath,
     scaleFactor,
     originalProjectPath,
@@ -132,7 +136,15 @@ export function createEditorWindow(
 
   appState.editorWin.webContents.on('did-finish-load', () => {
     log.info(`[EditorWindow] Finished loading. Sending project data.`)
-    appState.editorWin?.webContents.send('project:open', { videoPath, metadataPath, webcamVideoPath, audioPath, originalProjectPath: appState.currentEditorSessionFiles?.originalProjectPath })
+    appState.editorWin?.webContents.send('project:open', {
+      videoPath,
+      metadataPath,
+      webcamVideoPath,
+      micAudioPath,
+      systemAudioPath,
+      audioPath,
+      originalProjectPath: appState.currentEditorSessionFiles?.originalProjectPath,
+    })
     checkForUpdates(appState.editorWin)
   })
 }
@@ -141,11 +153,22 @@ export async function cleanupEditorFiles(files: {
   screenVideoPath: string
   metadataPath: string
   webcamVideoPath?: string
+  micAudioPath?: string
+  systemAudioPath?: string
   audioPath?: string
   originalProjectPath?: string
 }) {
   log.info('[EditorWindow] Cleaning up session files:', files)
-  const unlinkPromises = [files.screenVideoPath, files.webcamVideoPath, files.audioPath, files.metadataPath]
+  const unlinkPromises = Array.from(
+    new Set([
+      files.screenVideoPath,
+      files.webcamVideoPath,
+      files.micAudioPath,
+      files.systemAudioPath,
+      files.audioPath,
+      files.metadataPath,
+    ]),
+  )
     .filter(Boolean)
     .map((filePath) => (fsSync.existsSync(filePath!) ? fs.unlink(filePath!) : Promise.resolve()))
   try {

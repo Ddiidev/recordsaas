@@ -205,6 +205,11 @@ export interface ProjectState {
   videoPath: string | null
   metadataPath: string | null
   videoUrl: string | null
+  micAudioPath: string | null
+  micAudioUrl: string | null
+  systemAudioPath: string | null
+  systemAudioUrl: string | null
+  // Legacy fields kept for compatibility with old persisted projects.
   audioPath: string | null
   audioUrl: string | null
   videoDimensions: VideoDimensions
@@ -218,6 +223,10 @@ export interface ProjectState {
   syncOffset: number
   platform: NodeJS.Platform | null
   cursorTheme: CursorTheme | null
+  hasMicAudioTrack: boolean
+  hasSystemAudioTrack: boolean
+  hasAnyAudioTrack: boolean
+  // Legacy alias kept for compatibility with existing UI logic.
   hasAudioTrack: boolean
   originalProjectPath?: string
 }
@@ -227,6 +236,8 @@ export interface ProjectActions {
     videoPath: string
     metadataPath: string
     webcamVideoPath?: string
+    micAudioPath?: string
+    systemAudioPath?: string
     audioPath?: string
     originalProjectPath?: string
   }) => Promise<void>
@@ -344,11 +355,28 @@ export interface UIActions {
 }
 
 export interface AudioState {
+  masterVolume: number // 0 to 1
+  masterMuted: boolean
+  micVolume: number // 0 to 1
+  micMuted: boolean
+  systemVolume: number // 0 to 1
+  systemMuted: boolean
+  // Legacy aliases mapped to master controls.
   volume: number // 0 to 1
   isMuted: boolean
 }
 
 export interface AudioActions {
+  setMasterVolume: (volume: number) => void
+  toggleMasterMute: () => void
+  setMasterMuted: (isMuted: boolean) => void
+  setMicVolume: (volume: number) => void
+  toggleMicMute: () => void
+  setMicMuted: (isMuted: boolean) => void
+  setSystemVolume: (volume: number) => void
+  toggleSystemMute: () => void
+  setSystemMuted: (isMuted: boolean) => void
+  // Legacy actions preserved as master wrappers.
   setVolume: (volume: number) => void
   toggleMute: () => void
   setIsMuted: (isMuted: boolean) => void

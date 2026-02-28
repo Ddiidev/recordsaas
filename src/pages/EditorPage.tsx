@@ -20,6 +20,7 @@ import { Button } from '../components/ui/button'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import type { SettingsTab } from '../components/settings/SettingsModal'
+import { normalizeMediaPath } from '../lib/media'
 
 export function EditorPage() {
   const {
@@ -91,14 +92,29 @@ export function EditorPage() {
     try {
       setIsExportingProject(true)
       const storeState = useEditorStore.getState()
-      const { videoPath, metadataPath, audioPath, webcamVideoPath, originalProjectPath } = storeState
-      
-      const mediaFiles = [
-        videoPath?.replace('media://', ''),
-        metadataPath?.replace('media://', ''),
-        audioPath?.replace('media://', ''),
-        webcamVideoPath?.replace('media://', '')
-      ].filter(Boolean) as string[]
+      const {
+        videoPath,
+        metadataPath,
+        micAudioPath,
+        systemAudioPath,
+        audioPath,
+        webcamVideoPath,
+        originalProjectPath,
+      } = storeState
+      const stripMediaPrefix = (value: string | null | undefined) => (value ? normalizeMediaPath(value) : undefined)
+
+      const mediaFiles = Array.from(
+        new Set(
+          [
+            stripMediaPrefix(videoPath),
+            stripMediaPrefix(metadataPath),
+            stripMediaPrefix(micAudioPath),
+            stripMediaPrefix(systemAudioPath),
+            stripMediaPrefix(audioPath),
+            stripMediaPrefix(webcamVideoPath),
+          ].filter(Boolean) as string[],
+        ),
+      )
       
       let targetFolder = originalProjectPath;
       let filesToExport = mediaFiles;
@@ -129,10 +145,12 @@ export function EditorPage() {
       
       const getBasename = (p: string) => p.split(/[/\\]/).pop() || p
 
-      if (stateToSave.videoPath) stateToSave.videoPath = getBasename(stateToSave.videoPath.replace('media://', ''))
-      if (stateToSave.metadataPath) stateToSave.metadataPath = getBasename(stateToSave.metadataPath.replace('media://', ''))
-      if (stateToSave.audioPath) stateToSave.audioPath = getBasename(stateToSave.audioPath.replace('media://', ''))
-      if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getBasename(stateToSave.webcamVideoPath.replace('media://', ''))
+      if (stateToSave.videoPath) stateToSave.videoPath = getBasename(normalizeMediaPath(stateToSave.videoPath))
+      if (stateToSave.metadataPath) stateToSave.metadataPath = getBasename(normalizeMediaPath(stateToSave.metadataPath))
+      if (stateToSave.micAudioPath) stateToSave.micAudioPath = getBasename(normalizeMediaPath(stateToSave.micAudioPath))
+      if (stateToSave.systemAudioPath) stateToSave.systemAudioPath = getBasename(normalizeMediaPath(stateToSave.systemAudioPath))
+      if (stateToSave.audioPath) stateToSave.audioPath = getBasename(normalizeMediaPath(stateToSave.audioPath))
+      if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getBasename(normalizeMediaPath(stateToSave.webcamVideoPath))
       
       const projectData = JSON.stringify(stateToSave, null, 2)
       

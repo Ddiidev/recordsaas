@@ -14,6 +14,7 @@ export const VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT,
 process.env.VITE_PUBLIC = VITE_PUBLIC
 
 export const PRELOAD_SCRIPT = path.join(process.env.APP_ROOT!, 'dist-electron/preload.mjs')
+export const OVERLAY_PRELOAD_SCRIPT = path.join(process.env.APP_ROOT!, 'dist-electron/preload-overlay.mjs')
 
 // --- Recording ---
 export const MOUSE_RECORDING_FPS = 50

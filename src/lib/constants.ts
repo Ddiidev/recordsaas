@@ -157,6 +157,12 @@ export const DEFAULTS = {
   AUDIO: {
     VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
     MUTED: { defaultValue: false },
+    MASTER_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    MASTER_MUTED: { defaultValue: false },
+    MIC_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    MIC_MUTED: { defaultValue: false },
+    SYSTEM_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    SYSTEM_MUTED: { defaultValue: false },
   },
   ANIMATION: {
     SPEED: { defaultValue: ZOOM.DEFAULT_SPEED },

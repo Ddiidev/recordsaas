@@ -7,6 +7,7 @@ import { ExportSettings } from '../components/editor/ExportModal'
 import { RESOLUTIONS } from '../lib/constants'
 import { drawScene } from '../lib/renderer'
 import { prepareCursorBitmaps, mapExportTimeToSourceTime, calculateExportDuration } from '../lib/utils'
+import { toMediaUrl } from '../lib/media'
 
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
@@ -337,7 +338,11 @@ const loadBackgroundImage = (
       log.error(`[RendererPage] Failed to load background image for export: ${img.src}`)
       resolve(null) // Resolve with null on error to not block rendering
     }
-    const finalUrl = background.imageUrl.startsWith('blob:') ? background.imageUrl : `media://${background.imageUrl}`
+    const finalUrl = toMediaUrl(background.imageUrl)
+    if (!finalUrl) {
+      resolve(null)
+      return
+    }
     img.src = finalUrl
   })
 }
@@ -351,7 +356,12 @@ const loadExportWatermarkImage = (enabled: boolean): Promise<HTMLImageElement | 
     const image = new Image()
     image.onload = () => resolve(image)
     image.onerror = () => resolve(null)
-    image.src = 'media://recordsaas-appicon.png'
+    const iconUrl = toMediaUrl('recordsaas-appicon.png')
+    if (!iconUrl) {
+      resolve(null)
+      return
+    }
+    image.src = iconUrl
   })
 }
 
@@ -458,7 +468,12 @@ export function RendererPage() {
               resolve()
             }
             videoElement.onerror = (e) => reject(new Error(`Failed to load ${source}: ${e}`))
-            videoElement.src = `media://${path}`
+            const mediaUrl = toMediaUrl(path)
+            if (!mediaUrl) {
+              reject(new Error(`Invalid media URL for ${source}`))
+              return
+            }
+            videoElement.src = mediaUrl
             videoElement.muted = true
             videoElement.load()
           })

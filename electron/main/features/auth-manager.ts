@@ -77,7 +77,8 @@ interface JwtPayload {
   watermark_required?: boolean
 }
 
-const AUTH_API_BASE_URL = (process.env.RECORDSAAS_API_BASE_URL || 'https://recordsaas.app').replace(/\/$/, '')
+const AUTH_APP_BASE_URL = (process.env.RECORDSAAS_APP_BASE_URL || 'https://recordsaas.app').replace(/\/$/, '')
+const AUTH_API_BASE_URL = (process.env.RECORDSAAS_API_BASE_URL || AUTH_APP_BASE_URL).replace(/\/$/, '')
 const AUTH_SCHEME = 'recordsaas'
 const AUTH_HOST = 'auth'
 const AUTH_CALLBACK_PATH = '/callback'
@@ -582,6 +583,12 @@ export async function initializeAuthManager(): Promise<void> {
   log.info('[Auth] Initializing auth manager...')
   await setCurrentStateFromEvaluation()
 
+  // Always attempt a startup refresh when a desktop session exists so plan/license
+  // upgrades performed outside the app are reflected immediately on app open.
+  if (currentState.isAuthenticated) {
+    void refreshTokensInternal()
+  }
+
   if (revalidateInterval) {
     clearInterval(revalidateInterval)
     revalidateInterval = null
@@ -602,7 +609,7 @@ export async function startDesktopLogin(): Promise<void> {
   const nonce = generateNonce()
   savePendingLogin(nonce)
 
-  const loginUrl = new URL(`${AUTH_API_BASE_URL}/`)
+  const loginUrl = new URL(`${AUTH_APP_BASE_URL}/`)
   loginUrl.searchParams.set('desktop', '1')
   loginUrl.searchParams.set('redirect_uri', `${AUTH_SCHEME}://${AUTH_HOST}${AUTH_CALLBACK_PATH}`)
   loginUrl.searchParams.set('nonce', nonce)

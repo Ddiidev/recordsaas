@@ -9,35 +9,42 @@ function formatDate(value: string | null): string {
   return date.toLocaleString()
 }
 
-function formatCurrency(amount: number | null, currency: string | null): string {
-  if (amount === null || amount === undefined || !currency) return '—'
-
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: currency.toUpperCase(),
-    }).format(amount / 100)
-  } catch {
-    return `${amount / 100} ${currency.toUpperCase()}`
-  }
-}
-
 export function AccountTab() {
   const { authState, startLogin, logout, refresh } = useDesktopAuth()
   const [isLoading, setIsLoading] = useState(false)
 
+  const plan = authState.license?.plan || null
+  const isLifetime = plan === 'lifetime'
+  const isPro = plan === 'pro'
+
   const planLabel = useMemo(() => {
-    if (!authState.license?.plan) return 'Free'
-    if (authState.license.plan === 'lifetime') return 'Lifetime'
-    if (authState.license.plan === 'pro') return 'Pro'
-    return authState.license.plan
-  }, [authState.license?.plan])
+    if (!plan) return 'Free'
+    if (plan === 'lifetime') return 'Lifetime'
+    if (plan === 'pro') return 'Pro'
+    return plan
+  }, [plan])
 
   const statusLabel = useMemo(() => {
     if (!authState.isAuthenticated) return 'Not logged in'
-    if (authState.canExport) return 'Export enabled'
-    return 'Free export (480p/30)'
-  }, [authState.canExport, authState.isAuthenticated, authState.reason])
+
+    if (!plan) {
+      return 'SD Export (480p)'
+    }
+
+    if (plan === 'lifetime') {
+      return authState.license?.active ? 'Active' : 'Inactive'
+    }
+
+    if (plan === 'pro') {
+      const subscriptionStatus = (authState.license?.subscriptionStatus || '').toLowerCase()
+      const inactiveStatuses = new Set(['canceled', 'unpaid', 'past_due', 'incomplete_expired'])
+      const hasInactiveSubscriptionStatus = inactiveStatuses.has(subscriptionStatus)
+      const isActive = Boolean(authState.license?.active) && !hasInactiveSubscriptionStatus
+      return isActive ? 'Active' : 'Inactive'
+    }
+
+    return authState.license?.active ? 'Active' : 'Inactive'
+  }, [authState.isAuthenticated, authState.license?.active, authState.license?.subscriptionStatus, plan])
 
   const handleAction = async (action: 'login' | 'logout' | 'refresh') => {
     setIsLoading(true)
@@ -94,18 +101,12 @@ export function AccountTab() {
               <p className="text-muted-foreground">Status</p>
               <p className="font-medium text-foreground">{statusLabel}</p>
             </div>
-            <div>
-              <p className="text-muted-foreground">License valid until</p>
-              <p className="font-medium text-foreground">{formatDate(authState.license?.licenseValidUntil || null)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Paid amount</p>
-              <p className="font-medium text-foreground">{formatCurrency(authState.license?.paidAmount || null, authState.license?.paidCurrency || null)}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Watermark fallback</p>
-              <p className="font-medium text-foreground">{authState.watermarkRequired ? 'Enabled' : 'Disabled'}</p>
-            </div>
+            {(isPro || (plan && !isLifetime)) && (
+              <div>
+                <p className="text-muted-foreground">License valid until</p>
+                <p className="font-medium text-foreground">{formatDate(authState.license?.licenseValidUntil || null)}</p>
+              </div>
+            )}
           </div>
         </div>
 

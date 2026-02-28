@@ -15,6 +15,7 @@ import { Slider } from '../ui/slider'
 import { Button } from '../ui/button'
 import { drawScene } from '../../lib/renderer'
 import { cn } from '../../lib/utils'
+import { toMediaUrl } from '../../lib/media'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 
@@ -30,6 +31,8 @@ export const Preview = memo(
   }) => {
     const {
       videoUrl,
+      micAudioUrl,
+      systemAudioUrl,
       audioUrl,
       zoomRegions,
       cutRegions,
@@ -49,8 +52,12 @@ export const Preview = memo(
       webcamStyles,
       videoDimensions,
       canvasDimensions,
-      volume,
-      isMuted,
+      masterVolume,
+      masterMuted,
+      micVolume,
+      micMuted,
+      systemVolume,
+      systemMuted,
       setCurrentTime,
       setCurrentTimeThrottled,
       setSelectedRegionId,
@@ -60,6 +67,8 @@ export const Preview = memo(
     } = useEditorStore(
       useShallow((state) => ({
         videoUrl: state.videoUrl,
+        micAudioUrl: state.micAudioUrl,
+        systemAudioUrl: state.systemAudioUrl,
         audioUrl: state.audioUrl,
         zoomRegions: state.zoomRegions,
         cutRegions: state.cutRegions,
@@ -79,8 +88,12 @@ export const Preview = memo(
         webcamStyles: state.webcamStyles,
         videoDimensions: state.videoDimensions,
         canvasDimensions: state.canvasDimensions,
-        volume: state.volume,
-        isMuted: state.isMuted,
+        masterVolume: state.masterVolume,
+        masterMuted: state.masterMuted,
+        micVolume: state.micVolume,
+        micMuted: state.micMuted,
+        systemVolume: state.systemVolume,
+        systemMuted: state.systemMuted,
         setCurrentTime: state.setCurrentTime,
         setCurrentTimeThrottled: state.setCurrentTimeThrottled,
         setSelectedRegionId: state.setSelectedRegionId,
@@ -96,7 +109,9 @@ export const Preview = memo(
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
-    const audioRef = useRef<HTMLAudioElement>(null)
+    const micAudioRef = useRef<HTMLAudioElement>(null)
+    const systemAudioRef = useRef<HTMLAudioElement>(null)
+    const legacyAudioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
     const lastUiSyncAtRef = useRef(0)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
@@ -107,6 +122,8 @@ export const Preview = memo(
     const [isCursorHidden, setIsCursorHidden] = useState(false)
     const inactivityTimerRef = useRef<number | null>(null)
     const previewContainerRef = useRef<HTMLDivElement>(null)
+    const hasSeparateAudioTracks = Boolean(micAudioUrl || systemAudioUrl)
+    const legacyAudioUrl = hasSeparateAudioTracks ? null : audioUrl
 
     // This effect handles the auto-hiding control bar in fullscreen mode.
     useEffect(() => {
@@ -181,10 +198,12 @@ export const Preview = memo(
         img.onload = () => {
           setBgImage(img)
         }
-        const finalUrl = background.imageUrl.startsWith('blob:')
-          ? background.imageUrl
-          : `media://${background.imageUrl}`
-        img.src = finalUrl
+        const finalUrl = toMediaUrl(background.imageUrl)
+        if (finalUrl) {
+          img.src = finalUrl
+        } else {
+          setBgImage(null)
+        }
       } else {
         setBgImage(null)
       }
@@ -268,46 +287,73 @@ export const Preview = memo(
       const video = videoRef.current
       if (!video) return
       const webcamVideo = webcamVideoRef.current
-      const audio = audioRef.current
+      const audioElements = [micAudioRef.current, systemAudioRef.current, legacyAudioRef.current].filter(
+        Boolean,
+      ) as HTMLAudioElement[]
       if (isPlaying) {
         video.play().catch(console.error)
         webcamVideo?.play().catch(console.error)
-        audio?.play().catch(console.error)
+        audioElements.forEach((audio) => audio.play().catch(console.error))
       } else {
         video.pause()
         webcamVideo?.pause()
-        audio?.pause()
+        audioElements.forEach((audio) => audio.pause())
         // When pausing, reset playbackRate to 1 so scrubbing is at normal speed
         video.playbackRate = 1
         if (webcamVideo) webcamVideo.playbackRate = 1
-        if (audio) audio.playbackRate = 1
+        audioElements.forEach((audio) => {
+          audio.playbackRate = 1
+        })
       }
     }, [isPlaying, videoRef])
 
     // Effect to handle volume and mute state
     useEffect(() => {
       const video = videoRef.current
-      const audio = audioRef.current
+      const micAudio = micAudioRef.current
+      const systemAudio = systemAudioRef.current
+      const legacyAudio = legacyAudioRef.current
       if (video) {
-        // Video is always muted when we have a separate audio track
-        if (audioUrl) {
+        // Video is always muted when we have separate audio tracks.
+        if (hasSeparateAudioTracks || legacyAudioUrl) {
           video.muted = true
         } else {
           // No separate audio, use video's own audio
-          video.volume = volume
-          video.muted = isMuted
+          video.volume = masterVolume
+          video.muted = masterMuted
         }
       }
-      if (audio) {
-        audio.volume = volume
-        audio.muted = isMuted
+
+      if (micAudio) {
+        micAudio.volume = masterVolume * micVolume
+        micAudio.muted = masterMuted || micMuted
       }
-    }, [volume, isMuted, videoRef, audioUrl])
+      if (systemAudio) {
+        systemAudio.volume = masterVolume * systemVolume
+        systemAudio.muted = masterMuted || systemMuted
+      }
+      if (legacyAudio) {
+        legacyAudio.volume = masterVolume
+        legacyAudio.muted = masterMuted
+      }
+    }, [
+      masterVolume,
+      masterMuted,
+      micVolume,
+      micMuted,
+      systemVolume,
+      systemMuted,
+      hasSeparateAudioTracks,
+      legacyAudioUrl,
+      videoRef,
+    ])
 
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
-      const audio = audioRef.current
+      const audioElements = [micAudioRef.current, systemAudioRef.current, legacyAudioRef.current].filter(
+        Boolean,
+      ) as HTMLAudioElement[]
       let playbackTime = video.currentTime
 
       // Handle cut regions without depending on store currentTime updates during playback
@@ -317,9 +363,9 @@ export const Preview = memo(
           playbackTime = activeCutRegion.startTime + activeCutRegion.duration
           video.currentTime = playbackTime
           // Sync audio with the jump
-          if (audio) {
+          audioElements.forEach((audio) => {
             audio.currentTime = playbackTime
-          }
+          })
           syncCurrentTimeToStore(playbackTime, true)
         }
       }
@@ -338,10 +384,10 @@ export const Preview = memo(
         video.currentTime = playbackTime
         video.pause()
         // Also pause audio
-        if (audio) {
+        audioElements.forEach((audio) => {
           audio.currentTime = playbackTime
           audio.pause()
-        }
+        })
         syncCurrentTimeToStore(playbackTime, true)
       }
       if (webcamVideoRef.current) {
@@ -351,13 +397,12 @@ export const Preview = memo(
         }
         webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
       }
-      if (audio) {
-        // Sync audio with video
+      audioElements.forEach((audio) => {
         if (Math.abs(audio.currentTime - playbackTime) > 0.1) {
           audio.currentTime = playbackTime
         }
-        audio.playbackRate = video.playbackRate // Sync audio speed
-      }
+        audio.playbackRate = video.playbackRate
+      })
 
       if (isPlaying) {
         const now = performance.now()
@@ -378,9 +423,9 @@ export const Preview = memo(
         setDuration(video.duration)
         setVideoDimensions({ width: video.videoWidth, height: video.videoHeight })
 
-        // Only check video for audio tracks if we don't have a separate audio file
+        // Only check video for embedded audio if we don't have separate audio tracks.
         const store = useEditorStore.getState()
-        if (!store.audioUrl) {
+        if (!store.micAudioUrl && !store.systemAudioUrl && !legacyAudioUrl) {
           // Check for audio tracks using type-safe checks
           const hasAudioTracks = video.audioTracks && video.audioTracks.length > 0
           const hasMozAudio = 'mozHasAudio' in video && video.mozHasAudio === true
@@ -415,18 +460,32 @@ export const Preview = memo(
       }
     }, [videoRef])
 
-    const handleAudioLoadedMetadata = useCallback(() => {
-      const video = videoRef.current
-      const audio = audioRef.current
-      if (video && audio) {
-        audio.currentTime = video.currentTime
-        if (video.paused) {
-          audio.pause()
-        } else {
-          audio.play().catch(console.error)
+    const syncAudioElementToVideo = useCallback(
+      (audio: HTMLAudioElement | null) => {
+        const video = videoRef.current
+        if (video && audio) {
+          audio.currentTime = video.currentTime
+          if (video.paused) {
+            audio.pause()
+          } else {
+            audio.play().catch(console.error)
+          }
         }
-      }
-    }, [videoRef])
+      },
+      [videoRef],
+    )
+
+    const handleMicAudioLoadedMetadata = useCallback(() => {
+      syncAudioElementToVideo(micAudioRef.current)
+    }, [syncAudioElementToVideo])
+
+    const handleSystemAudioLoadedMetadata = useCallback(() => {
+      syncAudioElementToVideo(systemAudioRef.current)
+    }, [syncAudioElementToVideo])
+
+    const handleLegacyAudioLoadedMetadata = useCallback(() => {
+      syncAudioElementToVideo(legacyAudioRef.current)
+    }, [syncAudioElementToVideo])
 
     const handleVideoPlay = useCallback(() => {
       setPlaying(true)
@@ -460,9 +519,9 @@ export const Preview = memo(
         setPlaybackUiTime(value)
         syncCurrentTimeToStore(value, true)
       }
-      if (audioRef.current) {
-        audioRef.current.currentTime = value
-      }
+      ;[micAudioRef.current, systemAudioRef.current, legacyAudioRef.current].forEach((audio) => {
+        if (audio) audio.currentTime = value
+      })
     }
 
     const handleRewind = () => {
@@ -477,9 +536,9 @@ export const Preview = memo(
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
       }
-      if (audioRef.current) {
-        audioRef.current.currentTime = rewindTime
-      }
+      ;[micAudioRef.current, systemAudioRef.current, legacyAudioRef.current].forEach((audio) => {
+        if (audio) audio.currentTime = rewindTime
+      })
     }
 
     const previewTime = isPlaying ? playbackUiTime : currentTime
@@ -540,11 +599,27 @@ export const Preview = memo(
           onEnded={handleVideoEnded}
           style={{ display: 'none' }}
         />
-        {audioUrl && (
+        {micAudioUrl && (
           <audio
-            ref={audioRef}
-            src={audioUrl}
-            onLoadedMetadata={handleAudioLoadedMetadata}
+            ref={micAudioRef}
+            src={micAudioUrl}
+            onLoadedMetadata={handleMicAudioLoadedMetadata}
+            style={{ display: 'none' }}
+          />
+        )}
+        {systemAudioUrl && (
+          <audio
+            ref={systemAudioRef}
+            src={systemAudioUrl}
+            onLoadedMetadata={handleSystemAudioLoadedMetadata}
+            style={{ display: 'none' }}
+          />
+        )}
+        {legacyAudioUrl && (
+          <audio
+            ref={legacyAudioRef}
+            src={legacyAudioUrl}
+            onLoadedMetadata={handleLegacyAudioLoadedMetadata}
             style={{ display: 'none' }}
           />
         )}
