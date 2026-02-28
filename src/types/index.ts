@@ -406,3 +406,5 @@ export type Slice<T extends object, A extends object> = (
   set: (fn: (draft: EditorState) => void) => void,
   get: () => EditorState & EditorActions,
 ) => T & A
+
+export * from './auth'

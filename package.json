@@ -3,7 +3,7 @@
   "description": "Screen recording and editing app",
   "author": "Tam Nguyen",
   "private": true,
-  "version": "2.0.1",
+  "version": "2.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -93,6 +93,14 @@
   "build": {
     "appId": "com.recordsaas.app",
     "productName": "RecordSaaS",
+    "protocols": [
+      {
+        "name": "RecordSaaS",
+        "schemes": [
+          "recordsaas"
+        ]
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -160,6 +168,9 @@
       "maintainer": "André Luiz",
       "icon": "build/recordsaas-appicon.png",
       "category": "Utility;AudioVideo;Recorder",
+      "desktop": {
+        "Name": "RecordSaaS"
+      },
       "synopsis": "Screen recording and editing app",
       "artifactName": "RecordSaaS-${version}-linux-x64.${ext}",
       "description": "Professional screen recording and editing software for modern workflows"
