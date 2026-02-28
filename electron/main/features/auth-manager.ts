@@ -1,5 +1,6 @@
 import { BrowserWindow, shell } from 'electron'
 import Store from 'electron-store'
+import log from 'electron-log/main'
 import { createPublicKey, createVerify, randomUUID } from 'node:crypto'
 
 type DesktopAuthReason =
@@ -393,6 +394,7 @@ function broadcastAuthState(): void {
 async function evaluateCurrentState(): Promise<DesktopAuthState> {
   const session = loadStoredSession()
   if (!session) {
+    log.debug('[Auth] No stored session found, state: not_logged_in')
     return createLoggedOutState('not_logged_in')
   }
 
@@ -438,6 +440,7 @@ async function evaluateCurrentState(): Promise<DesktopAuthState> {
     return base
   } catch (error) {
     const reason = resolveReasonFromValidationError(error, 'invalid_entitlement')
+    log.warn(`[Auth] Token validation failed: ${reason}`, error instanceof Error ? error.message : error)
 
     if (reason === 'invalid_session' || reason === 'invalid_entitlement') {
       clearStoredSession()
@@ -455,6 +458,7 @@ async function evaluateCurrentState(): Promise<DesktopAuthState> {
 
 async function setCurrentStateFromEvaluation(): Promise<DesktopAuthState> {
   currentState = await evaluateCurrentState()
+  log.debug(`[Auth] State evaluated: authenticated=${currentState.isAuthenticated}, canExport=${currentState.canExport}, reason=${currentState.reason}`)
   broadcastAuthState()
   void maybeAutoRefreshTokens()
   return currentState
@@ -483,9 +487,11 @@ function extractSessionTokenExpirationMs(): number | null {
 async function refreshTokensInternal(): Promise<boolean> {
   const sessionToken = extractSessionTokenForRefresh()
   if (!sessionToken) {
+    log.debug('[Auth] Token refresh skipped: no session token')
     return false
   }
 
+  log.info('[Auth] Refreshing tokens...')
   try {
     const response = await fetch(`${AUTH_API_BASE_URL}/api/auth/refresh`, {
       method: 'POST',
@@ -496,6 +502,7 @@ async function refreshTokensInternal(): Promise<boolean> {
     })
 
     if (!response.ok) {
+      log.warn(`[Auth] Token refresh failed: HTTP ${response.status}`)
       if (response.status === 401) {
         clearStoredSession()
         await setCurrentStateFromEvaluation()
@@ -517,6 +524,7 @@ async function refreshTokensInternal(): Promise<boolean> {
       !data.user ||
       !data.license
     ) {
+      log.warn('[Auth] Token refresh returned invalid payload')
       return false
     }
 
@@ -529,8 +537,10 @@ async function refreshTokensInternal(): Promise<boolean> {
 
     await getSigningMetadata(true)
     await setCurrentStateFromEvaluation()
+    log.info('[Auth] Token refresh completed successfully')
     return true
-  } catch {
+  } catch (error) {
+    log.error('[Auth] Token refresh error:', error)
     return false
   }
 }
@@ -569,6 +579,7 @@ function generateNonce(): string {
 }
 
 export async function initializeAuthManager(): Promise<void> {
+  log.info('[Auth] Initializing auth manager...')
   await setCurrentStateFromEvaluation()
 
   if (revalidateInterval) {
@@ -587,6 +598,7 @@ export async function getDesktopAuthState(): Promise<DesktopAuthState> {
 }
 
 export async function startDesktopLogin(): Promise<void> {
+  log.info('[Auth] Starting desktop login flow')
   const nonce = generateNonce()
   savePendingLogin(nonce)
 
@@ -600,11 +612,13 @@ export async function startDesktopLogin(): Promise<void> {
 }
 
 export async function handleAuthDeepLink(url: string): Promise<boolean> {
+  log.info('[Auth] Processing auth deep link')
   let parsed: URL
 
   try {
     parsed = new URL(url)
   } catch {
+    log.warn('[Auth] Failed to parse deep link URL')
     return false
   }
 
@@ -691,6 +705,7 @@ export async function handleAuthDeepLink(url: string): Promise<boolean> {
 }
 
 export async function logoutDesktopAuth(): Promise<void> {
+  log.info('[Auth] Logging out')
   clearStoredSession()
   clearPendingLogin()
   await setCurrentStateFromEvaluation()

@@ -23,6 +23,7 @@ import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../lib/utils'
 import { useDesktopAuth } from '../hooks/useDesktopAuth'
+import log from 'electron-log/renderer'
 import type { SettingsTab } from '../components/settings/SettingsModal'
 import '../index.css'
 
@@ -122,7 +123,7 @@ export function RecorderPage() {
         const primary = fetchedDisplays.find((d) => d.isPrimary) || fetchedDisplays[0]
         if (primary) setSelectedDisplayId(String(primary.id))
       } catch (error) {
-        console.error('Failed to initialize recorder settings:', error)
+        log.error('[Recorder] Failed to initialize recorder settings:', error)
       }
     }
     initialize()
@@ -185,12 +186,13 @@ export function RecorderPage() {
     const startStream = async () => {
       stopStream()
       try {
+        log.debug(`[Recorder] Starting webcam preview for device: ${selectedWebcamId}`)
         const constraints = { video: platform === 'win32' ? true : { deviceId: { exact: selectedWebcamId } } }
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         webcamStreamRef.current = stream
         if (videoEl) videoEl.srcObject = stream
       } catch (error) {
-        console.error('Failed to start webcam preview stream:', error)
+        log.error('[Recorder] Failed to start webcam preview stream:', error)
       }
     }
 
@@ -226,7 +228,9 @@ export function RecorderPage() {
     }
     const onMouseMove = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
-      const interactive = target?.closest('[data-interactive="true"]')
+      const interactive =
+        target?.closest('[data-interactive="true"]') ||
+        target?.closest('[data-radix-popper-content-wrapper]')
       window.electronAPI.setRecorderIgnoreMouse(!interactive)
     }
     const onMouseLeave = () => {
@@ -262,7 +266,7 @@ export function RecorderPage() {
         return savedPreparationCountdown
       }
     } catch (error) {
-      console.error('Failed to read preparation countdown setting:', error)
+      log.error('[Recorder] Failed to read preparation countdown setting:', error)
     }
 
     return preparationCountdownSeconds
@@ -307,6 +311,7 @@ export function RecorderPage() {
       const webcam = selectedWebcamId !== 'none' ? webcams.find((d) => d.id === selectedWebcamId) : undefined
       const mic = selectedMicId !== 'none' ? mics.find((d) => d.id === selectedMicId) : undefined
 
+      log.info(`[Recorder] Starting recording: source=${source}, webcam=${webcam?.name ?? 'none'}, mic=${mic?.name ?? 'none'}`)
       const result = await window.electronAPI.startRecording({
         source,
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
@@ -321,7 +326,7 @@ export function RecorderPage() {
         clearPreparationCountdown()
       }
     } catch (error) {
-      console.error('Failed to start recording:', error)
+      log.error('[Recorder] Failed to start recording:', error)
       setActionInProgress('none')
       setRecordingState('idle')
       setIsRecording(false)
@@ -338,7 +343,7 @@ export function RecorderPage() {
       await runPreparationCountdown(countdownSeconds)
       await startRecordingAfterPreparation()
     } catch (error) {
-      console.error('Failed to run preparation countdown:', error)
+      log.error('[Recorder] Failed to run preparation countdown:', error)
       setActionInProgress('none')
       setRecordingState('idle')
       setIsRecording(false)
@@ -357,7 +362,7 @@ export function RecorderPage() {
       const result = await window.electronAPI.loadVideoFromFile()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to load video from file:', error)
+      log.error('[Recorder] Failed to load video from file:', error)
       setActionInProgress('none')
     }
   }
@@ -368,7 +373,7 @@ export function RecorderPage() {
       const result = await window.electronAPI.importProject()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to import project from file:', error)
+      log.error('[Recorder] Failed to import project from file:', error)
       setActionInProgress('none')
     }
   }

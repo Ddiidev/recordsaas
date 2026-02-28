@@ -127,7 +127,7 @@ async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
     ffmpeg.stderr.on('data', (data: any) => {
-      log.info(`[AudioTrim FFmpeg]: ${data.toString()}`)
+      log.debug(`[AudioTrim FFmpeg]: ${data.toString()}`)
     })
 
     ffmpeg.on('close', async (code: any) => {
@@ -235,7 +235,7 @@ async function startActualRecording(
   // Monitor FFmpeg's stderr for progress, errors, and sync timing
   appState.ffmpegProcess.stderr.on('data', (data: any) => {
     const message = data.toString()
-    log.warn(`[FFMPEG stderr]: ${message}`)
+    log.debug(`[FFMPEG stderr]: ${message}`)
 
     // Early detection of fatal errors to provide immediate feedback
     const fatalErrorKeywords = [

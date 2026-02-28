@@ -64,9 +64,15 @@ export async function getDshowDevices(): Promise<{
 
   const FFMPEG_PATH = getFFmpegPath()
   const command = `"${FFMPEG_PATH}" -hide_banner -list_devices true -f dshow -i dummy`
+  const startTime = Date.now()
 
   return new Promise((resolve) => {
     exec(command, (_error, _stdout, stderr) => {
+      const elapsed = Date.now() - startTime
+
+      // Log raw FFmpeg dshow output for diagnostics
+      log.debug(`[Desktop] dshow raw output:\n${stderr}`)
+
       // The command is expected to "fail" and output to stderr, which is normal for this command.
       const lines = stderr.split('\n')
       const video: { name: string; alternativeName: string }[] = []
@@ -90,11 +96,12 @@ export async function getDshowDevices(): Promise<{
           } else {
             audio.push({ name: lastDevice.name, alternativeName })
           }
+          log.debug(`[Desktop] Parsed ${lastDevice.type} device: "${lastDevice.name}" (alt: "${alternativeName}")`)
           lastDevice = null // Reset for the next device
         }
       }
 
-      log.info(`[Desktop] Found dshow devices: ${video.length} video, ${audio.length} audio.`)
+      log.info(`[Desktop] Found dshow devices: ${video.length} video, ${audio.length} audio (${elapsed}ms)`)
       resolve({ video, audio })
     })
   })

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import log from 'electron-log/renderer'
 
 type Device = { id: string; name: string }
 
@@ -22,22 +23,29 @@ export const useDeviceManager = () => {
       const currentPlatform = platform ?? (await window.electronAPI.getPlatform())
       if (!platform) setPlatform(currentPlatform)
 
+      log.debug(`[DeviceManager] Fetching ${kind} devices on ${currentPlatform}`)
+
       if (currentPlatform === 'win32') {
         const { video, audio } = await window.electronAPI.getDshowDevices()
-        return (kind === 'videoinput' ? video : audio).map((d) => ({ id: d.alternativeName, name: d.name }))
+        const devices = (kind === 'videoinput' ? video : audio).map((d) => ({ id: d.alternativeName, name: d.name }))
+        log.debug(`[DeviceManager] dshow ${kind}: ${devices.length} devices found`)
+        return devices
       }
 
       try {
         // Request permission to ensure device labels are available
         const stream = await navigator.mediaDevices.getUserMedia({ [kind === 'videoinput' ? 'video' : 'audio']: true })
         stream.getTracks().forEach((track) => track.stop())
+        log.debug(`[DeviceManager] Media permission granted for ${kind}`)
       } catch (err) {
-        console.warn(`Could not get media permissions for ${kind}:`, err)
+        log.warn(`[DeviceManager] Could not get media permissions for ${kind}:`, err)
       }
       const allDevices = await navigator.mediaDevices.enumerateDevices()
-      return allDevices
+      const filtered = allDevices
         .filter((d) => d.kind === kind)
         .map((d) => ({ id: d.deviceId, name: d.label || `Unnamed ${kind === 'videoinput' ? 'Webcam' : 'Microphone'}` }))
+      log.debug(`[DeviceManager] enumerateDevices ${kind}: ${filtered.length} devices found`)
+      return filtered
     },
     [platform],
   )
@@ -47,12 +55,14 @@ export const useDeviceManager = () => {
    */
   const loadAll = useCallback(async () => {
     setIsInitializing(true)
+    log.debug('[DeviceManager] Loading all devices...')
     try {
       const [fetchedWebcams, fetchedMics] = await Promise.all([fetchDevices('videoinput'), fetchDevices('audioinput')])
       setWebcams(fetchedWebcams)
       setMics(fetchedMics)
+      log.info(`[DeviceManager] Devices loaded: ${fetchedWebcams.length} webcams, ${fetchedMics.length} mics`)
     } catch (error) {
-      console.error('Failed to load devices:', error)
+      log.error('[DeviceManager] Failed to load devices:', error)
     } finally {
       setIsInitializing(false)
     }

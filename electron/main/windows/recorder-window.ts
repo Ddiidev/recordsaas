@@ -9,6 +9,7 @@ import { cleanupAndDiscard } from '../features/recording-manager'
 import { resetCursorScale } from '../features/cursor-manager'
 
 export function createRecorderWindow() {
+  log.info('[RecorderWindow] Creating recorder window')
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
   const windowWidth = 960
