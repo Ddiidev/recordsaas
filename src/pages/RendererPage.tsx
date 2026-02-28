@@ -7,10 +7,14 @@ import { ExportSettings } from '../components/editor/ExportModal'
 import { RESOLUTIONS } from '../lib/constants'
 import { drawScene } from '../lib/renderer'
 import { prepareCursorBitmaps, mapExportTimeToSourceTime, calculateExportDuration } from '../lib/utils'
+import { toMediaUrl } from '../lib/media'
 
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
   exportSettings: ExportSettings
+  security?: {
+    watermarkRequired?: boolean
+  }
 }
 
 type VideoFrameProvider = {
@@ -334,8 +338,30 @@ const loadBackgroundImage = (
       log.error(`[RendererPage] Failed to load background image for export: ${img.src}`)
       resolve(null) // Resolve with null on error to not block rendering
     }
-    const finalUrl = background.imageUrl.startsWith('blob:') ? background.imageUrl : `media://${background.imageUrl}`
+    const finalUrl = toMediaUrl(background.imageUrl)
+    if (!finalUrl) {
+      resolve(null)
+      return
+    }
     img.src = finalUrl
+  })
+}
+
+const loadExportWatermarkImage = (enabled: boolean): Promise<HTMLImageElement | null> => {
+  if (!enabled) {
+    return Promise.resolve(null)
+  }
+
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => resolve(null)
+    const iconUrl = toMediaUrl('recordsaas-appicon.png')
+    if (!iconUrl) {
+      resolve(null)
+      return
+    }
+    image.src = iconUrl
   })
 }
 
@@ -347,7 +373,7 @@ export function RendererPage() {
   useEffect(() => {
     log.info('[RendererPage] Component mounted. Setting up listeners.')
 
-    const cleanup = window.electronAPI.onRenderStart(async ({ projectState, exportSettings }: RenderStartPayload) => {
+    const cleanup = window.electronAPI.onRenderStart(async ({ projectState, exportSettings, security }: RenderStartPayload) => {
       const canvas = canvasRef.current
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -390,6 +416,8 @@ export function RendererPage() {
         }
         const projectStateWithCursorBitmaps = { ...projectState, cursorBitmapsToRender: finalCursorBitmaps }
         const bgImage = await loadBackgroundImage(projectState.frameStyles.background)
+        const watermarkEnabled = Boolean(security?.watermarkRequired)
+        const watermarkImage = await loadExportWatermarkImage(watermarkEnabled)
 
         // --- 2.5 SETUP VIDEO DECODER (Optimization) ---
         frameProvider = null
@@ -440,7 +468,12 @@ export function RendererPage() {
               resolve()
             }
             videoElement.onerror = (e) => reject(new Error(`Failed to load ${source}: ${e}`))
-            videoElement.src = `media://${path}`
+            const mediaUrl = toMediaUrl(path)
+            if (!mediaUrl) {
+              reject(new Error(`Invalid media URL for ${source}`))
+              return
+            }
+            videoElement.src = mediaUrl
             videoElement.muted = true
             videoElement.load()
           })
@@ -490,6 +523,7 @@ export function RendererPage() {
           
           const calculateBitrate = (res: string, qual: string, f: number) => {
             const baseBitrates: Record<string, number> = {
+              '480p': 2_500_000,
               '720p': 5_000_000,
               '1080p': 8_000_000,
               '2k': 14_000_000,
@@ -605,6 +639,12 @@ export function RendererPage() {
             bgImage,
             webcamFrameDimensions,
             exportSettings.quality,
+            watermarkEnabled
+              ? {
+                  enabled: true,
+                  image: watermarkImage,
+                }
+              : undefined,
           )
 
           if (videoEncoder) {

@@ -22,6 +22,7 @@ export const WALLPAPERS_THUMBNAILS = WALLPAPERS.map((w) => w.thumbnailUrl)
 
 // Resolutions
 export const RESOLUTIONS = {
+  '480p': { width: 854, height: 480 },
   '720p': { width: 1280, height: 720 },
   '1080p': { width: 1920, height: 1080 },
   '2k': { width: 2560, height: 1440 },
@@ -156,6 +157,12 @@ export const DEFAULTS = {
   AUDIO: {
     VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
     MUTED: { defaultValue: false },
+    MASTER_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    MASTER_MUTED: { defaultValue: false },
+    MIC_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    MIC_MUTED: { defaultValue: false },
+    SYSTEM_VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    SYSTEM_MUTED: { defaultValue: false },
   },
   ANIMATION: {
     SPEED: { defaultValue: ZOOM.DEFAULT_SPEED },

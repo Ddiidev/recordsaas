@@ -1,5 +1,5 @@
 // Primary button to trigger video export
-import { Upload, Loader2 } from 'tabler-icons-react'
+import { Upload, Loader2, Lock } from 'tabler-icons-react'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 
@@ -7,9 +7,10 @@ interface ExportButtonProps {
   onClick: () => void
   isExporting: boolean
   disabled?: boolean
+  isLocked?: boolean
 }
 
-export function ExportButton({ onClick, isExporting, disabled }: ExportButtonProps) {
+export function ExportButton({ onClick, isExporting, disabled, isLocked = false }: ExportButtonProps) {
   return (
     <Button
       onClick={onClick}
@@ -29,8 +30,14 @@ export function ExportButton({ onClick, isExporting, disabled }: ExportButtonPro
       )}
     >
       <span className="relative z-10 flex items-center">
-        {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
-        {isExporting ? 'Exporting...' : 'Export'}
+        {isExporting ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : isLocked ? (
+          <Lock className="w-4 h-4 mr-2" />
+        ) : (
+          <Upload className="w-4 h-4 mr-2" />
+        )}
+        {isExporting ? 'Exporting...' : isLocked ? 'Login to Export' : 'Export'}
       </span>
     </Button>
   )

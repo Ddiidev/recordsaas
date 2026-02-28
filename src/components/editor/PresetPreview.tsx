@@ -4,6 +4,7 @@ import { WALLPAPERS } from '../../lib/constants'
 import type { FrameStyles, AspectRatio, WebcamStyles, WebcamPosition } from '../../types'
 import { Video } from 'tabler-icons-react'
 import { cn } from '../../lib/utils'
+import { toMediaUrl } from '../../lib/media'
 
 interface PresetPreviewProps {
   styles: FrameStyles
@@ -25,9 +26,7 @@ const generateBackgroundStyle = (backgroundState: FrameStyles['background']) => 
     }
     case 'image':
     case 'wallpaper': {
-      const imageUrl = backgroundState.imageUrl?.startsWith('blob:')
-        ? backgroundState.imageUrl
-        : `media://${backgroundState.imageUrl || WALLPAPERS[0].imageUrl}`
+      const imageUrl = toMediaUrl(backgroundState.imageUrl || WALLPAPERS[0].imageUrl)
       return {
         backgroundImage: `url("${imageUrl}")`,
         backgroundSize: 'cover',

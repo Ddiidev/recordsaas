@@ -62,6 +62,16 @@ export const useExportProcess = () => {
       cursorTheme: fullState.cursorTheme,
       cursorStyles: fullState.cursorStyles,
       syncOffset: fullState.syncOffset,
+      micAudioPath: fullState.micAudioPath,
+      micAudioUrl: fullState.micAudioUrl,
+      systemAudioPath: fullState.systemAudioPath,
+      systemAudioUrl: fullState.systemAudioUrl,
+      masterVolume: fullState.masterVolume,
+      masterMuted: fullState.masterMuted,
+      micVolume: fullState.micVolume,
+      micMuted: fullState.micMuted,
+      systemVolume: fullState.systemVolume,
+      systemMuted: fullState.systemMuted,
       audioPath: fullState.audioPath,
       audioUrl: fullState.audioUrl,
     }
@@ -78,7 +88,11 @@ export const useExportProcess = () => {
       })
     } catch (e) {
       console.error('Export invocation failed', e)
-      setResult({ success: false, error: `An error occurred while starting the export: ${e}` })
+      const message = e instanceof Error ? e.message : String(e)
+      setResult({
+        success: false,
+        error: message.includes('login_required') ? 'login_required' : `An error occurred while starting the export: ${message}`,
+      })
       setIsExporting(false)
     }
   }, [])

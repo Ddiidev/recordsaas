@@ -2,6 +2,7 @@
 // Handlers for settings-related IPC (settings and presets).
 
 import Store from 'electron-store'
+import log from 'electron-log/main'
 
 const store = new Store() // Should be initialized once and exported if needed elsewhere
 
@@ -19,5 +20,6 @@ export function getSetting(_event: any, key: string) {
 }
 
 export function setSetting(_event: any, key: string, value: unknown) {
+  log.debug(`[Settings] setSetting: ${key}`)
   store.set(key, value)
 }

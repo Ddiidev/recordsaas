@@ -9,10 +9,11 @@ import { cleanupAndDiscard } from '../features/recording-manager'
 import { resetCursorScale } from '../features/cursor-manager'
 
 export function createRecorderWindow() {
+  log.info('[RecorderWindow] Creating recorder window')
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
-  const windowWidth = 900
-  const windowHeight = 180
+  const windowWidth = 1120
+  const windowHeight = 400
   const x = Math.round((screenWidth - windowWidth) / 2)
   const y = Math.max(0, Math.round((screenHeight - windowHeight) / 2))
 
@@ -28,7 +29,6 @@ export function createRecorderWindow() {
     resizable: false,
     useContentSize: true,
     webPreferences: {
-      nodeIntegration: true,
       preload: PRELOAD_SCRIPT,
     },
   })

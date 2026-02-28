@@ -10,19 +10,41 @@ import { formatTime } from '../../lib/utils'
 
 export type ExportSettings = {
   format: 'mp4' | 'gif'
-  resolution: '720p' | '1080p' | '2k'
+  resolution: '480p' | '720p' | '1080p' | '2k'
   fps: 30 | 60
   quality: 'low' | 'medium' | 'high' | 'ultra high'
 }
 
+export type ExportTier = 'pro' | 'free'
+
 interface ExportModalProps {
   isOpen: boolean
   onClose: () => void
+  tier: ExportTier
   onStartExport: (settings: ExportSettings, outputPath: string) => void
   onCancelExport: () => void
   isExporting: boolean
   progress: number
   result: { success: boolean; outputPath?: string; error?: string; duration?: number } | null
+}
+
+const clampSettingsForTier = (settings: ExportSettings, tier: ExportTier): ExportSettings => {
+  if (tier === 'free') {
+    return {
+      ...settings,
+      resolution: '480p',
+      fps: 30,
+    }
+  }
+
+  return {
+    ...settings,
+    resolution:
+      settings.resolution === '720p' || settings.resolution === '1080p' || settings.resolution === '2k'
+        ? settings.resolution
+        : '1080p',
+    fps: settings.fps === 60 ? 60 : 30,
+  }
 }
 
 const generateFilename = (format: 'mp4' | 'gif') => {
@@ -48,17 +70,23 @@ const formatFullDurationMs = (totalSeconds: number) => {
 const SettingsView = ({
   onStartExport,
   onClose,
+  tier,
 }: {
   onStartExport: (settings: ExportSettings, outputPath: string) => void
   onClose: () => void
+  tier: ExportTier
 }) => {
   const [settings, setSettings] = useState<ExportSettings>({
     format: 'mp4',
-    resolution: '1080p',
+    resolution: tier === 'free' ? '480p' : '1080p',
     fps: 30,
     quality: 'medium',
   })
   const [isGpuEnabled, setIsGpuEnabled] = useState(true)
+
+  useEffect(() => {
+    setSettings((prev) => clampSettingsForTier(prev, tier))
+  }, [tier])
 
   useEffect(() => {
     let isMounted = true
@@ -69,7 +97,17 @@ const SettingsView = ({
           window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
         ])
         if (isMounted) {
-          if (savedSettings) setSettings(prev => ({ ...prev, ...savedSettings }))
+          if (savedSettings) {
+            setSettings((prev) =>
+              clampSettingsForTier(
+                {
+                  ...prev,
+                  ...savedSettings,
+                },
+                tier,
+              ),
+            )
+          }
           setIsGpuEnabled(gpuEnabled ?? false)
         }
       } catch (error) {
@@ -78,7 +116,7 @@ const SettingsView = ({
     }
     loadSettings()
     return () => { isMounted = false }
-  }, [])
+  }, [tier])
   const [outputPath, setOutputPath] = useState('')
   const { originalProjectPath, duration, cutRegions, speedRegions } = useEditorStore((state) => ({
     originalProjectPath: state.originalProjectPath,
@@ -110,7 +148,10 @@ const SettingsView = ({
 
   const handleValueChange = (key: keyof ExportSettings, value: unknown) => {
     setSettings((prev) => {
-      const updated = { ...prev, [key]: value }
+      const updated = clampSettingsForTier(
+        { ...prev, [key]: value } as ExportSettings,
+        tier,
+      )
       window.electronAPI.setSetting('exportSettings', updated)
       return updated
     })
@@ -197,14 +238,24 @@ const SettingsView = ({
             </Select>
           </SettingRow>
           <SettingRow label="Resolution">
-            <Select value={settings.resolution} onValueChange={(value) => handleValueChange('resolution', value)}>
+            <Select
+              value={settings.resolution}
+              onValueChange={(value) => handleValueChange('resolution', value)}
+              disabled={tier === 'free'}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="720p">HD (720p)</SelectItem>
-                <SelectItem value="1080p">Full HD (1080p)</SelectItem>
-                <SelectItem value="2k">2K (1440p)</SelectItem>
+                {tier === 'free' ? (
+                  <SelectItem value="480p">SD (480p)</SelectItem>
+                ) : (
+                  <>
+                    <SelectItem value="720p">HD (720p)</SelectItem>
+                    <SelectItem value="1080p">Full HD (1080p)</SelectItem>
+                    <SelectItem value="2k">2K (1440p)</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </SettingRow>
@@ -231,13 +282,14 @@ const SettingsView = ({
             <Select 
               value={String(settings.fps)} 
               onValueChange={(value) => handleValueChange('fps', Number(value) as 30 | 60)}
+              disabled={tier === 'free'}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="30">30 FPS</SelectItem>
-                <SelectItem value="60">60 FPS</SelectItem>
+                {tier !== 'free' && <SelectItem value="60">60 FPS</SelectItem>}
               </SelectContent>
             </Select>
           </SettingRow>
@@ -273,7 +325,7 @@ const SettingsView = ({
           if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
             fixedOutputPath = outputPath.split('/').join('\\')
           }
-          onStartExport(settings, fixedOutputPath)
+          onStartExport(clampSettingsForTier(settings, tier), fixedOutputPath)
         }} disabled={!outputPath} className="shadow-sm">
           Start Export
         </Button>
@@ -337,6 +389,7 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
   const getMessage = () => {
     if (isCancelled) return 'The export process was stopped.'
     if (result.success) return 'Your video has been saved to the selected location.'
+    if (result.error === 'login_required') return 'Login required to export.'
     return result.error || 'An unknown error occurred.'
   }
 
@@ -396,6 +449,7 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
 export function ExportModal({
   isOpen,
   onClose,
+  tier,
   onStartExport,
   onCancelExport,
   isExporting,
@@ -411,7 +465,7 @@ export function ExportModal({
     if (isExporting) {
       return <ProgressView progress={progress} onCancel={onCancelExport} />
     }
-    return <SettingsView onStartExport={onStartExport} onClose={onClose} />
+    return <SettingsView tier={tier} onStartExport={onStartExport} onClose={onClose} />
   }
 
   return (

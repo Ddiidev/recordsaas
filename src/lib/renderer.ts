@@ -10,6 +10,7 @@ import {
 } from './timeline-lanes'
 
 type Rect = { x: number; y: number; width: number; height: number }
+type ExportWatermark = { enabled: boolean; image?: HTMLImageElement | null }
 
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
@@ -138,6 +139,48 @@ const applyPixelationToRect = (ctx: CanvasRenderingContext2D, rect: Rect, intens
   ctx.clip()
   ctx.imageSmoothingEnabled = false
   ctx.drawImage(pixelCanvas.canvas, 0, 0, scaledWidth, scaledHeight, rect.x, rect.y, rect.width, rect.height)
+  ctx.restore()
+}
+
+const drawExportWatermark = (
+  ctx: CanvasRenderingContext2D,
+  outputWidth: number,
+  outputHeight: number,
+  watermark: ExportWatermark,
+) => {
+  if (!watermark.enabled) return
+
+  const margin = Math.max(8, Math.round(Math.min(outputWidth, outputHeight) * 0.03))
+  const targetWidth = Math.max(96, Math.round(outputWidth * 0.18))
+
+  ctx.save()
+  ctx.globalAlpha = 0.35
+
+  if (watermark.image && watermark.image.width > 0 && watermark.image.height > 0) {
+    const imageRatio = watermark.image.height / watermark.image.width
+    const targetHeight = Math.max(48, Math.round(targetWidth * imageRatio))
+    const x = outputWidth - targetWidth - margin
+    const y = margin
+
+    ctx.filter = 'drop-shadow(0 3px 10px rgba(0, 0, 0, 0.55))'
+    ctx.drawImage(watermark.image, x, y, targetWidth, targetHeight)
+    ctx.restore()
+    return
+  }
+
+  const text = 'RecordSaaS'
+  const fontSize = Math.max(26, Math.round(outputWidth * 0.03))
+  ctx.font = `700 ${fontSize}px Outfit, Inter, sans-serif`
+  ctx.textBaseline = 'top'
+
+  const textWidth = ctx.measureText(text).width
+  const x = outputWidth - textWidth - margin
+  const y = margin
+
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)'
+  ctx.shadowBlur = 12
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+  ctx.fillText(text, x, y)
   ctx.restore()
 }
 
@@ -293,6 +336,7 @@ export const drawScene = (
   preloadedBgImage: HTMLImageElement | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
+  exportWatermark?: ExportWatermark,
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
@@ -300,6 +344,10 @@ export const drawScene = (
   const swapRegions = Object.values(state.swapRegions || {})
   const zoomRegions = Object.values(state.zoomRegions)
   const blurRegions = Object.values(state.blurRegions)
+  const activeBlurRegions = sortRegionsByLanePrecedence(
+    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+    laneContext,
+  ).reverse()
 
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
@@ -473,6 +521,17 @@ export const drawScene = (
       }
     }
     sCtx.restore()
+
+    // Apply blur directly on desktop content so webcam overlay is never affected.
+    for (const region of activeBlurRegions) {
+      const rect = resolveBlurRect(region, 0, 0, frameContentWidth, frameContentHeight)
+      if (!rect) continue
+      if (region.style === 'pixelated') {
+        applyPixelationToRect(sCtx, rect, region.intensity)
+      } else {
+        applyBlurToRect(sCtx, rect, region.intensity)
+      }
+    }
   }
 
   // --- 5. Prepare Configs for Layout Swapping ---
@@ -739,19 +798,7 @@ export const drawScene = (
   // Draw layers sorted by zIndex
   draws.sort((a,b) => a.zIndex - b.zIndex).forEach(d => d.draw())
 
-  // --- 7. Draw Blur Assets ---
-  const activeBlurRegions = sortRegionsByLanePrecedence(
-    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
-    laneContext,
-  ).reverse()
-
-  for (const region of activeBlurRegions) {
-    const rect = resolveBlurRect(region, frameX, frameY, frameContentWidth, frameContentHeight)
-    if (!rect) continue
-    if (region.style === 'pixelated') {
-      applyPixelationToRect(ctx, rect, region.intensity)
-    } else {
-      applyBlurToRect(ctx, rect, region.intensity)
-    }
+  if (exportWatermark?.enabled) {
+    drawExportWatermark(ctx, outputWidth, outputHeight, exportWatermark)
   }
 }

@@ -14,6 +14,7 @@ import {
   Folder,
   Square,
   Settings,
+  UserCircle,
 } from 'tabler-icons-react'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
@@ -21,6 +22,9 @@ import { SettingsModal } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../lib/utils'
+import { useDesktopAuth } from '../hooks/useDesktopAuth'
+import log from 'electron-log/renderer'
+import type { SettingsTab } from '../components/settings/SettingsModal'
 import '../index.css'
 
 // --- Constants ---
@@ -36,10 +40,10 @@ const WINDOWS_SCALES = [
 ]
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
-const RECORDER_WINDOW_COMPACT_SIZE = { width: 900, height: 360 }
+const RECORDER_WINDOW_COMPACT_SIZE = { width: 960, height: 400 }
 // Preview no longer controls window size; keep content scrollable instead
 // const RECORDER_WINDOW_PREVIEW_SIZE = { width: 900, height: 360 }
-const RECORDER_WINDOW_SETTINGS_SIZE = { width: 900, height: 700 }
+const RECORDER_WINDOW_SETTINGS_SIZE = { width: 960, height: 700 }
 
 const isPreparationCountdownOption = (value: number): value is (typeof PREPARATION_COUNTDOWN_OPTIONS)[number] =>
   PREPARATION_COUNTDOWN_OPTIONS.includes(value as (typeof PREPARATION_COUNTDOWN_OPTIONS)[number])
@@ -61,12 +65,14 @@ export function RecorderPage() {
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [cursorScale, setCursorScale] = useState<number>(1)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
   const [preparationSecondsLeft, setPreparationSecondsLeft] = useState<number | null>(null)
 
   const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
+  const { authState } = useDesktopAuth()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
@@ -75,7 +81,13 @@ export function RecorderPage() {
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const handleSettingsClose = () => {
     setSettingsModalOpen(false)
+    setSettingsInitialTab('general')
     window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
+  }
+
+  const openSettingsTab = (tab: SettingsTab) => {
+    setSettingsInitialTab(tab)
+    setSettingsModalOpen(true)
   }
 
   // Effect for initializing settings and devices from storage/system
@@ -111,7 +123,7 @@ export function RecorderPage() {
         const primary = fetchedDisplays.find((d) => d.isPrimary) || fetchedDisplays[0]
         if (primary) setSelectedDisplayId(String(primary.id))
       } catch (error) {
-        console.error('Failed to initialize recorder settings:', error)
+        log.error('[Recorder] Failed to initialize recorder settings:', error)
       }
     }
     initialize()
@@ -131,7 +143,16 @@ export function RecorderPage() {
       setCursorScale(1)
       window.electronAPI.setCursorScale(1)
     }
-  }, [isInitializing, webcams, mics, platform, cursorScales, selectedWebcamId, selectedMicId, cursorScale])
+  }, [
+    isInitializing,
+    webcams,
+    mics,
+    platform,
+    cursorScales,
+    selectedWebcamId,
+    selectedMicId,
+    cursorScale,
+  ])
 
   // Effect to manage IPC listeners for recording completion
   useEffect(() => {
@@ -174,12 +195,13 @@ export function RecorderPage() {
     const startStream = async () => {
       stopStream()
       try {
+        log.debug(`[Recorder] Starting webcam preview for device: ${selectedWebcamId}`)
         const constraints = { video: platform === 'win32' ? true : { deviceId: { exact: selectedWebcamId } } }
         const stream = await navigator.mediaDevices.getUserMedia(constraints)
         webcamStreamRef.current = stream
         if (videoEl) videoEl.srcObject = stream
       } catch (error) {
-        console.error('Failed to start webcam preview stream:', error)
+        log.error('[Recorder] Failed to start webcam preview stream:', error)
       }
     }
 
@@ -215,7 +237,9 @@ export function RecorderPage() {
     }
     const onMouseMove = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
-      const interactive = target?.closest('[data-interactive="true"]')
+      const interactive =
+        target?.closest('[data-interactive="true"]') ||
+        target?.closest('[data-radix-popper-content-wrapper]')
       window.electronAPI.setRecorderIgnoreMouse(!interactive)
     }
     const onMouseLeave = () => {
@@ -251,7 +275,7 @@ export function RecorderPage() {
         return savedPreparationCountdown
       }
     } catch (error) {
-      console.error('Failed to read preparation countdown setting:', error)
+      log.error('[Recorder] Failed to read preparation countdown setting:', error)
     }
 
     return preparationCountdownSeconds
@@ -296,6 +320,9 @@ export function RecorderPage() {
       const webcam = selectedWebcamId !== 'none' ? webcams.find((d) => d.id === selectedWebcamId) : undefined
       const mic = selectedMicId !== 'none' ? mics.find((d) => d.id === selectedMicId) : undefined
 
+      log.info(
+        `[Recorder] Starting recording: source=${source}, webcam=${webcam?.name ?? 'none'}, mic=${mic?.name ?? 'none'}`,
+      )
       const result = await window.electronAPI.startRecording({
         source,
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
@@ -310,7 +337,7 @@ export function RecorderPage() {
         clearPreparationCountdown()
       }
     } catch (error) {
-      console.error('Failed to start recording:', error)
+      log.error('[Recorder] Failed to start recording:', error)
       setActionInProgress('none')
       setRecordingState('idle')
       setIsRecording(false)
@@ -327,7 +354,7 @@ export function RecorderPage() {
       await runPreparationCountdown(countdownSeconds)
       await startRecordingAfterPreparation()
     } catch (error) {
-      console.error('Failed to run preparation countdown:', error)
+      log.error('[Recorder] Failed to run preparation countdown:', error)
       setActionInProgress('none')
       setRecordingState('idle')
       setIsRecording(false)
@@ -335,7 +362,7 @@ export function RecorderPage() {
     }
   }
 
-  const handleStop = () => {
+  const handleStop = async () => {
     setActionInProgress('recording')
     window.electronAPI.stopRecording()
   }
@@ -346,7 +373,7 @@ export function RecorderPage() {
       const result = await window.electronAPI.loadVideoFromFile()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to load video from file:', error)
+      log.error('[Recorder] Failed to load video from file:', error)
       setActionInProgress('none')
     }
   }
@@ -357,7 +384,7 @@ export function RecorderPage() {
       const result = await window.electronAPI.importProject()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to import project from file:', error)
+      log.error('[Recorder] Failed to import project from file:', error)
       setActionInProgress('none')
     }
   }
@@ -376,7 +403,7 @@ export function RecorderPage() {
 
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="relative h-screen w-screen bg-transparent select-none">
+      <div className="relative h-full w-full overflow-hidden bg-transparent select-none">
         <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
           <div data-interactive="true" className="relative">
           {/* Main Control Bar */}
@@ -531,6 +558,7 @@ export function RecorderPage() {
                   ))}
                 </SelectContent>
               </Select>
+
             </div>
 
             <div className="w-px h-8 bg-border/50"></div>
@@ -632,7 +660,32 @@ export function RecorderPage() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      onClick={() => setSettingsModalOpen(true)}
+                      onClick={() => openSettingsTab('account')}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-lg shadow-lg overflow-hidden p-0 border border-primary"
+                    >
+                      {authState.user?.picture ? (
+                        <img
+                          src={authState.user.picture}
+                          alt={authState.user.name || authState.user.email}
+                          className="w-full h-full object-cover rounded-lg border border-primary"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <UserCircle size={18} />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    {authState.user?.name || 'Account'}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => openSettingsTab('general')}
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
@@ -661,13 +714,32 @@ export function RecorderPage() {
           {/* Webcam Preview */}
           <div
             className={cn(
-              'mt-4 mx-auto w-48 aspect-square rounded-2xl overflow-hidden shadow-xl bg-black transition-all duration-300',
+              'relative mt-4 mx-auto w-48 aspect-square rounded-3xl overflow-hidden bg-black shadow-xl transition-all duration-300',
               isWebcamPreviewVisible
                 ? 'opacity-100 scale-100'
                 : 'opacity-0 scale-95 pointer-events-none',
             )}
+            style={{ isolation: 'isolate' }}
           >
-            <video ref={webcamPreviewRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            <video
+              ref={webcamPreviewRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover rounded-3xl"
+              style={{
+                borderRadius: '1.5rem',
+                clipPath: 'inset(0 round 1.5rem)',
+                transform: 'translateZ(0)',
+              }}
+            />
+            <div
+              aria-hidden="true"
+              className={cn(
+                'pointer-events-none absolute inset-0 z-10 rounded-3xl border-2 border-emerald-400/90 shadow-[0_0_20px_rgba(52,211,153,0.45)]',
+                isWebcamPreviewVisible && 'animate-pulse',
+              )}
+            />
           </div>
         </div>
       </div>
@@ -684,7 +756,12 @@ export function RecorderPage() {
         </div>
       )}
 
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={handleSettingsClose} isTransparent />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={handleSettingsClose}
+        isTransparent
+        initialTab={settingsInitialTab}
+      />
       </div>
     </TooltipProvider>
   )

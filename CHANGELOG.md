@@ -1,10 +1,3 @@
-# [2.3.0](https://github.com/Ddiidev/recordsaas/compare/v2.2.0...v2.3.0) (2026-02-26)
-
-
-### Features
-
-* save and import projects using `.rsproj` extension ([#10](https://github.com/Ddiidev/recordsaas/issues/10)) ([3b0e780](https://github.com/Ddiidev/recordsaas/commit/3b0e780612b194b2b68c44895475f35bbafc0630))
-
 ## [2.0.3](https://github.com/Ddiidev/recordsaas/compare/v2.0.2...v2.0.3) (2026-02-22)
 
 

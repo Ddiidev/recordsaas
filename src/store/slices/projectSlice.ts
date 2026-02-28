@@ -11,12 +11,17 @@ import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { ZOOM } from '../../lib/constants'
 import { initialFrameState, recalculateCanvasDimensions } from './frameSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
+import { normalizeBackgroundMediaFields, toMediaUrl } from '../../lib/media'
 import { createDefaultTimelineLane, getFallbackLaneId } from '../../lib/timeline-lanes'
 
 export const initialProjectState: ProjectState = {
   videoPath: null,
   metadataPath: null,
   videoUrl: null,
+  micAudioPath: null,
+  micAudioUrl: null,
+  systemAudioPath: null,
+  systemAudioUrl: null,
   audioPath: null,
   audioUrl: null,
   videoDimensions: { width: 0, height: 0 },
@@ -30,6 +35,9 @@ export const initialProjectState: ProjectState = {
   syncOffset: 0,
   platform: null,
   cursorTheme: null,
+  hasMicAudioTrack: false,
+  hasSystemAudioTrack: false,
+  hasAnyAudioTrack: false,
   hasAudioTrack: false,
 }
 
@@ -210,15 +218,23 @@ async function prepareMacOSCursorBitmaps(theme: CursorTheme, scale: number): Pro
 
 export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get) => ({
   ...initialProjectState,
-  loadProject: async ({ videoPath, metadataPath, webcamVideoPath, audioPath, originalProjectPath }) => {
-    // Always use media:// protocol for video, webcam, and audio URLs (revert to original logic)
-    const toUrl = (path: string | null | undefined) => {
-      if (!path) return null
-      return `media://${path}`
-    }
+  loadProject: async ({
+    videoPath,
+    metadataPath,
+    webcamVideoPath,
+    micAudioPath,
+    systemAudioPath,
+    audioPath,
+    originalProjectPath,
+  }) => {
+    const toUrl = (path: string | null | undefined) => toMediaUrl(path)
     const videoUrl = toUrl(videoPath)
     const webcamVideoUrl = toUrl(webcamVideoPath)
-    const audioUrl = toUrl(audioPath)
+    const resolvedMicAudioPath = micAudioPath || audioPath || null
+    const resolvedSystemAudioPath = systemAudioPath || null
+    const micAudioUrl = toUrl(resolvedMicAudioPath)
+    const systemAudioUrl = toUrl(resolvedSystemAudioPath)
+    const audioUrl = micAudioUrl || toUrl(audioPath)
 
     get().resetProjectState() // Clear previous project data first
 
@@ -239,9 +255,16 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.webcamVideoPath = webcamVideoPath || null
       state.webcamVideoUrl = webcamVideoUrl
       state.isWebcamVisible = !!webcamVideoUrl
-      state.audioPath = audioPath || null
+      state.micAudioPath = resolvedMicAudioPath
+      state.micAudioUrl = micAudioUrl
+      state.systemAudioPath = resolvedSystemAudioPath
+      state.systemAudioUrl = systemAudioUrl
+      state.audioPath = resolvedMicAudioPath
       state.audioUrl = audioUrl
-      state.hasAudioTrack = !!audioUrl
+      state.hasMicAudioTrack = !!micAudioUrl
+      state.hasSystemAudioTrack = !!systemAudioUrl
+      state.hasAnyAudioTrack = !!(micAudioUrl || systemAudioUrl)
+      state.hasAudioTrack = state.hasAnyAudioTrack
       state.originalProjectPath = originalProjectPath
     })
 
@@ -287,7 +310,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
 
         const frameStyles = parsedData.frameStyles as typeof state.frameStyles | undefined
         if (frameStyles) {
-          state.frameStyles = frameStyles
+          const { background } = normalizeBackgroundMediaFields(frameStyles.background)
+          state.frameStyles = { ...frameStyles, background }
         }
         const aspectRatio = parsedData.aspectRatio as typeof state.aspectRatio | undefined
         if (aspectRatio) {
@@ -428,6 +452,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setHasAudioTrack: (hasAudio) => {
     set((state) => {
+      state.hasAnyAudioTrack = hasAudio
       state.hasAudioTrack = hasAudio
     })
   },

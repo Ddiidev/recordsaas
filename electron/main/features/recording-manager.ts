@@ -5,10 +5,13 @@ import log from 'electron-log/main'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
+import fs from 'node:fs'
 import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences } from 'electron'
+import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
+import { normalizeMediaPath } from '../lib/media-path'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
 import { createEditorWindow, cleanupEditorFiles } from '../windows/editor-window'
@@ -16,6 +19,77 @@ import { createSavingWindow, createSelectionWindow } from '../windows/temporary-
 import type { RecordingSession, RecordingGeometry } from '../state'
 
 const FFMPEG_PATH = getFFmpegPath()
+const store = new Store()
+const FALLBACK_AUDIO_FINALIZE_TIMEOUT_MS = 5000
+
+type SystemAudioCaptureMode = 'native_system_audio' | 'fallback_system_audio' | 'system_audio_disabled'
+
+type SystemAudioOption = {
+  mode: 'none' | 'auto' | 'device'
+  deviceId?: string
+  deviceLabel?: string
+  index?: number
+}
+
+type SystemAudioNativeInput = {
+  kind: 'native'
+  sourceArgs: string[]
+  mode: SystemAudioCaptureMode
+}
+
+type SystemAudioFallbackInput = {
+  kind: 'fallback'
+  mode: SystemAudioCaptureMode
+  reason: string
+}
+
+type SystemAudioDisabledInput = {
+  kind: 'disabled'
+  mode: SystemAudioCaptureMode
+  reason?: string
+}
+
+type SystemAudioResolution = SystemAudioNativeInput | SystemAudioFallbackInput | SystemAudioDisabledInput
+
+type FallbackAudioState = {
+  filePath: string
+  mimeType: string
+  writeStream: fs.WriteStream
+  bytesWritten: number
+  finalizePromise: Promise<void>
+  resolveFinalize: () => void
+  rejectFinalize: (error: Error) => void
+}
+
+type ImportedProjectPayload = {
+  videoPath?: string | null
+  metadataPath?: string | null
+  webcamVideoPath?: string | null
+  micAudioPath?: string | null
+  systemAudioPath?: string | null
+  audioPath?: string | null
+  recordingGeometry?: RecordingGeometry
+  geometry?: RecordingGeometry
+  scaleFactor?: number
+  events?: any[]
+  metadata?: any[]
+  cursorImages?: Record<string, any>
+  platform?: NodeJS.Platform
+  screenSize?: { width: number; height: number } | null
+  syncOffset?: number
+  [key: string]: any
+}
+
+type RuntimeProjectMetadata = ImportedProjectPayload & {
+  platform: NodeJS.Platform
+  events: any[]
+  cursorImages: Record<string, any>
+  geometry: RecordingGeometry
+  recordingGeometry: RecordingGeometry
+  syncOffset: number
+}
+
+let fallbackAudioState: FallbackAudioState | null = null
 
 type ImportedProjectPayload = {
   videoPath?: string | null
@@ -58,6 +132,82 @@ async function getVideoStartTime(videoPath: string): Promise<number> {
   }
 }
 
+function resolveSystemAudioInput(systemAudio: SystemAudioOption | undefined): SystemAudioResolution {
+  if (!systemAudio || systemAudio.mode === 'none') {
+    return { kind: 'disabled', mode: 'system_audio_disabled' }
+  }
+
+  // Windows native system audio requires a loopback-like dshow device.
+  if (process.platform === 'win32' && systemAudio.mode === 'device' && systemAudio.deviceLabel) {
+    return {
+      kind: 'native',
+      mode: 'native_system_audio',
+      sourceArgs: ['-f', 'dshow', '-i', `audio=${systemAudio.deviceLabel}`],
+    }
+  }
+
+  // FFmpeg-only policy: unsupported/native-unavailable => disabled.
+  return {
+    kind: 'disabled',
+    mode: 'system_audio_disabled',
+    reason:
+      systemAudio.mode === 'auto'
+        ? 'no_native_system_audio_source'
+        : 'native_system_audio_source_unavailable',
+  }
+}
+
+async function maybeShowSystemAudioFallbackNotice(reason?: string) {
+  const shouldHide = Boolean(store.get('recorder.hideSystemAudioFallbackNotice', false))
+  if (shouldHide) return
+
+  try {
+    const message =
+      'A captura nativa do áudio do sistema não está disponível nesta configuração. O app vai usar o fallback experimental automaticamente.\n\nSe quiser reportar o problema, envie um email para suporte@recordsaas.app.'
+    const detail = reason ? `Fallback reason: ${reason}` : undefined
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Continuar'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'System Audio Fallback',
+      message,
+      detail,
+      checkboxLabel: 'Não exibir novamente',
+      checkboxChecked: false,
+      noLink: true,
+    })
+
+    if (result.checkboxChecked) {
+      store.set('recorder.hideSystemAudioFallbackNotice', true)
+    }
+  } catch (error) {
+    log.warn('[RecordingManager] Failed to show fallback notice dialog:', error)
+  }
+}
+
+function resetFallbackAudioState() {
+  fallbackAudioState = null
+}
+
+function ensureFallbackAudioState(): FallbackAudioState {
+  if (!fallbackAudioState) {
+    throw new Error('Fallback audio stream not initialized.')
+  }
+  return fallbackAudioState
+}
+
+async function waitForFallbackAudioFinalize(timeoutMs: number): Promise<void> {
+  if (!fallbackAudioState) return
+  const finalizePromise = fallbackAudioState.finalizePromise
+  await Promise.race([
+    finalizePromise,
+    new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error('Fallback audio finalize timeout.')), timeoutMs)
+    }),
+  ])
+}
+
 /**
  * Validates the generated recording files to ensure they exist and are not empty.
  * @param session - The recording session containing file paths to validate.
@@ -69,7 +219,13 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   if (session.webcamVideoPath) {
     filesToValidate.push(session.webcamVideoPath)
   }
-  if (session.audioPath) {
+  if (session.micAudioPath) {
+    filesToValidate.push(session.micAudioPath)
+  }
+  if (session.systemAudioPath) {
+    filesToValidate.push(session.systemAudioPath)
+  } else if (session.audioPath) {
+    // Legacy alias
     filesToValidate.push(session.audioPath)
   }
 
@@ -127,7 +283,7 @@ async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
     ffmpeg.stderr.on('data', (data: any) => {
-      log.info(`[AudioTrim FFmpeg]: ${data.toString()}`)
+      log.debug(`[AudioTrim FFmpeg]: ${data.toString()}`)
     })
 
     ffmpeg.on('close', async (code: any) => {
@@ -167,6 +323,10 @@ async function startActualRecording(
   inputArgs: string[],
   hasWebcam: boolean,
   hasMic: boolean,
+  hasNativeSystemAudio: boolean,
+  requiresSystemAudioFallback: boolean,
+  fallbackReason: string | undefined,
+  systemAudioCaptureMode: SystemAudioCaptureMode,
   recordingGeometry: RecordingGeometry,
   scaleFactor: number = 1,
 ) {
@@ -176,11 +336,28 @@ async function startActualRecording(
 
   const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
   const webcamVideoPath = hasWebcam ? path.join(recordingDir, `${baseName}-webcam.mp4`) : undefined
-  const audioPath = hasMic ? path.join(recordingDir, `${baseName}-audio.aac`) : undefined
+  const micAudioPath = hasMic ? path.join(recordingDir, `${baseName}-mic.aac`) : undefined
+  const systemAudioPath = hasNativeSystemAudio
+    ? path.join(recordingDir, `${baseName}-system.aac`)
+    : requiresSystemAudioFallback
+      ? path.join(recordingDir, `${baseName}-system-fallback.webm`)
+      : undefined
   const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
   // Store recordingGeometry and scaleFactor in the session
-  appState.currentRecordingSession = { screenVideoPath, webcamVideoPath, audioPath, metadataPath, recordingGeometry, scaleFactor }
+  appState.currentRecordingSession = {
+    screenVideoPath,
+    webcamVideoPath,
+    micAudioPath,
+    systemAudioPath,
+    audioPath: micAudioPath, // legacy alias
+    metadataPath,
+    recordingGeometry,
+    scaleFactor,
+    requiresSystemAudioFallback,
+    systemAudioCaptureMode,
+  }
+  log.info(`[RecordingManager] System audio capture mode: ${systemAudioCaptureMode}`)
   appState.recorderWin?.minimize()
 
   // Reset state for the new session
@@ -228,14 +405,23 @@ async function startActualRecording(
     }
   }
 
-  const finalArgs = buildFfmpegArgs(inputArgs, hasWebcam, hasMic, screenVideoPath, webcamVideoPath, audioPath)
+  const finalArgs = buildFfmpegArgs(
+    inputArgs,
+    hasWebcam,
+    hasMic,
+    hasNativeSystemAudio,
+    screenVideoPath,
+    webcamVideoPath,
+    micAudioPath,
+    systemAudioPath,
+  )
   log.info(`[FFMPEG] Starting FFmpeg with args: ${finalArgs.join(' ')}`)
   appState.ffmpegProcess = spawn(FFMPEG_PATH, finalArgs)
 
   // Monitor FFmpeg's stderr for progress, errors, and sync timing
   appState.ffmpegProcess.stderr.on('data', (data: any) => {
     const message = data.toString()
-    log.warn(`[FFMPEG stderr]: ${message}`)
+    log.debug(`[FFMPEG stderr]: ${message}`)
 
     // Early detection of fatal errors to provide immediate feedback
     const fatalErrorKeywords = [
@@ -256,7 +442,11 @@ async function startActualRecording(
   })
 
   // Notify the recorder window that recording has started
-  appState.recorderWin?.webContents.send('recording-started')
+  appState.recorderWin?.webContents.send('recording-started', {
+    requiresSystemAudioFallback,
+    systemAudioCaptureMode,
+    fallbackReason,
+  })
 
   createTray()
   return { canceled: false, ...appState.currentRecordingSession }
@@ -269,15 +459,19 @@ function buildFfmpegArgs(
   inputArgs: string[],
   hasWebcam: boolean,
   hasMic: boolean,
+  hasNativeSystemAudio: boolean,
   screenOut: string,
   webcamOut?: string,
-  audioOut?: string,
+  micAudioOut?: string,
+  systemAudioOut?: string,
 ): string[] {
   const finalArgs = [...inputArgs]
-  // Determine the index of each input stream (mic, webcam, screen)
-  const micIndex = hasMic ? 0 : -1
-  const webcamIndex = hasMic ? (hasWebcam ? 1 : -1) : hasWebcam ? 0 : -1
-  const screenIndex = (hasMic ? 1 : 0) + (hasWebcam ? 1 : 0)
+  // Determine input indexes in strict order: mic -> system -> webcam -> screen
+  let currentInputIndex = 0
+  const micIndex = hasMic ? currentInputIndex++ : -1
+  const systemIndex = hasNativeSystemAudio ? currentInputIndex++ : -1
+  const webcamIndex = hasWebcam ? currentInputIndex++ : -1
+  const screenIndex = currentInputIndex
 
   // Map screen video stream (video only, no audio)
   finalArgs.push(
@@ -298,9 +492,14 @@ function buildFfmpegArgs(
     screenOut,
   )
 
-  // Map audio stream to separate file if present
-  if (hasMic && audioOut) {
-    finalArgs.push('-map', `${micIndex}:a`, '-c:a', 'aac', '-b:a', '192k', audioOut)
+  // Map microphone stream
+  if (hasMic && micAudioOut) {
+    finalArgs.push('-map', `${micIndex}:a`, '-c:a', 'aac', '-b:a', '192k', micAudioOut)
+  }
+
+  // Map system audio stream (native path only)
+  if (hasNativeSystemAudio && systemAudioOut) {
+    finalArgs.push('-map', `${systemIndex}:a`, '-c:a', 'aac', '-b:a', '192k', systemAudioOut)
   }
 
   // Map webcam video stream if present
@@ -357,7 +556,7 @@ function createTray() {
  * @param options - The recording configuration selected by the user.
  */
 export async function startRecording(options: any) {
-  const { source, displayId, mic, webcam } = options
+  const { source, displayId, mic, webcam, systemAudio } = options
   log.info('[RecordingManager] Received start recording request with options:', options)
 
   // macOS Permissions Check
@@ -402,6 +601,16 @@ export async function startRecording(options: any) {
   const baseFfmpegArgs: string[] = []
   let recordingGeometry: RecordingGeometry
   let recordingScaleFactor = 1  // Default to 1 for non-Windows or 100% scaling
+  const systemAudioResolution = resolveSystemAudioInput(systemAudio as SystemAudioOption | undefined)
+  const hasNativeSystemAudio = systemAudioResolution.kind === 'native'
+  const requiresSystemAudioFallback = systemAudioResolution.kind === 'fallback'
+  const fallbackReason = systemAudioResolution.kind === 'fallback' ? systemAudioResolution.reason : undefined
+  const systemAudioCaptureMode: SystemAudioCaptureMode = systemAudioResolution.mode
+
+  if (requiresSystemAudioFallback) {
+    await maybeShowSystemAudioFallbackNotice(fallbackReason)
+    log.warn(`[RecordingManager] System audio native capture unavailable. Falling back to renderer stream (${fallbackReason}).`)
+  }
 
   // --- Add Microphone and Webcam inputs first ---
   if (mic) {
@@ -417,6 +626,12 @@ export async function startRecording(options: any) {
         break
     }
   }
+
+  // --- Add native System Audio input second (when available) ---
+  if (hasNativeSystemAudio) {
+    baseFfmpegArgs.push(...systemAudioResolution.sourceArgs)
+  }
+
   if (webcam) {
     switch (process.platform) {
       case 'linux':
@@ -575,7 +790,17 @@ export async function startRecording(options: any) {
     appState.originalCursorScale = await getCursorScale()
   }
   log.info('[RecordingManager] Starting actual recording with args:', baseFfmpegArgs)
-  return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor)
+  return startActualRecording(
+    baseFfmpegArgs,
+    !!webcam,
+    !!mic,
+    hasNativeSystemAudio,
+    requiresSystemAudioFallback,
+    fallbackReason,
+    systemAudioCaptureMode,
+    recordingGeometry,
+    recordingScaleFactor,
+  )
 }
 
 /**
@@ -603,15 +828,44 @@ export async function stopRecording() {
   // Notify recorder window that the recording has finished, allowing it to reset its UI
   appState.recorderWin?.webContents.send('recording-finished', { canceled: false, ...session })
 
-  // Step 2: Trim audio file if present
-  if (session.audioPath) {
+  if (session.requiresSystemAudioFallback) {
     try {
-      log.info('[StopRecord] Trimming audio file by 1000ms...')
-      await trimAudioFile(session.audioPath, 1000)
-      log.info('[StopRecord] Audio file trimmed successfully.')
+      if (fallbackAudioState) {
+        await stopFallbackAudioStream()
+      }
+      await waitForFallbackAudioFinalize(FALLBACK_AUDIO_FINALIZE_TIMEOUT_MS)
+      log.info('[StopRecord] Fallback system audio stream finalized.')
     } catch (error) {
-      log.error('[StopRecord] Failed to trim audio file:', error)
+      log.error('[StopRecord] Fallback system audio did not finalize in time. Continuing without it.', error)
+      if (session.systemAudioPath) {
+        try {
+          await fsPromises.unlink(session.systemAudioPath)
+        } catch {
+          // ignore best effort
+        }
+        session.systemAudioPath = undefined
+      }
+    }
+  }
+
+  // Step 2: Trim audio files (native AAC) if present
+  if (session.micAudioPath) {
+    try {
+      log.info('[StopRecord] Trimming microphone audio file by 1000ms...')
+      await trimAudioFile(session.micAudioPath, 1000)
+      log.info('[StopRecord] Microphone audio file trimmed successfully.')
+    } catch (error) {
+      log.error('[StopRecord] Failed to trim microphone audio file:', error)
       // Continue anyway - audio is trimmed but not critical
+    }
+  }
+  if (session.systemAudioPath && session.systemAudioPath.endsWith('.aac')) {
+    try {
+      log.info('[StopRecord] Trimming system audio file by 1000ms...')
+      await trimAudioFile(session.systemAudioPath, 1000)
+      log.info('[StopRecord] System audio file trimmed successfully.')
+    } catch (error) {
+      log.error('[StopRecord] Failed to trim system audio file:', error)
     }
   }
 
@@ -641,6 +895,8 @@ export async function stopRecording() {
       session.metadataPath,
       session.recordingGeometry,
       session.webcamVideoPath,
+      session.micAudioPath,
+      session.systemAudioPath,
       session.audioPath,
       session.scaleFactor,
     )
@@ -773,6 +1029,8 @@ export async function cleanupAndDiscard() {
   const sessionToDiscard = { ...appState.currentRecordingSession }
   appState.currentRecordingSession = null
 
+  abortFallbackAudioStream()
+
   appState.ffmpegProcess?.kill('SIGKILL')
   appState.ffmpegProcess = null
 
@@ -810,7 +1068,8 @@ export async function cleanupOrphanedRecordings() {
 
   try {
     const allFiles = await fsPromises.readdir(recordingDir)
-    const filePattern = /^RecordSaaS-recording-\d+(-screen\.mp4|-webcam\.mp4|\.json)$/
+    const filePattern =
+      /^RecordSaaS-recording-\d+(-screen\.mp4|-webcam\.mp4|-mic\.aac|-system\.aac|-system-fallback\.webm|-audio\.aac|\.json)$/
     const filesToDelete = allFiles
       .filter((file) => filePattern.test(file))
       .map((file) => path.join(recordingDir, file))
@@ -834,6 +1093,113 @@ export async function cleanupOrphanedRecordings() {
       log.error('[Cleanup] Error during orphaned file cleanup:', error)
     }
   }
+}
+
+export async function startFallbackAudioStream(payload: { mimeType: string }) {
+  const session = appState.currentRecordingSession
+  if (!session) {
+    throw new Error('No active recording session for fallback audio stream.')
+  }
+  if (!session.systemAudioPath) {
+    throw new Error('No fallback system audio output path configured for current session.')
+  }
+
+  if (fallbackAudioState) {
+    abortFallbackAudioStream()
+  }
+
+  const filePath = session.systemAudioPath
+  await ensureDirectoryExists(path.dirname(filePath))
+
+  let resolveFinalize: () => void = () => undefined
+  let rejectFinalize: (error: Error) => void = () => undefined
+  const finalizePromise = new Promise<void>((resolve, reject) => {
+    resolveFinalize = resolve
+    rejectFinalize = reject
+  })
+
+  const writeStream = fs.createWriteStream(filePath, { flags: 'w' })
+  writeStream.on('finish', () => resolveFinalize())
+  writeStream.on('error', (error) => rejectFinalize(error instanceof Error ? error : new Error(String(error))))
+
+  fallbackAudioState = {
+    filePath,
+    mimeType: payload.mimeType,
+    writeStream,
+    bytesWritten: 0,
+    finalizePromise,
+    resolveFinalize,
+    rejectFinalize,
+  }
+
+  log.info(`[RecordingManager] Started fallback system audio stream (${payload.mimeType}) -> ${filePath}`)
+  return { success: true, filePath }
+}
+
+export function appendFallbackAudioChunk(chunk: Uint8Array) {
+  if (!fallbackAudioState) return
+
+  try {
+    const state = ensureFallbackAudioState()
+    const buffer = Buffer.from(chunk)
+    state.bytesWritten += buffer.byteLength
+    state.writeStream.write(buffer)
+  } catch (error) {
+    log.error('[RecordingManager] Failed to append fallback audio chunk:', error)
+  }
+}
+
+export async function stopFallbackAudioStream() {
+  if (!fallbackAudioState) {
+    return { success: true }
+  }
+
+  const state = fallbackAudioState
+  try {
+    state.writeStream.end()
+    await state.finalizePromise
+    if (state.bytesWritten === 0) {
+      try {
+        await fsPromises.unlink(state.filePath)
+      } catch {
+        // ignore best effort
+      }
+      if (appState.currentRecordingSession) {
+        appState.currentRecordingSession.systemAudioPath = undefined
+      }
+      log.warn('[RecordingManager] Fallback system audio finalized with 0 bytes. Track removed.')
+    } else {
+      log.info(`[RecordingManager] Fallback system audio finalized (${state.bytesWritten} bytes).`)
+    }
+    resetFallbackAudioState()
+    return { success: true, filePath: state.filePath }
+  } catch (error) {
+    log.error('[RecordingManager] Failed to finalize fallback audio stream:', error)
+    resetFallbackAudioState()
+    return { success: false, error: (error as Error).message }
+  }
+}
+
+export function abortFallbackAudioStream() {
+  if (!fallbackAudioState) return
+
+  const state = fallbackAudioState
+  if (appState.currentRecordingSession) {
+    appState.currentRecordingSession.systemAudioPath = undefined
+  }
+  try {
+    state.writeStream.destroy()
+  } catch {
+    // no-op
+  }
+
+  fsPromises
+    .unlink(state.filePath)
+    .catch(() => undefined)
+    .finally(() => {
+      log.info('[RecordingManager] Fallback system audio stream aborted.')
+      resetFallbackAudioState()
+    })
 }
 
 /**
@@ -913,7 +1279,16 @@ export async function loadVideoFromFile() {
 
     await new Promise((resolve) => setTimeout(resolve, 500))
     appState.savingWin?.close()
-    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, session.scaleFactor)
+    createEditorWindow(
+      screenVideoPath,
+      metadataPath,
+      session.recordingGeometry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      session.scaleFactor,
+    )
     recorderWindow.close()
     return { canceled: false, filePath: screenVideoPath }
   } catch (error) {
@@ -967,7 +1342,7 @@ export async function importProjectFromFile() {
 
     const resolveExistingSourcePath = async (originalPath: string | null | undefined): Promise<string | null> => {
       if (!originalPath) return null
-      const normalized = originalPath.replace('media://', '')
+      const normalized = normalizeMediaPath(originalPath.replace(/^media:(\/\/)?/i, ''))
       const candidates = path.isAbsolute(normalized)
         ? [normalized, path.join(sourceProjectDir, path.basename(normalized))]
         : [path.join(sourceProjectDir, normalized), path.join(sourceProjectDir, path.basename(normalized))]
@@ -1009,7 +1384,8 @@ export async function importProjectFromFile() {
       throw new Error('Could not import the main video file referenced by the selected project.')
     }
     const webcamVideoPath = await importMediaFile(projectData.webcamVideoPath, 'webcam video')
-    const audioPath = await importMediaFile(projectData.audioPath, 'audio track')
+    const micAudioPath = await importMediaFile(projectData.micAudioPath || projectData.audioPath, 'microphone audio')
+    const systemAudioPath = await importMediaFile(projectData.systemAudioPath, 'system audio')
 
     // Copy canonical metadata if available; this is the source of cursor/mouse events.
     let hasCanonicalMetadataFile = false
@@ -1082,7 +1458,9 @@ export async function importProjectFromFile() {
       screenVideoPath,
       metadataPath,
       webcamVideoPath,
-      audioPath,
+      micAudioPath,
+      systemAudioPath,
+      audioPath: micAudioPath, // legacy alias
       recordingGeometry: mergedGeometry,
       scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
       originalProjectPath: sourceProjectDir
@@ -1104,6 +1482,8 @@ export async function importProjectFromFile() {
       session.metadataPath,
       session.recordingGeometry,
       session.webcamVideoPath,
+      session.micAudioPath,
+      session.systemAudioPath,
       session.audioPath,
       session.scaleFactor,
       sourceProjectDir // Pass the original directory path

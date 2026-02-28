@@ -89,7 +89,7 @@ export function SidePanel() {
     speedRegions,
     swapRegions,
     webcamVideoUrl,
-    hasAudioTrack,
+    hasAnyAudioTrack,
     setSelectedRegionId,
     activeSidePanelTab,
     setActiveSidePanelTab,
@@ -102,7 +102,7 @@ export function SidePanel() {
       speedRegions: state.speedRegions,
       swapRegions: state.swapRegions,
       webcamVideoUrl: state.webcamVideoUrl,
-      hasAudioTrack: state.hasAudioTrack,
+      hasAnyAudioTrack: state.hasAnyAudioTrack,
       setSelectedRegionId: state.setSelectedRegionId,
       activeSidePanelTab: state.activeSidePanelTab,
       setActiveSidePanelTab: state.setActiveSidePanelTab,
@@ -156,7 +156,7 @@ export function SidePanel() {
             icon={<Microphone className="w-5 h-5" />}
             isActive={activeSidePanelTab === 'audio'}
             onClick={() => setActiveSidePanelTab('audio')}
-            disabled={!hasAudioTrack}
+            disabled={!hasAnyAudioTrack}
           />
           <TabButton
             label="Animation"

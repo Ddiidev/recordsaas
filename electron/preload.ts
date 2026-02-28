@@ -11,6 +11,10 @@ type ProjectPayload = {
   videoPath: string
   metadataPath: string
   webcamVideoPath?: string
+  micAudioPath?: string
+  systemAudioPath?: string
+  audioPath?: string
+  originalProjectPath?: string
 }
 
 type ExportPayload = {
@@ -35,6 +39,9 @@ type CompletePayload = {
 type RenderStartPayload = {
   projectState: any
   exportSettings: any
+  security?: {
+    watermarkRequired?: boolean
+  }
 }
 
 type WindowSource = {
@@ -71,6 +78,51 @@ type DshowDevice = {
   alternativeName: string
 }
 
+type RecordingStartedPayload = {
+}
+
+// --- Auth ---
+type DesktopAuthReason =
+  | 'not_logged_in'
+  | 'missing_entitlement'
+  | 'invalid_session'
+  | 'invalid_entitlement'
+  | 'expired_entitlement'
+  | 'license_inactive'
+  | 'license_expired'
+  | 'public_key_unavailable'
+  | null
+
+type DesktopAuthUser = {
+  email: string
+  name: string | null
+  picture: string | null
+}
+
+type DesktopAuthLicense = {
+  active: boolean
+  plan: string | null
+  region: string | null
+  activatedAt: string | null
+  subscriptionStatus: string | null
+  licenseValidUntil: string | null
+  paidAmount: number | null
+  paidCurrency: string | null
+  watermarkRequired: boolean
+}
+
+type DesktopAuthState = {
+  isAuthenticated: boolean
+  canExport: boolean
+  watermarkRequired: boolean
+  reason: DesktopAuthReason
+  user: DesktopAuthUser | null
+  license: DesktopAuthLicense | null
+  sessionExpiresAt: string | null
+  entitlementExpiresAt: string | null
+  apiBaseUrl: string
+}
+
 // --- Cursor Theme ---
 type CursorTheme = any
 
@@ -95,8 +147,8 @@ export const electronAPI = {
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
 
-  onRecordingStarted: (callback: () => void) => {
-    const listener = () => callback()
+  onRecordingStarted: (callback: (payload: RecordingStartedPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: RecordingStartedPayload) => callback(payload || {})
     ipcRenderer.on('recording-started', listener)
     return () => {
       ipcRenderer.removeListener('recording-started', listener)
@@ -117,7 +169,6 @@ export const electronAPI = {
     return () => ipcRenderer.removeListener('recorder:release-webcam', listener)
   },
   sendWebcamReleasedConfirmation: () => ipcRenderer.send('recorder:webcam-released'),
-
   // --- Editor window ---
   onProjectOpen: (callback: (payload: ProjectPayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: ProjectPayload) => callback(payload)
@@ -169,6 +220,17 @@ export const electronAPI = {
     }
   },
   openExternal: (url: string): void => ipcRenderer.send('shell:openExternal', url),
+
+  // --- Auth ---
+  authGetState: (): Promise<DesktopAuthState> => ipcRenderer.invoke('auth:get-state'),
+  authStartLogin: (): Promise<{ success: boolean }> => ipcRenderer.invoke('auth:start-login'),
+  authLogout: (): Promise<{ success: boolean }> => ipcRenderer.invoke('auth:logout'),
+  authRefresh: (): Promise<{ success: boolean; state: DesktopAuthState }> => ipcRenderer.invoke('auth:refresh'),
+  onAuthChanged: (callback: (state: DesktopAuthState) => void) => {
+    const listener = (_event: IpcRendererEvent, state: DesktopAuthState) => callback(state)
+    ipcRenderer.on('auth:changed', listener)
+    return () => ipcRenderer.removeListener('auth:changed', listener)
+  },
 
   // --- Render Worker ---
   onRenderStart: (callback: (payload: RenderStartPayload) => void) => {
