@@ -91,6 +91,32 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
 
 let fallbackAudioState: FallbackAudioState | null = null
 
+type ImportedProjectPayload = {
+  videoPath?: string | null
+  metadataPath?: string | null
+  webcamVideoPath?: string | null
+  audioPath?: string | null
+  recordingGeometry?: RecordingGeometry
+  geometry?: RecordingGeometry
+  scaleFactor?: number
+  events?: any[]
+  metadata?: any[]
+  cursorImages?: Record<string, any>
+  platform?: NodeJS.Platform
+  screenSize?: { width: number; height: number } | null
+  syncOffset?: number
+  [key: string]: any
+}
+
+type RuntimeProjectMetadata = ImportedProjectPayload & {
+  platform: NodeJS.Platform
+  events: any[]
+  cursorImages: Record<string, any>
+  geometry: RecordingGeometry
+  recordingGeometry: RecordingGeometry
+  syncOffset: number
+}
+
 /**
  * Uses ffprobe to get the precise creation time of the video file.
  * @param videoPath The path to the video file.
