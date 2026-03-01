@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/Ddiidev/recordsaas/compare/v2.3.0...v2.4.0) (2026-03-01)
+
+
+### Features
+
+* **export-progress:** align compact widget with system theme and primary pulse border ([435869c](https://github.com/Ddiidev/recordsaas/commit/435869ca2788ab224f6a5d89e236ed8ac95e9fc0))
+
 # [2.3.0](https://github.com/Ddiidev/recordsaas/compare/v2.2.0...v2.3.0) (2026-02-26)
 
 
