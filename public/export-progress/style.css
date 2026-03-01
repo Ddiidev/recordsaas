@@ -4,157 +4,190 @@
   box-sizing: border-box;
 }
 
-:root.theme-light {
-  --window-bg: #ffffff;
-  --window-border: #d9d9d9;
-  --window-border-soft: #e7e7e7;
-  --text: #1f2329;
-  --muted-text: #626a73;
-  --track-bg: #f2f4f5;
-  --green: #24a148;
-  --minimize-bg: #f6f7f8;
-  --minimize-bg-hover: #eceff2;
-  --button-bg: #d34d4d;
-  --button-bg-hover: #c44545;
-  --button-text: #ffffff;
+:root {
+  --card: #ffffff;
+  --foreground: #212121;
+  --muted-foreground: #757575;
+  --muted: #f7f7f7;
+  --accent: #efefef;
+  --border: #dbdbdb;
+  --primary: #2ba96f;
+  --primary-glow: rgba(43, 169, 111, 0.55);
+  --primary-foreground: #ffffff;
+  --radius: 8px;
+  --shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
-:root {
-  --window-bg: #ffffff;
-  --window-border: #d9d9d9;
-  --window-border-soft: #e7e7e7;
-  --text: #1f2329;
-  --muted-text: #626a73;
-  --track-bg: #f2f4f5;
-  --green: #24a148;
-  --minimize-bg: #f6f7f8;
-  --minimize-bg-hover: #eceff2;
-  --button-bg: #d34d4d;
-  --button-bg-hover: #c44545;
-  --button-text: #ffffff;
+:root.theme-light {
+  --card: #ffffff;
+  --foreground: #212121;
+  --muted-foreground: #757575;
+  --muted: #f7f7f7;
+  --accent: #efefef;
+  --border: #dbdbdb;
+  --primary: #2ba96f;
+  --primary-glow: rgba(43, 169, 111, 0.55);
+  --primary-foreground: #ffffff;
 }
 
 :root.theme-dark {
-  --window-bg: #2b2f36;
-  --window-border: #9aa2ae;
-  --window-border-soft: #767f8c;
-  --text: #f2f5f9;
-  --muted-text: #d2d8e1;
-  --track-bg: #3d434d;
-  --green: #2fb35a;
-  --minimize-bg: #3b414b;
-  --minimize-bg-hover: #4a515d;
-  --button-bg: #cc5252;
-  --button-bg-hover: #b84545;
-  --button-text: #ffffff;
+  --card: #2a2f36;
+  --foreground: #f8fafc;
+  --muted-foreground: #a2acb8;
+  --muted: #333943;
+  --accent: #3a414d;
+  --border: #444c5a;
+  --primary: #33cc8f;
+  --primary-glow: rgba(51, 204, 143, 0.6);
+  --primary-foreground: #0e1116;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.theme-light):not(.theme-dark) {
+    --card: #2a2f36;
+    --foreground: #f8fafc;
+    --muted-foreground: #a2acb8;
+    --muted: #333943;
+    --accent: #3a414d;
+    --border: #444c5a;
+    --primary: #33cc8f;
+    --primary-glow: rgba(51, 204, 143, 0.6);
+    --primary-foreground: #0e1116;
+  }
 }
 
 html,
 body {
-  margin: 0;
   width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
   overflow: hidden;
+  background: transparent;
+  color: var(--foreground);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: var(--window-bg);
-  color: var(--text);
+}
+
+body {
+  display: flex;
 }
 
 .window {
+  position: relative;
   width: 100%;
   height: 100%;
-  border: 1px solid var(--window-border);
-  border-radius: 6px;
-  background: var(--window-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
   display: flex;
   align-items: stretch;
-  gap: 4px;
-  padding: 4px;
+  gap: 6px;
+  padding: 6px;
   -webkit-app-region: drag;
+}
+
+.window::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid var(--primary);
+  pointer-events: none;
+  animation: pulse-primary-border 1.8s ease-in-out infinite;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  gap: 8px;
 }
 
 .progress-inline-text {
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.1px;
-  color: var(--text);
-}
-
-.minimize-btn {
-  width: 34px;
-  height: 18px;
-  border: 1px solid var(--window-border-soft);
-  border-radius: 4px;
-  background: var(--minimize-bg);
-  color: var(--text);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: lowercase;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-
-.minimize-btn:hover:enabled {
-  background: var(--minimize-bg-hover);
 }
 
 .content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
   flex: 1;
   min-width: 0;
 }
 
+.minimize-btn,
+.collapse-btn {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 1;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.minimize-btn {
+  width: 24px;
+  height: 18px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.collapse-btn {
+  width: 20px;
+  min-height: 100%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.minimize-btn:hover:enabled,
+.collapse-btn:hover:enabled {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
 .progress-track {
   width: 100%;
-  height: 10px;
-  background: var(--track-bg);
-  border: 1px solid var(--window-border-soft);
-  border-radius: 4px;
+  height: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
   overflow: hidden;
   -webkit-app-region: no-drag;
 }
 
 .progress-fill {
-  width: 0%;
+  width: 100%;
   height: 100%;
-  background: var(--green);
-  border-radius: 2px;
-  transition: width 120ms linear;
-}
-
-.collapse-btn {
-  width: 18px;
-  height: 100%;
-  min-height: 30px;
-  border: 1px solid var(--window-border-soft);
-  border-radius: 4px;
-  background: var(--minimize-bg);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-
-.collapse-btn:hover:enabled {
-  background: var(--minimize-bg-hover);
+  border-radius: inherit;
+  background: var(--primary);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 160ms linear;
+  will-change: transform;
 }
 
 .window.is-collapsed {
   gap: 0;
-  padding: 2px;
+  padding: 0;
 }
 
 .window.is-collapsed .content {
@@ -163,10 +196,22 @@ body {
 
 .window.is-collapsed .collapse-btn {
   width: 100%;
-  min-height: 34px;
+  min-height: 100%;
 }
 
 .minimize-btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+@keyframes pulse-primary-border {
+  0%,
+  100% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 0 var(--primary-glow);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px transparent;
+  }
 }

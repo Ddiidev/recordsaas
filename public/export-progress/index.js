@@ -9,6 +9,7 @@ let isFinished = false
 let mediaThemeQuery = null
 let mediaThemeListener = null
 let isCollapsed = false
+let lastRenderedProgress = 0
 
 const applyThemeClass = (resolvedTheme) => {
   const nextTheme = resolvedTheme === 'dark' ? 'dark' : 'light'
@@ -17,18 +18,23 @@ const applyThemeClass = (resolvedTheme) => {
 }
 
 const resolveThemeValue = (modeValue) => {
-  if (modeValue === 'dark' || modeValue === 'light' || modeValue === 'auto') {
+  if (modeValue === 'dark' || modeValue === 'light' || modeValue === 'auto' || modeValue === 'system') {
     return modeValue
   }
-  return 'light'
+  return 'system'
 }
 
 const setupTheme = async () => {
-  let appearanceMode = 'light'
+  let appearanceMode = 'system'
 
   try {
     const rawModeFromSetting = await window.overlayAPI.invoke('settings:get', 'appearance.mode')
-    if (rawModeFromSetting === 'light' || rawModeFromSetting === 'dark' || rawModeFromSetting === 'auto') {
+    if (
+      rawModeFromSetting === 'light' ||
+      rawModeFromSetting === 'dark' ||
+      rawModeFromSetting === 'auto' ||
+      rawModeFromSetting === 'system'
+    ) {
       appearanceMode = rawModeFromSetting
     } else {
       const appearanceObj = await window.overlayAPI.invoke('settings:get', 'appearance')
@@ -41,15 +47,23 @@ const setupTheme = async () => {
   }
 
   if (mediaThemeQuery && mediaThemeListener) {
-    mediaThemeQuery.removeEventListener('change', mediaThemeListener)
+    if (typeof mediaThemeQuery.removeEventListener === 'function') {
+      mediaThemeQuery.removeEventListener('change', mediaThemeListener)
+    } else if (typeof mediaThemeQuery.removeListener === 'function') {
+      mediaThemeQuery.removeListener(mediaThemeListener)
+    }
   }
 
-  if (appearanceMode === 'auto') {
+  if (appearanceMode === 'auto' || appearanceMode === 'system') {
     mediaThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
     mediaThemeListener = (event) => {
       applyThemeClass(event.matches ? 'dark' : 'light')
     }
-    mediaThemeQuery.addEventListener('change', mediaThemeListener)
+    if (typeof mediaThemeQuery.addEventListener === 'function') {
+      mediaThemeQuery.addEventListener('change', mediaThemeListener)
+    } else if (typeof mediaThemeQuery.addListener === 'function') {
+      mediaThemeQuery.addListener(mediaThemeListener)
+    }
     applyThemeClass(mediaThemeQuery.matches ? 'dark' : 'light')
     return
   }
@@ -65,9 +79,11 @@ const clampProgress = (progress) => {
 }
 
 const applyProgress = (progress, stage) => {
-  const safeProgress = clampProgress(progress)
-  progressFillEl.style.width = `${safeProgress}%`
-  progressInlineTextEl.textContent = `Rendering ${Math.round(safeProgress)}%`
+  const safeProgress = Math.max(lastRenderedProgress, clampProgress(progress))
+  lastRenderedProgress = safeProgress
+  progressFillEl.style.transform = `scaleX(${safeProgress / 100})`
+  const stageText = typeof stage === 'string' && stage.trim().length > 0 ? stage.trim() : 'Rendering'
+  progressInlineTextEl.textContent = `${stageText} ${Math.round(safeProgress)}%`
   progressTrackEl?.setAttribute('aria-valuenow', `${Math.round(safeProgress)}`)
 }
 
@@ -115,7 +131,8 @@ window.overlayAPI.on('export:complete', (payload) => {
   }
 
   const errorText = payload?.error ? `Export stopped: ${payload.error}` : 'Export stopped'
-  statusTextEl.textContent = errorText.toLowerCase()
+  progressInlineTextEl.textContent = errorText
+  progressFillEl.style.transform = 'scaleX(1)'
   minimizeButtonEl.disabled = true
 })
 
@@ -126,6 +143,10 @@ window.addEventListener('beforeunload', () => {
   window.overlayAPI.removeAllListeners('export:progress')
   window.overlayAPI.removeAllListeners('export:complete')
   if (mediaThemeQuery && mediaThemeListener) {
-    mediaThemeQuery.removeEventListener('change', mediaThemeListener)
+    if (typeof mediaThemeQuery.removeEventListener === 'function') {
+      mediaThemeQuery.removeEventListener('change', mediaThemeListener)
+    } else if (typeof mediaThemeQuery.removeListener === 'function') {
+      mediaThemeQuery.removeListener(mediaThemeListener)
+    }
   }
 })
