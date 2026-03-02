@@ -300,6 +300,10 @@ export const drawScene = (
   const swapRegions = Object.values(state.swapRegions || {})
   const zoomRegions = Object.values(state.zoomRegions)
   const blurRegions = Object.values(state.blurRegions)
+  const activeBlurRegions = sortRegionsByLanePrecedence(
+    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+    laneContext,
+  ).reverse()
 
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
@@ -473,6 +477,16 @@ export const drawScene = (
       }
     }
     sCtx.restore()
+
+    for (const region of activeBlurRegions) {
+      const rect = resolveBlurRect(region, 0, 0, frameContentWidth, frameContentHeight)
+      if (!rect) continue
+      if (region.style === 'pixelated') {
+        applyPixelationToRect(sCtx, rect, region.intensity)
+      } else {
+        applyBlurToRect(sCtx, rect, region.intensity)
+      }
+    }
   }
 
   // --- 5. Prepare Configs for Layout Swapping ---
@@ -738,20 +752,4 @@ export const drawScene = (
 
   // Draw layers sorted by zIndex
   draws.sort((a,b) => a.zIndex - b.zIndex).forEach(d => d.draw())
-
-  // --- 7. Draw Blur Assets ---
-  const activeBlurRegions = sortRegionsByLanePrecedence(
-    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
-    laneContext,
-  ).reverse()
-
-  for (const region of activeBlurRegions) {
-    const rect = resolveBlurRect(region, frameX, frameY, frameContentWidth, frameContentHeight)
-    if (!rect) continue
-    if (region.style === 'pixelated') {
-      applyPixelationToRect(ctx, rect, region.intensity)
-    } else {
-      applyBlurToRect(ctx, rect, region.intensity)
-    }
-  }
 }
