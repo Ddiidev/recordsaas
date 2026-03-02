@@ -15,7 +15,7 @@ Unsure where to begin? You can start by looking through `good first issue` and `
 ## Contribution Workflow
 
 1.  **Fork the repository:** Create your own copy of the project on GitHub.
-2.  **Clone your fork:** `git clone https://github.com/tamnguyenvan/recordsaas.git`
+2.  **Clone your fork:** `git clone https://github.com/Ddiidev/recordsaas.git`
 3.  **Create a branch:** `git checkout -b feature/your-amazing-feature` or `fix/issue-number`. Please use a descriptive branch name.
 4.  **Install dependencies:** `npm install`
 5.  **Make your changes:** Write your code and make sure it works by running the app locally (`npm run dev`).

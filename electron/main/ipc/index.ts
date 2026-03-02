@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import * as appHandlers from './handlers/app'
+import * as authHandlers from './handlers/auth'
 import * as desktopHandlers from './handlers/desktop'
 import * as exportHandlers from './handlers/export'
 import * as fsHandlers from './handlers/file-system'
@@ -20,6 +21,11 @@ export function registerIpcHandlers() {
   ipcMain.on('window:update-title-bar-overlay', appHandlers.updateTitleBarOverlay)
   ipcMain.on('export-progress:set-collapsed', appHandlers.setExportProgressCollapsed)
 
+  // Auth
+  ipcMain.handle('auth:get-session', authHandlers.handleAuthGetSession)
+  ipcMain.handle('auth:start-login', authHandlers.handleAuthStartLogin)
+  ipcMain.handle('auth:logout', authHandlers.handleAuthLogout)
+
   // Desktop
   ipcMain.handle('desktop:get-displays', desktopHandlers.getDisplays)
   ipcMain.handle('desktop:get-dshow-devices', desktopHandlers.getDshowDevices)
@@ -35,6 +41,7 @@ export function registerIpcHandlers() {
 
   // Recording
   ipcMain.handle('recording:start', recordingHandlers.handleStartRecording)
+  ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
   ipcMain.handle('recording:import-project', recordingHandlers.handleImportProject)

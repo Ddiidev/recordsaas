@@ -25,6 +25,7 @@ const SelectTrigger = React.forwardRef<
       <SelectPrimitive.Trigger
         id={selectId}
         ref={ref}
+        data-interactive="true"
         className={cn(
           // Base styles - compact và clean hơn
           'flex h-9 w-full items-center justify-between rounded-lg',
@@ -73,6 +74,7 @@ const SelectTrigger = React.forwardRef<
       <SelectPrimitive.Trigger
         id={selectId}
         ref={ref}
+        data-interactive="true"
         className={cn(
           'flex h-11 w-full items-center justify-between rounded-md border border-border bg-input/20 px-3 py-2 text-sm font-medium text-foreground',
           'placeholder:text-muted-foreground/70 shadow-sm',
@@ -137,6 +139,7 @@ const SelectContent = React.forwardRef<
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
+      data-interactive="true"
       className={cn(
         // Base styling
         'relative z-50 max-h-96 min-w-[8rem] overflow-hidden',

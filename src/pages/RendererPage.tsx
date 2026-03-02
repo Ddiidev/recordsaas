@@ -233,7 +233,12 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
       nextFrame = await pullFrame()
     }
 
-    return lastFrame ?? nextFrame ?? null
+    if (!lastFrame) return nextFrame ?? null
+    if (!nextFrame) return lastFrame
+
+    const lastTs = lastFrame.timestamp ?? 0
+    const nextTs = nextFrame.timestamp ?? 0
+    return targetUs - lastTs <= nextTs - targetUs ? lastFrame : nextFrame
   }
 
   const close = () => {
@@ -454,12 +459,16 @@ export function RendererPage() {
 
         const mainDuration = video.duration || projectState.duration
         const webcamDuration = hasWebcam && webcamVideo ? webcamVideo.duration : 0
-        const webcamTimeScale =
-          hasWebcam && webcamDuration > 0 && mainDuration > 0 ? webcamDuration / mainDuration : 1
+        const webcamDurationDelta = hasWebcam ? Math.abs(webcamDuration - mainDuration) : 0
+        const shouldScaleWebcam =
+          hasWebcam && webcamDuration > 0 && mainDuration > 0 && webcamDurationDelta > 0.5
+        const webcamTimeScale = shouldScaleWebcam ? webcamDuration / mainDuration : 1
         if (hasWebcam) {
           log.info('[RendererPage] Webcam timing sync', {
             mainDuration,
             webcamDuration,
+            webcamDurationDelta,
+            shouldScaleWebcam,
             webcamTimeScale,
           })
         }
@@ -569,9 +578,10 @@ export function RendererPage() {
           }
 
           if (hasWebcam && webcamVideo) {
+            const rawWebcamTimestamp = sourceTimestamp * webcamTimeScale
             const webcamTimestamp = Math.max(
               0,
-              Math.min(sourceTimestamp * webcamTimeScale, Math.max(0, webcamDuration - 1 / fps)),
+              Math.min(rawWebcamTimestamp, Math.max(0, webcamDuration - 1 / fps)),
             )
             if (useWebcamDecoder && webcamFrameProvider) {
               webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)

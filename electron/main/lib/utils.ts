@@ -60,9 +60,16 @@ export function calculateExportDimensions(
   resolutionKey: ResolutionKey,
   aspectRatio: string,
 ): { width: number; height: number } {
-  const baseHeight = RESOLUTIONS[resolutionKey].height
-  const [ratioW, ratioH] = aspectRatio.split(':').map(Number)
-  const width = Math.round(baseHeight * (ratioW / ratioH))
+  const safeResolutionKey =
+    resolutionKey && Object.prototype.hasOwnProperty.call(RESOLUTIONS, resolutionKey)
+      ? resolutionKey
+      : '720p'
+  const baseHeight = RESOLUTIONS[safeResolutionKey].height
+  const safeAspectRatio = typeof aspectRatio === 'string' && aspectRatio.includes(':') ? aspectRatio : '16:9'
+  const [ratioW, ratioH] = safeAspectRatio.split(':').map(Number)
+  const safeRatioW = Number.isFinite(ratioW) && ratioW > 0 ? ratioW : 16
+  const safeRatioH = Number.isFinite(ratioH) && ratioH > 0 ? ratioH : 9
+  const width = Math.round(baseHeight * (safeRatioW / safeRatioH))
   const finalWidth = width % 2 === 0 ? width : width + 1
   return { width: finalWidth, height: baseHeight }
 }

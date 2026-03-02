@@ -1,7 +1,7 @@
 {
   "name": "recordsaas",
   "description": "Screen recording and editing app",
-  "author": "Tam Nguyen",
+  "author": "André Luiz",
   "private": true,
   "version": "2.0.1",
   "type": "module",
@@ -83,7 +83,7 @@
     "vite-plugin-node-polyfills": "^0.24.0"
   },
   "optionalDependencies": {
-    "global-mouse-events": "github:tamnguyenvan/global-mouse-events",
+    "global-mouse-events": "^1.2.0",
     "iohook-macos": "github:tamnguyenvan/iohook-macos",
     "node-macos-cursor": "github:tamnguyenvan/node-macos-cursor",
     "node-win-cursor": "github:tamnguyenvan/node-win-cursor",
@@ -103,6 +103,14 @@
     "asar": true,
     "asarUnpack": [
       "binaries/**"
+    ],
+    "protocols": [
+      {
+        "name": "RecordSaaS",
+        "schemes": [
+          "recordsaas"
+        ]
+      }
     ],
     "win": {
       "target": [

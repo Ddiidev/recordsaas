@@ -13,6 +13,7 @@ import { getFFmpegPath, calculateExportDimensions } from '../lib/utils'
 import { spawnSync } from 'node:child_process'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
 import { createExportProgressWindow } from '../windows/temporary-windows'
+import { authorizeDesktopExport, type ExportSelectionRequest } from './auth-manager'
 
 const FFMPEG_PATH = getFFmpegPath()
 const EXPORT_PROGRESS_INTERVAL_MS = 300
@@ -28,6 +29,7 @@ const store = new Store()
 type LaneLike = { id: string; order: number }
 type CutLike = { startTime: number; duration: number; laneId?: string; zIndex?: number }
 type SpeedLike = { startTime: number; duration: number; speed: number; laneId?: string; zIndex?: number }
+type ExportQuality = 'low' | 'medium' | 'high' | 'ultra high'
 
 const sortLanesForPrecedence = (lanes: LaneLike[] | undefined): LaneLike[] => {
   const source = Array.isArray(lanes) && lanes.length > 0 ? lanes : [{ id: 'lane-1', order: 0 }]
@@ -141,13 +143,6 @@ const trySetProcessPriorityWithFallback = (pid: number, priorities: number[], la
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function startExport(event: IpcMainInvokeEvent, { projectState, exportSettings, outputPath }: any) {
   log.info('[ExportManager] Starting export process...')
-  
-  // Create the directory if it doesn't exist
-  const outputDir = path.dirname(outputPath)
-  if (!fs.existsSync(outputDir)) {
-    log.info(`[ExportManager] Creating missing directory: ${outputDir}`)
-    fs.mkdirSync(outputDir, { recursive: true })
-  }
 
   const exportStartTime = Date.now()
   const getElapsedDurationSeconds = () => (Date.now() - exportStartTime) / 1000
@@ -170,6 +165,46 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   let lastProgressBroadcastAt = 0
   let lastProgressBroadcast = -1
   let cancellationHandler: () => void = () => {}
+
+  const safeExportSettings = exportSettings && typeof exportSettings === 'object' ? exportSettings : {}
+  const requestedExportSettings: ExportSelectionRequest & { quality: ExportQuality } = {
+    format: safeExportSettings.format === 'gif' ? 'gif' : 'mp4',
+    resolution:
+      safeExportSettings.resolution === '480p' ||
+      safeExportSettings.resolution === '576p' ||
+      safeExportSettings.resolution === '720p' ||
+      safeExportSettings.resolution === '1080p' ||
+      safeExportSettings.resolution === '2k'
+        ? safeExportSettings.resolution
+        : '720p',
+    fps: safeExportSettings.fps === 60 ? 60 : 30,
+    quality:
+      safeExportSettings.quality === 'low' ||
+      safeExportSettings.quality === 'medium' ||
+      safeExportSettings.quality === 'high' ||
+      safeExportSettings.quality === 'ultra high'
+        ? safeExportSettings.quality
+        : 'medium',
+  }
+
+  const authorizedExport = await authorizeDesktopExport({
+    format: requestedExportSettings.format,
+    resolution: requestedExportSettings.resolution,
+    fps: requestedExportSettings.fps,
+  })
+
+  const normalizedExportSettings = {
+    ...requestedExportSettings,
+    format: authorizedExport.approved.format,
+    resolution: authorizedExport.approved.resolution,
+    fps: authorizedExport.approved.fps,
+  }
+
+  const outputDir = path.dirname(outputPath)
+  if (!fs.existsSync(outputDir)) {
+    log.info(`[ExportManager] Creating missing directory: ${outputDir}`)
+    fs.mkdirSync(outputDir, { recursive: true })
+  }
 
   const playCompletionSound = (completionType: 'success' | 'error' | 'cancelled') => {
     if (!playExportCompletionSound || completionType === 'cancelled') return
@@ -385,7 +420,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
   }
 
-  const { resolution, fps, format } = exportSettings
+  const { format, resolution, fps } = normalizedExportSettings
   const { width: outputWidth, height: outputHeight } = calculateExportDimensions(resolution, projectState.aspectRatio)
 
 
@@ -684,7 +719,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       editorWindow.hide()
     }
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings })
+      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings: normalizedExportSettings })
     }
   })
 }

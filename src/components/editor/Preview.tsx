@@ -19,6 +19,8 @@ import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/tim
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
+const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
+const WEBCAM_SCRUB_RESYNC_DRIFT_SECS = 0.02
 
 export const Preview = memo(
   ({
@@ -213,6 +215,22 @@ export const Preview = memo(
         if (state.isPlaying) animationFrameId.current = requestAnimationFrame(renderCanvas)
         return
       }
+
+      if (webcamVideo) {
+        webcamVideo.playbackRate = video.playbackRate
+        const drift = Math.abs(webcamVideo.currentTime - video.currentTime)
+        if (state.isPlaying) {
+          if (webcamVideo.paused && webcamVideo.readyState >= 2) {
+            webcamVideo.play().catch(() => {})
+          }
+          if (drift > WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS) {
+            webcamVideo.currentTime = video.currentTime
+          }
+        } else if (drift > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+          webcamVideo.currentTime = video.currentTime
+        }
+      }
+
       drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage)
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
@@ -345,11 +363,10 @@ export const Preview = memo(
         syncCurrentTimeToStore(playbackTime, true)
       }
       if (webcamVideoRef.current) {
-        // Only sync webcam when drift exceeds 0.3s to avoid expensive seeks every frame
-        if (Math.abs(webcamVideoRef.current.currentTime - playbackTime) > 0.3) {
+        webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
+        if (!isPlaying && Math.abs(webcamVideoRef.current.currentTime - playbackTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
           webcamVideoRef.current.currentTime = playbackTime
         }
-        webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
       }
       if (audio) {
         // Sync audio with video
@@ -439,18 +456,26 @@ export const Preview = memo(
     const handleVideoPause = useCallback(() => {
       setPlaying(false)
       const video = videoRef.current
+      const webcamVideo = webcamVideoRef.current
       if (video) {
         setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
+        if (webcamVideo && Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+          webcamVideo.currentTime = video.currentTime
+        }
       }
     }, [setPlaying, videoRef, syncCurrentTimeToStore])
 
     const handleVideoEnded = useCallback(() => {
       setPlaying(false)
       const video = videoRef.current
+      const webcamVideo = webcamVideoRef.current
       if (video) {
         setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
+        if (webcamVideo && Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+          webcamVideo.currentTime = video.currentTime
+        }
       }
     }, [setPlaying, videoRef, syncCurrentTimeToStore])
 
@@ -459,6 +484,9 @@ export const Preview = memo(
         videoRef.current.currentTime = value
         setPlaybackUiTime(value)
         syncCurrentTimeToStore(value, true)
+      }
+      if (webcamVideoRef.current) {
+        webcamVideoRef.current.currentTime = value
       }
       if (audioRef.current) {
         audioRef.current.currentTime = value
@@ -476,6 +504,9 @@ export const Preview = memo(
       syncCurrentTimeToStore(rewindTime, true)
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
+      }
+      if (webcamVideoRef.current) {
+        webcamVideoRef.current.currentTime = rewindTime
       }
       if (audioRef.current) {
         audioRef.current.currentTime = rewindTime

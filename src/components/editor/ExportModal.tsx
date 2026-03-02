@@ -7,10 +7,11 @@ import { Input } from '../ui/input'
 import { cn } from '../../lib/utils'
 import { useEditorStore } from '../../store/editorStore'
 import { formatTime } from '../../lib/utils'
+import type { AuthSession } from '../../types/auth'
 
 export type ExportSettings = {
   format: 'mp4' | 'gif'
-  resolution: '720p' | '1080p' | '2k'
+  resolution: '480p' | '576p' | '720p' | '1080p' | '2k'
   fps: 30 | 60
   quality: 'low' | 'medium' | 'high' | 'ultra high'
 }
@@ -44,6 +45,77 @@ const formatFullDurationMs = (totalSeconds: number) => {
   return `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s ${ms.toString().padStart(3, '0')}ms`
 }
 
+const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
+  format: 'mp4',
+  resolution: '720p',
+  fps: 30,
+  quality: 'medium',
+}
+
+const FREE_COST_UNITS: Record<ExportSettings['resolution'], Record<ExportSettings['fps'], number>> = {
+  '480p': { 30: 0, 60: 1 },
+  '576p': { 30: 0, 60: 1 },
+  '720p': { 30: 2, 60: 2 },
+  '1080p': { 30: 6, 60: 6 },
+  '2k': { 30: 10, 60: 10 },
+}
+
+const RESOLUTION_LABELS: Record<ExportSettings['resolution'], string> = {
+  '480p': 'SD (480p)',
+  '576p': 'SD+ (576p)',
+  '720p': 'HD (720p)',
+  '1080p': 'Full HD (1080p)',
+  '2k': '2K (1440p)',
+}
+
+const EMPTY_AUTH_SESSION: AuthSession = {
+  user: null,
+  license: null,
+  credits: null,
+  sessionToken: null,
+  entitlementToken: null,
+  isAuthenticated: false,
+  status: 'free',
+}
+
+const formatCredits = (units: number) => {
+  const safeUnits = Number.isFinite(units) ? Math.max(0, units) : 0
+  const credits = safeUnits / 2
+  return Number.isInteger(credits) ? `${credits}` : credits.toFixed(1)
+}
+
+const formatCostLabel = (units: number) => {
+  if (units <= 0) return 'Free'
+  const value = formatCredits(units)
+  return `${value} credit${value === '1' ? '' : 's'}`
+}
+
+const getFreeCostUnits = (resolution: ExportSettings['resolution'], fps: ExportSettings['fps']) =>
+  FREE_COST_UNITS[resolution][fps]
+
+const sanitizeExportSettings = (value: Partial<ExportSettings> | null | undefined): ExportSettings => {
+  const settings = value && typeof value === 'object' ? value : {}
+  return {
+    format: settings.format === 'gif' ? 'gif' : 'mp4',
+    resolution:
+      settings.resolution === '480p' ||
+      settings.resolution === '576p' ||
+      settings.resolution === '720p' ||
+      settings.resolution === '1080p' ||
+      settings.resolution === '2k'
+        ? settings.resolution
+        : '720p',
+    fps: settings.fps === 60 ? 60 : 30,
+    quality:
+      settings.quality === 'low' ||
+      settings.quality === 'medium' ||
+      settings.quality === 'high' ||
+      settings.quality === 'ultra high'
+        ? settings.quality
+        : 'medium',
+  }
+}
+
 // --- Sub-components for different views ---
 const SettingsView = ({
   onStartExport,
@@ -52,33 +124,42 @@ const SettingsView = ({
   onStartExport: (settings: ExportSettings, outputPath: string) => void
   onClose: () => void
 }) => {
-  const [settings, setSettings] = useState<ExportSettings>({
-    format: 'mp4',
-    resolution: '1080p',
-    fps: 30,
-    quality: 'medium',
-  })
+  const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS)
   const [isGpuEnabled, setIsGpuEnabled] = useState(true)
+  const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
 
   useEffect(() => {
     let isMounted = true
     const loadSettings = async () => {
       try {
-        const [savedSettings, gpuEnabled] = await Promise.all([
+        const [savedSettings, gpuEnabled, session] = await Promise.all([
           window.electronAPI.getSetting<Partial<ExportSettings>>('exportSettings'),
           window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
+          window.electronAPI.getAuthSession(),
         ])
         if (isMounted) {
-          if (savedSettings) setSettings(prev => ({ ...prev, ...savedSettings }))
+          setSettings(sanitizeExportSettings(savedSettings))
           setIsGpuEnabled(gpuEnabled ?? false)
+          setAuthSession(session)
         }
       } catch (error) {
         console.error('Failed to load export settings:', error)
       }
     }
+
     loadSettings()
-    return () => { isMounted = false }
+
+    const cleanAuthSession = window.electronAPI.onAuthSessionUpdated((session) => {
+      if (!isMounted) return
+      setAuthSession(session)
+    })
+
+    return () => {
+      isMounted = false
+      cleanAuthSession()
+    }
   }, [])
+
   const [outputPath, setOutputPath] = useState('')
   const { originalProjectPath, duration, cutRegions, speedRegions } = useEditorStore((state) => ({
     originalProjectPath: state.originalProjectPath,
@@ -156,6 +237,27 @@ const SettingsView = ({
     setDefaultPath()
   }, [settings.format, originalProjectPath])
 
+  const isAuthenticated = authSession.isAuthenticated
+  const isFreeUser = isAuthenticated && !authSession.license?.active
+  const balanceUnits = isFreeUser ? authSession.credits?.balanceUnits ?? 0 : 0
+  const selectedCostUnits = isFreeUser ? getFreeCostUnits(settings.resolution, settings.fps) : 0
+  const hasEnoughCredits = !isFreeUser || selectedCostUnits <= balanceUnits
+
+  const canAffordSelection = (resolution: ExportSettings['resolution'], fps: ExportSettings['fps']) => {
+    if (!isFreeUser) return true
+    return getFreeCostUnits(resolution, fps) <= balanceUnits
+  }
+
+  const getResolutionCostHint = (resolution: ExportSettings['resolution']) => {
+    if (!isFreeUser) return null
+
+    if (resolution === '480p' || resolution === '576p') {
+      return '30fps free | 60fps 0.5'
+    }
+
+    return formatCostLabel(getFreeCostUnits(resolution, 30))
+  }
+
   return (
     <>
       {/* Header */}
@@ -197,14 +299,29 @@ const SettingsView = ({
             </Select>
           </SettingRow>
           <SettingRow label="Resolution">
-            <Select value={settings.resolution} onValueChange={(value) => handleValueChange('resolution', value)}>
+            <Select
+              value={settings.resolution}
+              onValueChange={(value) => handleValueChange('resolution', value as ExportSettings['resolution'])}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="720p">HD (720p)</SelectItem>
-                <SelectItem value="1080p">Full HD (1080p)</SelectItem>
-                <SelectItem value="2k">2K (1440p)</SelectItem>
+                <SelectItem value="480p" disabled={!canAffordSelection('480p', settings.fps)}>
+                  {isFreeUser ? `${RESOLUTION_LABELS['480p']} (${getResolutionCostHint('480p')})` : RESOLUTION_LABELS['480p']}
+                </SelectItem>
+                <SelectItem value="576p" disabled={!canAffordSelection('576p', settings.fps)}>
+                  {isFreeUser ? `${RESOLUTION_LABELS['576p']} (${getResolutionCostHint('576p')})` : RESOLUTION_LABELS['576p']}
+                </SelectItem>
+                <SelectItem value="720p" disabled={!canAffordSelection('720p', settings.fps)}>
+                  {isFreeUser ? `${RESOLUTION_LABELS['720p']} (${getResolutionCostHint('720p')})` : RESOLUTION_LABELS['720p']}
+                </SelectItem>
+                <SelectItem value="1080p" disabled={!canAffordSelection('1080p', settings.fps)}>
+                  {isFreeUser ? `${RESOLUTION_LABELS['1080p']} (${getResolutionCostHint('1080p')})` : RESOLUTION_LABELS['1080p']}
+                </SelectItem>
+                <SelectItem value="2k" disabled={!canAffordSelection('2k', settings.fps)}>
+                  {isFreeUser ? `${RESOLUTION_LABELS['2k']} (${getResolutionCostHint('2k')})` : RESOLUTION_LABELS['2k']}
+                </SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -241,6 +358,43 @@ const SettingsView = ({
               </SelectContent>
             </Select>
           </SettingRow>
+          {isFreeUser && (
+            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Current credits</span>
+                <span className="font-semibold text-foreground">{formatCredits(balanceUnits)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Selected export cost</span>
+                <span className={cn('font-semibold', !hasEnoughCredits && 'text-red-500')}>
+                  {formatCostLabel(selectedCostUnits)}
+                </span>
+              </div>
+              <div className="space-y-1 pt-1">
+                {(['480p', '576p', '720p', '1080p', '2k'] as ExportSettings['resolution'][]).map((resolution) => {
+                  const costUnits = getFreeCostUnits(resolution, settings.fps)
+                  const insufficient = costUnits > balanceUnits
+
+                  return (
+                    <div key={resolution} className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">{RESOLUTION_LABELS[resolution]}</span>
+                      <span className={cn('font-medium', insufficient ? 'text-red-500' : 'text-foreground')}>
+                        {formatCostLabel(costUnits)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Free unlimited: 480p/576p at 30 FPS. 60 FPS on 480p/576p uses 0.5 credit.
+              </p>
+              {!hasEnoughCredits && (
+                <p className="text-xs font-medium text-red-500">
+                  Insufficient credits for this combination.
+                </p>
+              )}
+            </div>
+          )}
           <SettingRow label="Output File">
             <div className="w-full flex items-center gap-2">
               <div className="flex-1 min-w-0">
@@ -274,7 +428,7 @@ const SettingsView = ({
             fixedOutputPath = outputPath.split('/').join('\\')
           }
           onStartExport(settings, fixedOutputPath)
-        }} disabled={!outputPath} className="shadow-sm">
+        }} disabled={!outputPath || !hasEnoughCredits} className="shadow-sm">
           Start Export
         </Button>
       </div>

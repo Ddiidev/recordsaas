@@ -492,19 +492,7 @@ export async function startRecording(options: any) {
         break
     }
   } else if (source === 'area') {
-    appState.recorderWin?.hide()
-    createSelectionWindow()
-    const selectedGeometry = await new Promise<any | undefined>((resolve) => {
-      ipcMain.once('selection:complete', (_e, geo) => {
-        appState.selectionWin?.close()
-        resolve(geo)
-      })
-      ipcMain.once('selection:cancel', () => {
-        appState.selectionWin?.close()
-        appState.recorderWin?.show()
-        resolve(undefined)
-      })
-    })
+    const selectedGeometry = options.geometry || (await selectRecordingArea())
     if (!selectedGeometry) return { canceled: true }
 
     const safeWidth = Math.floor(selectedGeometry.width / 2) * 2
@@ -576,6 +564,27 @@ export async function startRecording(options: any) {
   }
   log.info('[RecordingManager] Starting actual recording with args:', baseFfmpegArgs)
   return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor)
+}
+
+export async function selectRecordingArea() {
+  appState.recorderWin?.hide()
+  createSelectionWindow()
+  const selectedGeometry = await new Promise<any | undefined>((resolve) => {
+    ipcMain.once('selection:complete', (_e, geo) => {
+      appState.selectionWin?.close()
+      if (appState.recorderWin && !appState.recorderWin.isDestroyed()) {
+        appState.recorderWin.show()
+        appState.recorderWin.focus()
+      }
+      resolve(geo)
+    })
+    ipcMain.once('selection:cancel', () => {
+      appState.selectionWin?.close()
+      appState.recorderWin?.show()
+      resolve(undefined)
+    })
+  })
+  return selectedGeometry
 }
 
 /**
