@@ -1,3 +1,10 @@
+## [2.4.1](https://github.com/Ddiidev/recordsaas/compare/v2.4.0...v2.4.1) (2026-03-02)
+
+
+### Bug Fixes
+
+* **editor:** correct blur layering and stabilize webcam playback/export sync ([#13](https://github.com/Ddiidev/recordsaas/issues/13)) ([ad3cafc](https://github.com/Ddiidev/recordsaas/commit/ad3cafc472436a22cbe9eefa04b81fd4427e2ea2))
+
 # [2.4.0](https://github.com/Ddiidev/recordsaas/compare/v2.3.0...v2.4.0) (2026-03-01)
 
 
