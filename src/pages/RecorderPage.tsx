@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Microphone,
   MicrophoneOff,
@@ -14,13 +14,15 @@ import {
   Folder,
   Square,
   Settings,
+  UserCircle,
 } from 'tabler-icons-react'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { SettingsModal } from '../components/settings/SettingsModal'
+import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { cn } from '../lib/utils'
+import type { AuthSession } from '../types/auth'
 import '../index.css'
 
 // --- Constants ---
@@ -36,10 +38,20 @@ const WINDOWS_SCALES = [
 ]
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
-const RECORDER_WINDOW_COMPACT_SIZE = { width: 900, height: 360 }
+const RECORDER_WINDOW_COMPACT_SIZE = { width: 980, height: 360 }
 // Preview no longer controls window size; keep content scrollable instead
 // const RECORDER_WINDOW_PREVIEW_SIZE = { width: 900, height: 360 }
-const RECORDER_WINDOW_SETTINGS_SIZE = { width: 900, height: 700 }
+const RECORDER_WINDOW_SETTINGS_SIZE = { width: 980, height: 700 }
+
+const EMPTY_AUTH_SESSION: AuthSession = {
+  user: null,
+  license: null,
+  credits: null,
+  sessionToken: null,
+  entitlementToken: null,
+  isAuthenticated: false,
+  status: 'free',
+}
 
 const isPreparationCountdownOption = (value: number): value is (typeof PREPARATION_COUNTDOWN_OPTIONS)[number] =>
   PREPARATION_COUNTDOWN_OPTIONS.includes(value as (typeof PREPARATION_COUNTDOWN_OPTIONS)[number])
@@ -61,10 +73,12 @@ export function RecorderPage() {
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [cursorScale, setCursorScale] = useState<number>(1)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
   const [preparationSecondsLeft, setPreparationSecondsLeft] = useState<number | null>(null)
+  const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
 
   const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
@@ -73,8 +87,45 @@ export function RecorderPage() {
 
   const cursorScales = useMemo(() => (platform === 'win32' ? WINDOWS_SCALES : LINUX_SCALES), [platform])
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
+  const accountTooltip = useMemo(() => {
+    if (authSession.isAuthenticated) {
+      return authSession.user?.name || authSession.user?.email || 'Logged in'
+    }
+    return 'Not logged in'
+  }, [authSession.isAuthenticated, authSession.user?.email, authSession.user?.name])
+
+  const loadAuthSession = useCallback(async () => {
+    try {
+      const session = await window.electronAPI.getAuthSession()
+      setAuthSession(session)
+    } catch (error) {
+      console.error('Failed to load desktop auth session:', error)
+      setAuthSession(EMPTY_AUTH_SESSION)
+    }
+  }, [])
+
+  const handleOpenSettings = () => {
+    setSettingsDefaultTab('general')
+    setSettingsModalOpen(true)
+  }
+
+  const handleOpenAccount = async () => {
+    if (authSession.isAuthenticated) {
+      setSettingsDefaultTab('account')
+      setSettingsModalOpen(true)
+      return
+    }
+
+    try {
+      await window.electronAPI.startAuthLogin()
+    } catch (error) {
+      console.error('Failed to start desktop login flow:', error)
+    }
+  }
+
   const handleSettingsClose = () => {
     setSettingsModalOpen(false)
+    setSettingsDefaultTab('general')
     window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
   }
 
@@ -154,6 +205,26 @@ export function RecorderPage() {
       cleanupFinished()
     }
   }, [reloadDevices])
+
+  useEffect(() => {
+    void loadAuthSession()
+
+    const cleanupSessionUpdates = window.electronAPI.onAuthSessionUpdated((session) => {
+      setAuthSession(session)
+    })
+
+    const cleanupDeepLink = window.electronAPI.onAuthDeepLink((payload) => {
+      if (payload.status === 'error') {
+        console.error('Desktop login deep-link error:', payload.error || payload.rawUrl)
+      }
+      void loadAuthSession()
+    })
+
+    return () => {
+      cleanupSessionUpdates()
+      cleanupDeepLink()
+    }
+  }, [loadAuthSession])
 
   // Effect to manage the webcam preview stream
   useEffect(() => {
@@ -660,7 +731,7 @@ export function RecorderPage() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
-                      onClick={() => setSettingsModalOpen(true)}
+                      onClick={handleOpenSettings}
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
@@ -671,6 +742,33 @@ export function RecorderPage() {
                   </TooltipTrigger>
                   <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
                     Settings
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={() => {
+                        void handleOpenAccount()
+                      }}
+                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                      variant="secondary"
+                      size="icon"
+                      className="h-10 w-10 rounded-xl border-2 border-emerald-500 bg-background/80 hover:bg-background cursor-pointer shadow-lg overflow-hidden p-0"
+                    >
+                      {authSession.user?.picture ? (
+                        <img
+                          src={authSession.user.picture}
+                          alt={accountTooltip}
+                          referrerPolicy="no-referrer"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <UserCircle size={20} className="text-muted-foreground" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    {accountTooltip}
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -712,7 +810,12 @@ export function RecorderPage() {
         </div>
       )}
 
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={handleSettingsClose} isTransparent />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={handleSettingsClose}
+        isTransparent
+        defaultTab={settingsDefaultTab}
+      />
       </div>
     </TooltipProvider>
   )

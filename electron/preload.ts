@@ -71,6 +71,49 @@ type DshowDevice = {
   alternativeName: string
 }
 
+type AuthUser = {
+  email: string
+  name: string | null
+  picture: string | null
+}
+
+type AuthLicense = {
+  active: boolean
+  plan: string | null
+  region: string | null
+  activatedAt: string | null
+  subscriptionStatus: string | null
+  licenseValidUntil: string | null
+  paidAmount: number | null
+  paidCurrency: string | null
+  watermarkRequired: boolean
+}
+
+type AuthCredits = {
+  visible: boolean
+  balanceUnits: number
+  balanceCredits: number
+  monthlyGrantUnits: number
+  month: string
+}
+
+type AuthSession = {
+  user: AuthUser | null
+  license: AuthLicense | null
+  credits: AuthCredits | null
+  sessionToken: string | null
+  entitlementToken: string | null
+  isAuthenticated: boolean
+  status: 'active' | 'canceled' | 'free'
+}
+
+type AuthDeepLinkPayload = {
+  status: 'success' | 'error'
+  code?: string
+  error?: string
+  rawUrl: string
+}
+
 // --- Cursor Theme ---
 type CursorTheme = any
 
@@ -170,6 +213,23 @@ export const electronAPI = {
     }
   },
   openExternal: (url: string): void => ipcRenderer.send('shell:openExternal', url),
+  getAuthSession: (): Promise<AuthSession> => ipcRenderer.invoke('auth:get-session'),
+  startAuthLogin: (): Promise<{ success: boolean }> => ipcRenderer.invoke('auth:start-login'),
+  logoutAuth: (): Promise<AuthSession> => ipcRenderer.invoke('auth:logout'),
+  onAuthDeepLink: (callback: (payload: AuthDeepLinkPayload) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: AuthDeepLinkPayload) => callback(payload)
+    ipcRenderer.on('auth:deeplink', listener)
+    return () => {
+      ipcRenderer.removeListener('auth:deeplink', listener)
+    }
+  },
+  onAuthSessionUpdated: (callback: (payload: AuthSession) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: AuthSession) => callback(payload)
+    ipcRenderer.on('auth:session-updated', listener)
+    return () => {
+      ipcRenderer.removeListener('auth:session-updated', listener)
+    }
+  },
 
   // --- Render Worker ---
   onRenderStart: (callback: (payload: RenderStartPayload) => void) => {

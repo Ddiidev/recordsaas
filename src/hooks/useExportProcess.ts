@@ -13,6 +13,37 @@ export const useExportProcess = () => {
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<{ success: boolean; outputPath?: string; error?: string; duration?: number } | null>(null)
 
+  const withRefundSupportHint = (message: string) =>
+    `${message} If credits were charged and this export failed, request refund review at contato@recordsaas.com.`
+
+  const extractErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) return error.message
+    if (typeof error === 'string') return error
+    return 'Unknown export error'
+  }
+
+  const parseInsufficientCreditsError = (message: string): {
+    buyUrl: string
+    requiredCredits: string
+    availableCredits: string
+  } | null => {
+    const marker = 'INSUFFICIENT_CREDITS|'
+    const markerIndex = message.indexOf(marker)
+    if (markerIndex < 0) return null
+
+    const serializedPayload = message.slice(markerIndex).split('\n')[0]
+    const parts = serializedPayload.split('|')
+    const buyUrl = parts[1] || 'https://recordsaas.app/account/'
+    const required = Number(parts[2])
+    const available = Number(parts[3])
+
+    return {
+      buyUrl,
+      requiredCredits: Number.isFinite(required) && required >= 0 ? required.toFixed(required % 1 === 0 ? 0 : 1) : 'unknown',
+      availableCredits: Number.isFinite(available) && available >= 0 ? available.toFixed(available % 1 === 0 ? 0 : 1) : 'unknown',
+    }
+  }
+
   // Effect to set up and tear down IPC listeners for export progress and completion
   useEffect(() => {
     const cleanProgressListener = window.electronAPI.onExportProgress(({ progress }) => {
@@ -28,7 +59,9 @@ export const useExportProcess = () => {
     const cleanCompleteListener = window.electronAPI.onExportComplete(({ success, outputPath, error, duration }) => {
       setIsExporting(false)
       setProgress(100)
-      setResult({ success, outputPath, error, duration })
+      const hasMeaningfulError = !success && typeof error === 'string' && error.length > 0 && error !== 'Export cancelled.'
+      const normalizedError = hasMeaningfulError ? withRefundSupportHint(error) : error
+      setResult({ success, outputPath, error: normalizedError, duration })
     })
 
     return () => {
@@ -78,7 +111,36 @@ export const useExportProcess = () => {
       })
     } catch (e) {
       console.error('Export invocation failed', e)
-      setResult({ success: false, error: `An error occurred while starting the export: ${e}` })
+      const message = extractErrorMessage(e)
+      const insufficient = parseInsufficientCreditsError(message)
+
+      if (insufficient) {
+        const shouldOpenAccount = window.confirm(
+          `Insufficient credits. Required: ${insufficient.requiredCredits}, available: ${insufficient.availableCredits}. Open account page now?`,
+        )
+
+        if (shouldOpenAccount) {
+          window.electronAPI.openExternal(insufficient.buyUrl)
+        }
+
+        setResult({
+          success: false,
+          error: `Insufficient credits. Required: ${insufficient.requiredCredits}, available: ${insufficient.availableCredits}.`,
+        })
+        setIsExporting(false)
+        return
+      }
+
+      if (message.includes('AUTH_REQUIRED') || message.includes('Authorization header') || message.includes('Token expired')) {
+        setResult({
+          success: false,
+          error: 'Your session expired or is invalid. Please log in again and retry export.',
+        })
+        setIsExporting(false)
+        return
+      }
+
+      setResult({ success: false, error: withRefundSupportHint(`An error occurred while starting the export: ${message}`) })
       setIsExporting(false)
     }
   }, [])

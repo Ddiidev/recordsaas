@@ -1,27 +1,36 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Settings, InfoCircle, Keyboard } from 'tabler-icons-react'
+import { Settings, InfoCircle, Keyboard, UserCircle } from 'tabler-icons-react'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
+import { AccountTab } from './AccountTab'
 
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
   isTransparent?: boolean
+  defaultTab?: SettingsTab
 }
 
-type SettingsTab = 'general' | 'shortcuts' | 'about'
+export type SettingsTab = 'general' | 'shortcuts' | 'account' | 'about'
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: 'general', label: 'General', icon: <Settings className="w-5 h-5" /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard className="w-5 h-5" /> },
+  { id: 'account', label: 'Account', icon: <UserCircle className="w-5 h-5" /> },
   { id: 'about', label: 'About', icon: <InfoCircle className="w-5 h-5" /> },
 ]
 
-export function SettingsModal({ isOpen, onClose, isTransparent = false }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultTab = 'general' }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab)
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(defaultTab)
+    }
+  }, [defaultTab, isOpen])
 
   if (!isOpen) return null
 
@@ -31,6 +40,8 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false }: Settin
         return <GeneralTab />
       case 'shortcuts':
         return <ShortcutsTab />
+      case 'account':
+        return <AccountTab />
       case 'about':
         return <AboutTab />
       default:
