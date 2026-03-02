@@ -85,6 +85,7 @@ export const electronAPI = {
     webcam?: { deviceId: string; deviceLabel: string; index: number }
     mic?: { deviceId: string; deviceLabel: string; index: number }
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
+  selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
   loadVideoFromFile: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:load-from-file'),
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),

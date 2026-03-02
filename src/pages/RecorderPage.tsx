@@ -213,9 +213,12 @@ export function RecorderPage() {
       window.electronAPI.setRecorderIgnoreMouse(false)
       return
     }
+    const isInteractiveElement = (target: HTMLElement | null) =>
+      !!target?.closest('[data-interactive="true"], [data-radix-popper-content-wrapper], [role="listbox"]')
+
     const onMouseMove = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
-      const interactive = target?.closest('[data-interactive="true"]')
+      const interactive = isInteractiveElement(target)
       window.electronAPI.setRecorderIgnoreMouse(!interactive)
     }
     const onMouseLeave = () => {
@@ -284,7 +287,12 @@ export function RecorderPage() {
       }, 1000)
     })
 
-  const startRecordingAfterPreparation = async () => {
+  const startRecordingAfterPreparation = async (areaGeometry?: {
+    x: number
+    y: number
+    width: number
+    height: number
+  }) => {
     if (webcamStreamRef.current) {
       webcamStreamRef.current.getTracks().forEach((track) => track.stop())
       webcamStreamRef.current = null
@@ -298,6 +306,7 @@ export function RecorderPage() {
 
       const result = await window.electronAPI.startRecording({
         source,
+        geometry: source === 'area' ? areaGeometry : undefined,
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
         webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
         mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
@@ -323,9 +332,28 @@ export function RecorderPage() {
     setRecordingState('preparing')
 
     try {
+      let selectedAreaGeometry:
+        | {
+            x: number
+            y: number
+            width: number
+            height: number
+          }
+        | undefined
+      if (source === 'area') {
+        selectedAreaGeometry = await window.electronAPI.selectRecordingArea()
+        if (!selectedAreaGeometry) {
+          setActionInProgress('none')
+          setRecordingState('idle')
+          setIsRecording(false)
+          clearPreparationCountdown()
+          return
+        }
+      }
+
       const countdownSeconds = await resolvePreparationCountdownSeconds()
       await runPreparationCountdown(countdownSeconds)
-      await startRecordingAfterPreparation()
+      await startRecordingAfterPreparation(selectedAreaGeometry)
     } catch (error) {
       console.error('Failed to run preparation countdown:', error)
       setActionInProgress('none')

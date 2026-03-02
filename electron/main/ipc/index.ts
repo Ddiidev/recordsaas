@@ -35,6 +35,7 @@ export function registerIpcHandlers() {
 
   // Recording
   ipcMain.handle('recording:start', recordingHandlers.handleStartRecording)
+  ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
   ipcMain.handle('recording:import-project', recordingHandlers.handleImportProject)
