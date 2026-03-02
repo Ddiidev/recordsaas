@@ -76,6 +76,13 @@ export function createEditorWindow(
     },
   })
 
+  appState.editorWin.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
+      event.preventDefault()
+    }
+  })
+
   // Set the application menu for the editor window
   createEditorMenu()
 

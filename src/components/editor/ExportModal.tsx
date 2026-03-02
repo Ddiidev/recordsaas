@@ -10,7 +10,7 @@ import { formatTime } from '../../lib/utils'
 
 export type ExportSettings = {
   format: 'mp4' | 'gif'
-  resolution: '720p' | '1080p' | '2k'
+  resolution: '480p' | '720p' | '1080p' | '2k'
   fps: 30 | 60
   quality: 'low' | 'medium' | 'high' | 'ultra high'
 }
@@ -44,6 +44,35 @@ const formatFullDurationMs = (totalSeconds: number) => {
   return `${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s ${ms.toString().padStart(3, '0')}ms`
 }
 
+const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
+  format: 'mp4',
+  resolution: '720p',
+  fps: 30,
+  quality: 'medium',
+}
+
+const sanitizeExportSettings = (value: Partial<ExportSettings> | null | undefined): ExportSettings => {
+  const settings = value && typeof value === 'object' ? value : {}
+  return {
+    format: settings.format === 'gif' ? 'gif' : 'mp4',
+    resolution:
+      settings.resolution === '480p' ||
+      settings.resolution === '720p' ||
+      settings.resolution === '1080p' ||
+      settings.resolution === '2k'
+        ? settings.resolution
+        : '720p',
+    fps: settings.fps === 60 ? 60 : 30,
+    quality:
+      settings.quality === 'low' ||
+      settings.quality === 'medium' ||
+      settings.quality === 'high' ||
+      settings.quality === 'ultra high'
+        ? settings.quality
+        : 'medium',
+  }
+}
+
 // --- Sub-components for different views ---
 const SettingsView = ({
   onStartExport,
@@ -52,12 +81,7 @@ const SettingsView = ({
   onStartExport: (settings: ExportSettings, outputPath: string) => void
   onClose: () => void
 }) => {
-  const [settings, setSettings] = useState<ExportSettings>({
-    format: 'mp4',
-    resolution: '1080p',
-    fps: 30,
-    quality: 'medium',
-  })
+  const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS)
   const [isGpuEnabled, setIsGpuEnabled] = useState(true)
 
   useEffect(() => {
@@ -69,7 +93,7 @@ const SettingsView = ({
           window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
         ])
         if (isMounted) {
-          if (savedSettings) setSettings(prev => ({ ...prev, ...savedSettings }))
+          setSettings(sanitizeExportSettings(savedSettings))
           setIsGpuEnabled(gpuEnabled ?? false)
         }
       } catch (error) {
@@ -202,6 +226,7 @@ const SettingsView = ({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="480p">SD (480p)</SelectItem>
                 <SelectItem value="720p">HD (720p)</SelectItem>
                 <SelectItem value="1080p">Full HD (1080p)</SelectItem>
                 <SelectItem value="2k">2K (1440p)</SelectItem>

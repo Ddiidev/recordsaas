@@ -33,6 +33,13 @@ export function createRecorderWindow() {
     },
   })
 
+  appState.recorderWin.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
+      event.preventDefault()
+    }
+  })
+
   if (VITE_DEV_SERVER_URL) {
     appState.recorderWin.loadURL(VITE_DEV_SERVER_URL)
   } else {

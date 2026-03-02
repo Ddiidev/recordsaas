@@ -25,6 +25,13 @@ function createTemporaryWindow(options: Electron.BrowserWindowConstructorOptions
     },
   })
 
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
+      event.preventDefault()
+    }
+  })
+
   const url = VITE_DEV_SERVER_URL
     ? path.join(process.env.APP_ROOT!, `public/${htmlPath}`)
     : path.join(RENDERER_DIST, htmlPath)

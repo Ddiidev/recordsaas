@@ -385,7 +385,26 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
   }
 
-  const { resolution, fps, format } = exportSettings
+  const safeExportSettings = exportSettings && typeof exportSettings === 'object' ? exportSettings : {}
+  const normalizedExportSettings = {
+    format: safeExportSettings.format === 'gif' ? 'gif' : 'mp4',
+    resolution:
+      safeExportSettings.resolution === '480p' ||
+      safeExportSettings.resolution === '720p' ||
+      safeExportSettings.resolution === '1080p' ||
+      safeExportSettings.resolution === '2k'
+        ? safeExportSettings.resolution
+        : '720p',
+    fps: safeExportSettings.fps === 60 ? 60 : 30,
+    quality:
+      safeExportSettings.quality === 'low' ||
+      safeExportSettings.quality === 'medium' ||
+      safeExportSettings.quality === 'high' ||
+      safeExportSettings.quality === 'ultra high'
+        ? safeExportSettings.quality
+        : 'medium',
+  }
+  const { format, resolution, fps } = normalizedExportSettings
   const { width: outputWidth, height: outputHeight } = calculateExportDimensions(resolution, projectState.aspectRatio)
 
 
@@ -684,7 +703,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       editorWindow.hide()
     }
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings })
+      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings: normalizedExportSettings })
     }
   })
 }
