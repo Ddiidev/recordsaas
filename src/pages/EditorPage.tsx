@@ -73,17 +73,18 @@ export function EditorPage() {
     try {
       setIsExportingProject(true)
       const storeState = useEditorStore.getState()
-      const { videoPath, metadataPath, audioPath, webcamVideoPath, originalProjectPath } = storeState
+      const { videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip, originalProjectPath } = storeState
       
       const mediaFiles = [
         videoPath?.replace('media://', ''),
         metadataPath?.replace('media://', ''),
         audioPath?.replace('media://', ''),
-        webcamVideoPath?.replace('media://', '')
+        webcamVideoPath?.replace('media://', ''),
+        mediaAudioClip?.path?.replace('media://', ''),
       ].filter(Boolean) as string[]
       
       let targetFolder = originalProjectPath;
-      let filesToExport = mediaFiles;
+      const filesToExport = mediaFiles;
       
       if (!targetFolder) {
         const defaultDocsPath = await window.electronAPI.getPath('documents')
@@ -98,9 +99,6 @@ export function EditorPage() {
         }
         
         targetFolder = result.filePaths[0]
-      } else {
-        // If it's a save in-place, don't copy media files again
-        filesToExport = []
       }
       
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,6 +113,14 @@ export function EditorPage() {
       if (stateToSave.metadataPath) stateToSave.metadataPath = getBasename(stateToSave.metadataPath.replace('media://', ''))
       if (stateToSave.audioPath) stateToSave.audioPath = getBasename(stateToSave.audioPath.replace('media://', ''))
       if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getBasename(stateToSave.webcamVideoPath.replace('media://', ''))
+      if (stateToSave.mediaAudioClip?.path) {
+        const serializedMediaPath = getBasename(stateToSave.mediaAudioClip.path.replace('media://', ''))
+        stateToSave.mediaAudioClip = {
+          ...stateToSave.mediaAudioClip,
+          path: serializedMediaPath,
+          url: `media://${serializedMediaPath}`,
+        }
+      }
       
       const projectData = JSON.stringify(stateToSave, null, 2)
       
@@ -128,9 +134,10 @@ export function EditorPage() {
       } else {
         alert(`Failed to export project: ${saveResult.error}`)
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(error)
-      alert(`Error: ${error.message}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      alert(`Error: ${errorMessage}`)
     } finally {
       setIsExportingProject(false)
     }

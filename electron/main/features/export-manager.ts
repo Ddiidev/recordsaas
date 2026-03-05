@@ -30,6 +30,51 @@ type LaneLike = { id: string; order: number }
 type CutLike = { startTime: number; duration: number; laneId?: string; zIndex?: number }
 type SpeedLike = { startTime: number; duration: number; speed: number; laneId?: string; zIndex?: number }
 type ExportQuality = 'low' | 'medium' | 'high' | 'ultra high'
+type TimelineAudioSegment = { start: number; duration: number; speed: number }
+type ExportAudioSegment = {
+  kind: 'audio' | 'silence'
+  sourceStart: number
+  sourceDuration: number
+  speed: number
+  outputDuration: number
+  volumeMultiplier?: number
+  fadeInDuration?: number
+  fadeOutDuration?: number
+  regionDuration?: number
+  regionLocalStart?: number
+}
+type MediaAudioClipLike = {
+  path?: string | null
+  startTime?: number
+  duration?: number
+}
+type MediaAudioRegionLike = {
+  id: string
+  laneId?: string
+  startTime: number
+  duration: number
+  sourceStart: number
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex?: number
+}
+type ChangeSoundRegionLike = {
+  id: string
+  laneId?: string
+  startTime: number
+  duration: number
+  sourceKey: 'recording-mic'
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex?: number
+}
+
+const MIN_AUDIO_SEGMENT_DURATION = 0.01
+const AUDIO_SEGMENT_SAMPLE_RATE = 48000
 
 const sortLanesForPrecedence = (lanes: LaneLike[] | undefined): LaneLike[] => {
   const source = Array.isArray(lanes) && lanes.length > 0 ? lanes : [{ id: 'lane-1', order: 0 }]
@@ -74,7 +119,8 @@ const buildAudioTimelineSegments = (
   cutRegions: CutLike[],
   speedRegions: SpeedLike[],
   lanes: LaneLike[] | undefined,
-): Array<{ start: number; duration: number; speed: number }> => {
+  extraBoundaries: number[] = [],
+): TimelineAudioSegment[] => {
   if (duration <= 0) return []
 
   const sortedLanes = sortLanesForPrecedence(lanes)
@@ -89,12 +135,15 @@ const buildAudioTimelineSegments = (
     boundaries.add(clamp(region.startTime, 0, duration))
     boundaries.add(clamp(region.startTime + region.duration, 0, duration))
   })
+  extraBoundaries.forEach((boundary) => {
+    boundaries.add(clamp(boundary, 0, duration))
+  })
 
   const sortedBoundaries = Array.from(boundaries)
     .sort((a, b) => a - b)
     .filter((time, index, arr) => index === 0 || time !== arr[index - 1])
 
-  const segments: Array<{ start: number; duration: number; speed: number }> = []
+  const segments: TimelineAudioSegment[] = []
 
   for (let i = 0; i < sortedBoundaries.length - 1; i++) {
     const start = sortedBoundaries[i]
@@ -112,6 +161,467 @@ const buildAudioTimelineSegments = (
   }
 
   return segments
+}
+
+const normalizeMediaPath = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  const normalized = value.replace(/^media:\/\//, '').trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+const pushExportSegment = (
+  output: ExportAudioSegment[],
+  segment: Omit<ExportAudioSegment, 'outputDuration'>,
+) => {
+  if (!Number.isFinite(segment.sourceDuration) || segment.sourceDuration <= MIN_AUDIO_SEGMENT_DURATION) {
+    return
+  }
+  const speed = segment.speed > 0 ? segment.speed : 1
+  const outputDuration = segment.sourceDuration / speed
+  if (!Number.isFinite(outputDuration) || outputDuration <= MIN_AUDIO_SEGMENT_DURATION) {
+    return
+  }
+
+  output.push({
+    ...segment,
+    speed,
+    outputDuration,
+  })
+}
+
+const parseMediaAudioRegionsFromState = (
+  projectState: Record<string, unknown>,
+  mediaClip: MediaAudioClipLike | null,
+): MediaAudioRegionLike[] => {
+  const rawRegions = projectState.mediaAudioRegions
+  const clipDuration =
+    mediaClip && typeof mediaClip.duration === 'number' && Number.isFinite(mediaClip.duration)
+      ? Math.max(0, mediaClip.duration)
+      : 0
+
+  if (rawRegions && typeof rawRegions === 'object') {
+    const normalized = Object.entries(rawRegions as Record<string, unknown>).reduce((acc, [id, rawRegion]) => {
+      if (!rawRegion || typeof rawRegion !== 'object') return acc
+      const parsed = rawRegion as Partial<MediaAudioRegionLike>
+
+      const startTime =
+        typeof parsed.startTime === 'number' && Number.isFinite(parsed.startTime) ? Math.max(0, parsed.startTime) : 0
+      const sourceStart =
+        typeof parsed.sourceStart === 'number' && Number.isFinite(parsed.sourceStart)
+          ? Math.max(0, parsed.sourceStart)
+          : 0
+      const availableDuration = clipDuration > 0 ? Math.max(0.1, clipDuration - sourceStart) : Number.POSITIVE_INFINITY
+      const duration =
+        typeof parsed.duration === 'number' && Number.isFinite(parsed.duration)
+          ? Math.max(0.1, Math.min(parsed.duration, availableDuration))
+          : clipDuration > 0
+            ? availableDuration
+            : 0
+
+      if (!Number.isFinite(duration) || duration <= 0) return acc
+
+      const fadeInDuration =
+        typeof parsed.fadeInDuration === 'number' && Number.isFinite(parsed.fadeInDuration)
+          ? Math.max(0, Math.min(parsed.fadeInDuration, duration))
+          : 0
+      const fadeOutDuration =
+        typeof parsed.fadeOutDuration === 'number' && Number.isFinite(parsed.fadeOutDuration)
+          ? Math.max(0, Math.min(parsed.fadeOutDuration, duration))
+          : 0
+      const volume =
+        typeof parsed.volume === 'number' && Number.isFinite(parsed.volume) ? Math.max(0, Math.min(parsed.volume, 1)) : 1
+
+      acc.push({
+        id: id || parsed.id || `media-audio-${Date.now()}`,
+        laneId: parsed.laneId,
+        startTime,
+        duration,
+        sourceStart,
+        isMuted: parsed.isMuted === true,
+        volume,
+        fadeInDuration,
+        fadeOutDuration,
+        zIndex:
+          typeof parsed.zIndex === 'number' && Number.isFinite(parsed.zIndex)
+            ? parsed.zIndex
+            : 0,
+      })
+      return acc
+    }, [] as MediaAudioRegionLike[])
+
+    if (normalized.length > 0) {
+      return normalized
+    }
+  }
+
+  if (!mediaClip) return []
+
+  const legacyStart =
+    typeof mediaClip.startTime === 'number' && Number.isFinite(mediaClip.startTime) ? Math.max(0, mediaClip.startTime) : 0
+  const legacyDuration = clipDuration > 0 ? clipDuration : 0
+  if (legacyDuration <= 0) return []
+
+  return [
+    {
+      id: `media-audio-${Date.now()}`,
+      laneId: 'lane-1',
+      startTime: legacyStart,
+      duration: legacyDuration,
+      sourceStart: 0,
+      isMuted: false,
+      volume: 1,
+      fadeInDuration: 0,
+      fadeOutDuration: 0,
+      zIndex: 0,
+    },
+  ]
+}
+
+const parseChangeSoundRegionsFromState = (projectState: Record<string, unknown>): ChangeSoundRegionLike[] => {
+  const rawRegions = projectState.changeSoundRegions
+  if (!rawRegions || typeof rawRegions !== 'object') return []
+
+  return Object.entries(rawRegions as Record<string, unknown>).reduce((acc, [id, rawRegion]) => {
+    if (!rawRegion || typeof rawRegion !== 'object') return acc
+    const parsed = rawRegion as Partial<ChangeSoundRegionLike>
+
+    const startTime =
+      typeof parsed.startTime === 'number' && Number.isFinite(parsed.startTime) ? Math.max(0, parsed.startTime) : 0
+    const duration =
+      typeof parsed.duration === 'number' && Number.isFinite(parsed.duration) ? Math.max(0.1, parsed.duration) : 1
+    const volume =
+      typeof parsed.volume === 'number' && Number.isFinite(parsed.volume) ? Math.max(0, Math.min(parsed.volume, 1)) : 1
+    const fadeInDuration =
+      typeof parsed.fadeInDuration === 'number' && Number.isFinite(parsed.fadeInDuration)
+        ? Math.max(0, Math.min(parsed.fadeInDuration, duration))
+        : 0
+    const fadeOutDuration =
+      typeof parsed.fadeOutDuration === 'number' && Number.isFinite(parsed.fadeOutDuration)
+        ? Math.max(0, Math.min(parsed.fadeOutDuration, duration))
+        : 0
+
+    acc.push({
+      id: id || parsed.id || `change-sound-${Date.now()}`,
+      laneId: parsed.laneId,
+      startTime,
+      duration,
+      sourceKey: 'recording-mic',
+      isMuted: parsed.isMuted === true,
+      volume,
+      fadeInDuration,
+      fadeOutDuration,
+      zIndex: typeof parsed.zIndex === 'number' && Number.isFinite(parsed.zIndex) ? parsed.zIndex : 0,
+    })
+    return acc
+  }, [] as ChangeSoundRegionLike[])
+}
+
+const collectMediaAudioBoundaries = (regions: MediaAudioRegionLike[], duration: number): number[] => {
+  if (duration <= 0) return []
+
+  const boundaries: number[] = []
+  regions.forEach((region) => {
+    const start = clamp(region.startTime, 0, duration)
+    const end = clamp(region.startTime + region.duration, 0, duration)
+    boundaries.push(start, end)
+
+    if (region.fadeInDuration > 0) {
+      boundaries.push(clamp(region.startTime + region.fadeInDuration, 0, duration))
+    }
+    if (region.fadeOutDuration > 0) {
+      boundaries.push(clamp(region.startTime + region.duration - region.fadeOutDuration, 0, duration))
+    }
+  })
+
+  return boundaries
+}
+
+const collectChangeSoundBoundaries = (regions: ChangeSoundRegionLike[], duration: number): number[] => {
+  if (duration <= 0) return []
+
+  const boundaries: number[] = []
+  regions.forEach((region) => {
+    const start = clamp(region.startTime, 0, duration)
+    const end = clamp(region.startTime + region.duration, 0, duration)
+    boundaries.push(start, end)
+
+    if (region.fadeInDuration > 0) {
+      boundaries.push(clamp(region.startTime + region.fadeInDuration, 0, duration))
+    }
+    if (region.fadeOutDuration > 0) {
+      boundaries.push(clamp(region.startTime + region.duration - region.fadeOutDuration, 0, duration))
+    }
+  })
+
+  return boundaries
+}
+
+const buildRecordingExportAudioSegments = (
+  timelineSegments: TimelineAudioSegment[],
+  regions: ChangeSoundRegionLike[],
+  lanes: LaneLike[],
+): ExportAudioSegment[] => {
+  const outputSegments: ExportAudioSegment[] = []
+  const sortedLanes = sortLanesForPrecedence(lanes)
+  const laneIndexMap = new Map(sortedLanes.map((lane, index) => [lane.id, index]))
+
+  timelineSegments.forEach((segment) => {
+    const midpoint = segment.start + segment.duration / 2
+    const activeRegion = chooseTopActiveRegion(regions, midpoint, laneIndexMap, sortedLanes.length)
+
+    if (!activeRegion) {
+      pushExportSegment(outputSegments, {
+        kind: 'audio',
+        sourceStart: segment.start,
+        sourceDuration: segment.duration,
+        speed: segment.speed,
+        volumeMultiplier: 1,
+      })
+      return
+    }
+
+    const regionLocalStart = Math.max(0, segment.start - activeRegion.startTime)
+    const safeDuration = Math.max(0.001, activeRegion.duration)
+    const timeFromStart = Math.min(regionLocalStart, safeDuration)
+    const timeToEnd = Math.max(0, safeDuration - timeFromStart)
+    const fadeInGain =
+      activeRegion.fadeInDuration > 0 ? Math.max(0, Math.min(1, timeFromStart / activeRegion.fadeInDuration)) : 1
+    const fadeOutGain =
+      activeRegion.fadeOutDuration > 0 ? Math.max(0, Math.min(1, timeToEnd / activeRegion.fadeOutDuration)) : 1
+    const baseGain = activeRegion.isMuted ? 0 : Math.max(0, Math.min(1, activeRegion.volume))
+
+    pushExportSegment(outputSegments, {
+      kind: 'audio',
+      sourceStart: segment.start,
+      sourceDuration: segment.duration,
+      speed: segment.speed,
+      volumeMultiplier: Math.max(0, Math.min(1, baseGain * Math.min(fadeInGain, fadeOutGain))),
+    })
+  })
+
+  return outputSegments
+}
+
+const buildMediaExportAudioSegments = (
+  timelineSegments: TimelineAudioSegment[],
+  regions: MediaAudioRegionLike[],
+  lanes: LaneLike[],
+): ExportAudioSegment[] => {
+  const outputSegments: ExportAudioSegment[] = []
+  const sortedLanes = sortLanesForPrecedence(lanes)
+  const laneIndexMap = new Map(sortedLanes.map((lane, index) => [lane.id, index]))
+
+  timelineSegments.forEach((segment) => {
+    const midpoint = segment.start + segment.duration / 2
+    const activeRegion = chooseTopActiveRegion(regions, midpoint, laneIndexMap, sortedLanes.length)
+
+    if (!activeRegion) {
+      pushExportSegment(outputSegments, {
+        kind: 'silence',
+        sourceStart: 0,
+        sourceDuration: segment.duration,
+        speed: segment.speed,
+      })
+      return
+    }
+
+    const regionLocalStart = Math.max(0, segment.start - activeRegion.startTime)
+    const baseGain = activeRegion.isMuted ? 0 : Math.max(0, Math.min(1, activeRegion.volume))
+    pushExportSegment(outputSegments, {
+      kind: 'audio',
+      sourceStart: Math.max(0, activeRegion.sourceStart + regionLocalStart),
+      sourceDuration: segment.duration,
+      speed: segment.speed,
+      volumeMultiplier: baseGain,
+      fadeInDuration: activeRegion.fadeInDuration,
+      fadeOutDuration: activeRegion.fadeOutDuration,
+      regionDuration: activeRegion.duration,
+      regionLocalStart,
+    })
+  })
+
+  return outputSegments
+}
+
+const buildAtempoFilter = (factor: number): string | null => {
+  if (Math.abs(factor - 1) < 0.01) return null
+
+  const filters: number[] = []
+  let remaining = factor
+
+  while (remaining > 2.0) {
+    filters.push(2.0)
+    remaining /= 2.0
+  }
+  while (remaining < 0.5) {
+    filters.push(0.5)
+    remaining /= 0.5
+  }
+
+  filters.push(remaining)
+  return filters.map((value) => `atempo=${value}`).join(',')
+}
+
+const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
+  if (segment.kind !== 'audio') return null
+
+  const baseVolume =
+    typeof segment.volumeMultiplier === 'number' && Number.isFinite(segment.volumeMultiplier)
+      ? Math.max(0, Math.min(1, segment.volumeMultiplier))
+      : 1
+  const fadeInDuration = segment.fadeInDuration ?? 0
+  const fadeOutDuration = segment.fadeOutDuration ?? 0
+  const regionDuration = segment.regionDuration ?? 0
+  const regionLocalStart = segment.regionLocalStart ?? 0
+  if (fadeInDuration <= 0 && fadeOutDuration <= 0) {
+    return baseVolume < 0.999 ? `volume='${baseVolume.toFixed(6)}'` : null
+  }
+
+  const speed = segment.speed > 0 ? segment.speed : 1
+  const localTimeExpr = `${regionLocalStart.toFixed(6)}+t*${speed.toFixed(6)}`
+  const fadeInExpr =
+    fadeInDuration > 0
+      ? `min(1,max(0,(${localTimeExpr})/${fadeInDuration.toFixed(6)}))`
+      : '1'
+  const fadeOutExpr =
+    fadeOutDuration > 0
+      ? `min(1,max(0,(${regionDuration.toFixed(6)}-(${localTimeExpr}))/(${fadeOutDuration.toFixed(6)})))`
+      : '1'
+
+  return `volume='${baseVolume.toFixed(6)}*min(${fadeInExpr},${fadeOutExpr})'`
+}
+
+const renderProcessedAudioFile = (sourcePath: string, segments: ExportAudioSegment[]): string | null => {
+  if (segments.length === 0) return null
+
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
+  const segmentFiles: string[] = []
+
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]
+    const outPath = path.join(tmpDir, `seg-${index}.m4a`)
+
+    let args: string[]
+    if (segment.kind === 'silence') {
+      args = [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_SEGMENT_SAMPLE_RATE}`,
+        '-t',
+        segment.outputDuration.toFixed(4),
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        outPath,
+      ]
+    } else {
+      args = [
+        '-y',
+        '-ss',
+        segment.sourceStart.toFixed(4),
+        '-t',
+        segment.sourceDuration.toFixed(4),
+        '-i',
+        sourcePath,
+        '-vn',
+      ]
+
+      const filters: string[] = []
+      const atempo = buildAtempoFilter(segment.speed)
+      if (atempo) {
+        filters.push(atempo)
+      }
+      const fadeVolume = buildFadeVolumeFilter(segment)
+      if (fadeVolume) {
+        filters.push(fadeVolume)
+      }
+      if (filters.length > 0) {
+        args.push('-af', filters.join(','))
+      }
+      args.push('-c:a', 'aac', '-b:a', '192k', outPath)
+    }
+
+    log.info(
+      `[ExportManager] Rendering audio segment ${index}: kind=${segment.kind}, sourceStart=${segment.sourceStart.toFixed(3)}, sourceDuration=${segment.sourceDuration.toFixed(3)}, speed=${segment.speed.toFixed(3)}`,
+    )
+
+    const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
+    if (result.status !== 0) {
+      log.error('[ExportManager] Failed to render audio segment:', result.stdout, result.stderr)
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors
+      }
+      return null
+    }
+
+    segmentFiles.push(outPath)
+  }
+
+  const listFile = path.join(tmpDir, 'concat.txt')
+  const listContent = segmentFiles
+    .map((filePath) => {
+      const normalizedPath = filePath.replace(/\\/g, '/')
+      return `file '${normalizedPath.replace(/'/g, "'\\''")}'`
+    })
+    .join('\n')
+
+  fs.writeFileSync(listFile, listContent)
+
+  const finalOut = path.join(tmpDir, 'processed.m4a')
+  const concatResult = spawnSync(
+    FFMPEG_PATH,
+    ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalOut],
+    { encoding: 'utf-8' },
+  )
+
+  if (concatResult.status !== 0) {
+    log.error('[ExportManager] Failed to concatenate processed audio:', concatResult.stdout, concatResult.stderr)
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      // ignore cleanup errors
+    }
+    return null
+  }
+
+  return finalOut
+}
+
+const mixAudioTracks = (recordingTrackPath: string, mediaTrackPath: string): string | null => {
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
+  const outPath = path.join(tmpDir, 'mixed.m4a')
+  const args = [
+    '-y',
+    '-i',
+    recordingTrackPath,
+    '-i',
+    mediaTrackPath,
+    '-filter_complex',
+    'amix=inputs=2:dropout_transition=0',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '192k',
+    outPath,
+  ]
+
+  const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
+  if (result.status !== 0) {
+    log.error('[ExportManager] Failed to mix recording/media tracks:', result.stdout, result.stderr)
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      // ignore cleanup errors
+    }
+    return null
+  }
+
+  return outPath
 }
 
 const getTargetPriorityCandidates = () =>
@@ -451,124 +961,85 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     )
   }
 
-  // If there's an audio track, preprocess it to apply cuts and speed regions
-  // so the final audio matches the exported video timeline.
-  // This generates a temporary processed audio file (if needed) and uses it
-  // as the audio input for FFmpeg.
-  let processedAudioPath: string | null = null
-  if (projectState.audioPath) {
-    try {
-      processedAudioPath = await (async function prepareProcessedAudio(): Promise<string | null> {
-        const audioPath = projectState.audioPath
-        if (!audioPath) return null
+  // Prepare final audio for export:
+  // - recording track (modulated by change-sound regions)
+  // - media track (independent media regions)
+  // - optional mix of both tracks
+  let resolvedAudioInputPath: string | null = null
+  const processedAudioTempRoots = new Set<string>()
 
-        // Build timeline boundaries from cuts and speed regions, respecting lane precedence.
-        const duration = projectState.duration
-        const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
-        const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
-        const timelineLanes = projectState.timelineLanes as LaneLike[] | undefined
-        const segments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes)
+  const projectStateRecord = projectState as Record<string, unknown>
+  try {
+    const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
+    const mediaClip = (projectStateRecord.mediaAudioClip || null) as MediaAudioClipLike | null
+    const mediaPath = normalizeMediaPath(mediaClip?.path)
+    const timelineLanes = Array.isArray(projectStateRecord.timelineLanes)
+      ? (projectStateRecord.timelineLanes as LaneLike[])
+      : [{ id: 'lane-1', order: 0 }]
+    const mediaRegions = parseMediaAudioRegionsFromState(projectStateRecord, mediaClip)
+    const changeSoundRegions = parseChangeSoundRegionsFromState(projectStateRecord)
+    const duration =
+      typeof projectState.duration === 'number' && Number.isFinite(projectState.duration)
+        ? Math.max(0, projectState.duration)
+        : 0
+    const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
+    const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
+    const extraBoundaries = [
+      ...collectMediaAudioBoundaries(mediaRegions, duration),
+      ...collectChangeSoundBoundaries(changeSoundRegions, duration),
+    ]
+    const timelineSegments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes, extraBoundaries)
+    const noTimelineTransform =
+      timelineSegments.length === 1 &&
+      Math.abs(timelineSegments[0].start) < 0.001 &&
+      Math.abs(timelineSegments[0].duration - duration) < 0.001 &&
+      Math.abs(timelineSegments[0].speed - 1) < 0.01
 
-        if (segments.length === 0) return null
+    let recordingTrackPath: string | null = null
+    let mediaTrackPath: string | null = null
 
-        // Safe Approach: Create separate segment files and concat them.
-        // This avoids complex filter string limits and escaping issues.
-        const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
-        const segmentFiles: string[] = []
-
-        // Helper to build atempo filter chain
-        const buildAtempoFilter = (factor: number) => {
-           if (Math.abs(factor - 1) < 0.01) return null
-           const filters: number[] = []
-           let remaining = factor
-           while (remaining > 2.0) { filters.push(2.0); remaining /= 2.0 }
-           while (remaining < 0.5) { filters.push(0.5); remaining /= 0.5 }
-           filters.push(remaining)
-           return filters.map((f) => `atempo=${f}`).join(',')
+    if (recordingPath) {
+      const recordingSegments = buildRecordingExportAudioSegments(timelineSegments, changeSoundRegions, timelineLanes)
+      if (recordingSegments.length > 0) {
+        const processedRecordingPath = renderProcessedAudioFile(recordingPath, recordingSegments)
+        if (processedRecordingPath) {
+          recordingTrackPath = processedRecordingPath
+          processedAudioTempRoots.add(path.dirname(processedRecordingPath))
+        } else if (noTimelineTransform && changeSoundRegions.length === 0) {
+          recordingTrackPath = recordingPath
         }
-
-        let i = 0
-        for (const seg of segments) {
-          const outPath = path.join(tmpDir, `seg-${i}.m4a`)
-          // Note: using -ss and -t with input seeking is fast but less precise for some container formats.
-          // For AAC/M4A, we place -ss BEFORE -i for fast seek, but we must ensure we are accurate.
-          // To be perfectly accurate (frame accurate), we should re-encode.
-          // We use -vn to discard video if any.
-          
-          const args: string[] = [
-             '-y', 
-             '-ss', seg.start.toFixed(4), 
-             '-t', seg.duration.toFixed(4), 
-             '-i', audioPath, 
-             '-vn'
-          ]
-
-          const atempo = buildAtempoFilter(seg.speed)
-          if (atempo) {
-            args.push('-af', atempo, '-c:a', 'aac', '-b:a', '192k')
-          } else {
-             // Always re-encode for precise cuts, otherwise -c copy snaps to keyframes/packets
-            args.push('-c:a', 'aac', '-b:a', '192k')
-          }
-          args.push(outPath)
-
-          log.info(`[ExportManager] Processing audio segment ${i}: start=${seg.start}, dur=${seg.duration}, speed=${seg.speed}`)
-          const res = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-          
-          if (res.status !== 0) {
-            log.error('[ExportManager] Failed to create audio segment:', res.stdout, res.stderr)
-            // Cleanup: best effort
-            try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-            return null
-          }
-          segmentFiles.push(outPath)
-          i++
-        }
-
-        // Create concat list file (critical: forward slashes)
-        const listFile = path.join(tmpDir, 'concat.txt')
-        const listContent = segmentFiles
-          .map((f) => {
-            const normalizedPath = f.replace(/\\/g, '/')
-            return `file '${normalizedPath.replace(/'/g, "'\\''")}'`
-          })
-          .join('\n')
-        
-        fs.writeFileSync(listFile, listContent)
-
-        const finalOut = path.join(tmpDir, 'processed.m4a')
-        log.info('[ExportManager] Concatenating audio segments...')
-        
-        const concatRes = spawnSync(FFMPEG_PATH, [
-            '-y', 
-            '-f', 'concat', 
-            '-safe', '0', 
-            '-i', listFile, 
-            '-c', 'copy', 
-            finalOut
-        ], { encoding: 'utf-8' })
-
-        if (concatRes.status !== 0) {
-          log.error('[ExportManager] Failed to concat audio:', concatRes.stdout, concatRes.stderr)
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
-          return null
-        }
-
-        // Attach temp dir for cleanup NOT as a property of string, but we manage it implicitly. 
-        // We can't attach prop to string primitive.
-        // We will cleanup based on the directory of the file later.
-        return finalOut
-      })()
-    } catch (e) {
-      log.error('[ExportManager] Error preparing processed audio:', e)
-      processedAudioPath = null
+      }
     }
 
-    if (processedAudioPath) {
-      ffmpegArgs.push('-i', processedAudioPath)
+    if (mediaPath && mediaRegions.length > 0) {
+      const mediaSegments = buildMediaExportAudioSegments(timelineSegments, mediaRegions, timelineLanes)
+      if (mediaSegments.length > 0) {
+        const processedMediaPath = renderProcessedAudioFile(mediaPath, mediaSegments)
+        if (processedMediaPath) {
+          mediaTrackPath = processedMediaPath
+          processedAudioTempRoots.add(path.dirname(processedMediaPath))
+        }
+      }
+    }
+
+    if (recordingTrackPath && mediaTrackPath) {
+      const mixedTrackPath = mixAudioTracks(recordingTrackPath, mediaTrackPath)
+      if (mixedTrackPath) {
+        resolvedAudioInputPath = mixedTrackPath
+        processedAudioTempRoots.add(path.dirname(mixedTrackPath))
+      } else {
+        resolvedAudioInputPath = recordingTrackPath
+      }
     } else {
-      ffmpegArgs.push('-i', projectState.audioPath)
+      resolvedAudioInputPath = recordingTrackPath || mediaTrackPath
     }
+  } catch (error) {
+    log.error('[ExportManager] Error while preparing export audio input:', error)
+    resolvedAudioInputPath = null
+  }
+
+  if (resolvedAudioInputPath) {
+    ffmpegArgs.push('-i', resolvedAudioInputPath)
   }
 
   // --- Hardware acceleration auto-detect with real encoder check ---
@@ -581,7 +1052,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     log.info('[ExportManager] Using video stream copy (Renderer pre-encoded)')
 
     // If audio present
-    if (projectState.audioPath) {
+    if (resolvedAudioInputPath) {
       // Use input #1 (audio) which is either processed or original
       ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-shortest')
     }
@@ -600,10 +1071,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   const cleanupProcessedAudio = () => {
     try {
-      if (processedAudioPath) {
-        const tmpDir = path.dirname(processedAudioPath)
+      processedAudioTempRoots.forEach((tmpDir) => {
         if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
-      }
+      })
+      processedAudioTempRoots.clear()
     } catch (err) {
       log.error('[ExportManager] Failed to cleanup processed audio temp:', err)
     }

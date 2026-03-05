@@ -18,6 +18,7 @@ export interface RecordingSession {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  mediaAudioPath?: string
   recordingGeometry: RecordingGeometry
   scaleFactor: number  // Display scale factor (for Windows DPI scaling)
   originalProjectPath?: string

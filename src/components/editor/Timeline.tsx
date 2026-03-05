@@ -6,6 +6,8 @@ import { CutRegionBlock } from './timeline/CutRegionBlock'
 import { SpeedRegionBlock } from './timeline/SpeedRegionBlock'
 import { BlurRegionBlock } from './timeline/BlurRegionBlock'
 import { SwapRegionBlock } from './timeline/SwapRegionBlock'
+import { MediaAudioRegionBlock } from './timeline/MediaAudioRegionBlock'
+import { ChangeSoundRegionBlock } from './timeline/ChangeSoundRegionBlock'
 import { Playhead } from './timeline/Playhead'
 import { cn } from '../../lib/utils'
 import { Scissors, ChevronUp, ChevronDown, Trash, DotsVertical } from 'tabler-icons-react'
@@ -15,6 +17,7 @@ import { FlipScissorsIcon } from '../ui/icons'
 import { sortTimelineLanes } from '../../lib/timeline-lanes'
 import { ContextMenu, ContextMenuItem } from '../ui/context-menu'
 import type { TimelineRegion } from '../../types'
+import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../lib/media-assets'
 
 const LANE_HEIGHT_PX = 64
 const LANE_GAP_PX = 8
@@ -22,6 +25,7 @@ const RULER_HEIGHT_PX = 48
 const TIMELINE_MIN_VISIBLE_LANES = 2
 const TIMELINE_MAX_VISIBLE_LANES = 3
 const LANE_ACTION_STRIP_WIDTH_PX = 28
+const LANE_ACTION_GUTTER_PX = 10
 
 const Ruler = memo(
   ({
@@ -57,7 +61,16 @@ const Ruler = memo(
 Ruler.displayName = 'Ruler'
 
 export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElement> }) {
-  const { currentTime, duration, timelineZoom, previewCutRegion, selectedRegionId, isPlaying, timelineLanes } =
+  const {
+    currentTime,
+    duration,
+    timelineZoom,
+    previewCutRegion,
+    selectedRegionId,
+    isPlaying,
+    timelineLanes,
+    mediaAudioClip,
+  } =
     useEditorStore(
       useShallow((state) => ({
         currentTime: state.currentTime,
@@ -67,14 +80,25 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
         selectedRegionId: state.selectedRegionId,
         isPlaying: state.isPlaying,
         timelineLanes: state.timelineLanes,
+        mediaAudioClip: state.mediaAudioClip,
       })),
     )
 
-  const { setCurrentTime, setSelectedRegionId, addTimelineLane, moveTimelineLane, removeTimelineLane } =
+  const {
+    setCurrentTime,
+    setSelectedRegionId,
+    addTimelineLane,
+    moveTimelineLane,
+    removeTimelineLane,
+    addMediaAudioRegion,
+    addChangeSoundRegion,
+  } =
     useEditorStore()
 
   const sortedLanes = useMemo(() => sortTimelineLanes(timelineLanes), [timelineLanes])
   const fallbackLaneId = sortedLanes[0]?.id ?? 'lane-1'
+  const showLaneActionButtons = sortedLanes.length > 1
+  const timelineStartOffsetPx = showLaneActionButtons ? LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX : 0
 
   const containerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -90,6 +114,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     laneId: string
     position: { x: number; y: number }
   } | null>(null)
+  const [mediaAssetDropLaneId, setMediaAssetDropLaneId] = useState<string | null>(null)
 
   useEffect(() => {
     const containerEl = containerRef.current
@@ -115,6 +140,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
 
   const timeToPx = useCallback((time: number) => time * pixelsPerSecond, [pixelsPerSecond])
   const pxToTime = useCallback((px: number) => px / pixelsPerSecond, [pixelsPerSecond])
+  const timeToTrackPx = useCallback((time: number) => timelineStartOffsetPx + timeToPx(time), [timelineStartOffsetPx, timeToPx])
+  const trackPxToTime = useCallback((px: number) => pxToTime(Math.max(0, px - timelineStartOffsetPx)), [pxToTime, timelineStartOffsetPx])
 
   const updateVideoTime = useCallback(
     (time: number) => {
@@ -170,6 +197,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     duration,
     defaultLaneId: fallbackLaneId,
     resolveLaneIdFromClientY,
+    timelineStartOffsetPx,
   })
 
   const rulerTicks = useMemo(() => {
@@ -191,7 +219,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
   useEffect(() => {
     const animate = () => {
       if (videoRef.current && playheadRef.current) {
-        playheadRef.current.style.transform = `translateX(${timeToPx(videoRef.current.currentTime)}px)`
+        playheadRef.current.style.transform = `translateX(${timeToTrackPx(videoRef.current.currentTime)}px)`
       }
       animationFrameRef.current = requestAnimationFrame(animate)
     }
@@ -201,13 +229,13 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
     }
-  }, [isPlaying, timeToPx, videoRef])
+  }, [isPlaying, timeToTrackPx, videoRef])
 
   useEffect(() => {
     if (!isPlaying && playheadRef.current) {
-      playheadRef.current.style.transform = `translateX(${timeToPx(currentTime)}px)`
+      playheadRef.current.style.transform = `translateX(${timeToTrackPx(currentTime)}px)`
     }
-  }, [currentTime, isPlaying, timeToPx])
+  }, [currentTime, isPlaying, timeToTrackPx])
 
   useEffect(() => {
     if (!laneActionMenu) return
@@ -218,7 +246,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     }
   }, [laneActionMenu, sortedLanes])
 
-  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions } = useAllRegions()
+  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions } =
+    useAllRegions()
 
   const allRegionsToRender = useMemo(() => {
     const combined = [
@@ -227,12 +256,14 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       ...Object.values(speedRegions),
       ...Object.values(blurRegions),
       ...Object.values(swapRegions),
+      ...Object.values(mediaAudioRegions),
+      ...Object.values(changeSoundRegions),
     ]
     if (previewCutRegion) {
       combined.push({ ...previewCutRegion, laneId: previewCutRegion.laneId || fallbackLaneId })
     }
     return combined
-  }, [zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, previewCutRegion, fallbackLaneId])
+  }, [zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions, previewCutRegion, fallbackLaneId])
 
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
@@ -242,7 +273,9 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       cutRegions[dragMovePreview.regionId] ||
       speedRegions[dragMovePreview.regionId] ||
       blurRegions[dragMovePreview.regionId] ||
-      swapRegions[dragMovePreview.regionId]
+      swapRegions[dragMovePreview.regionId] ||
+      mediaAudioRegions[dragMovePreview.regionId] ||
+      changeSoundRegions[dragMovePreview.regionId]
 
     if (!sourceRegion) return null
 
@@ -252,7 +285,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       startTime: dragMovePreview.startTime,
       duration: dragMovePreview.duration,
     } as TimelineRegion
-  }, [dragMovePreview, zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions])
+  }, [dragMovePreview, zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions])
 
   const noopRegionMouseDown = useCallback(
     (
@@ -294,7 +327,6 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     maxTimelineViewportHeight,
     Math.max(minTimelineViewportHeight, timelineContentHeight),
   ) + 14 // Adds buffer for horizontal scrollbar to prevent vertical scrolling for 2 lanes
-  const showLaneActionButtons = sortedLanes.length > 1
   const laneActionMenuLaneIndex = laneActionMenu
     ? sortedLanes.findIndex((lane) => lane.id === laneActionMenu.laneId)
     : -1
@@ -330,6 +362,39 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       closeLaneActionMenu()
     },
     [closeLaneActionMenu, moveTimelineLane, removeTimelineLane],
+  )
+
+  const handleMediaAssetDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, laneId: string) => {
+      const isMediaAudioDrag = event.dataTransfer.types.includes(MEDIA_AUDIO_DRAG_TYPE)
+      const isChangeSoundDrag = event.dataTransfer.types.includes(CHANGE_SOUND_DRAG_TYPE)
+      if (!isMediaAudioDrag && !isChangeSoundDrag) return
+      if (isMediaAudioDrag && !mediaAudioClip) return
+      event.preventDefault()
+      setMediaAssetDropLaneId(laneId)
+    },
+    [mediaAudioClip],
+  )
+
+  const handleMediaAssetDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, laneId: string) => {
+      const laneRect = event.currentTarget.getBoundingClientRect()
+      const dropX = event.clientX - laneRect.left
+      const dropTime = trackPxToTime(Math.max(0, dropX))
+      const clipId = event.dataTransfer.getData(MEDIA_AUDIO_DRAG_TYPE)
+      const isChangeSoundDrag = event.dataTransfer.types.includes(CHANGE_SOUND_DRAG_TYPE)
+
+      if (clipId && mediaAudioClip && clipId === mediaAudioClip.id) {
+        event.preventDefault()
+        addMediaAudioRegion({ startTime: dropTime, laneId })
+      } else if (isChangeSoundDrag) {
+        event.preventDefault()
+        addChangeSoundRegion({ startTime: dropTime, laneId })
+      }
+
+      setMediaAssetDropLaneId(null)
+    },
+    [addChangeSoundRegion, addMediaAudioRegion, mediaAudioClip, trackPxToTime],
   )
 
   return (
@@ -376,16 +441,16 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
             }
             const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
             const clickX = e.clientX - rect.left + (e.currentTarget as HTMLDivElement).scrollLeft
-            updateVideoTime(pxToTime(clickX))
+            updateVideoTime(trackPxToTime(clickX))
             setSelectedRegionId(null)
           }}
         >
           <div
             ref={timelineRef}
             className="relative min-w-full overflow-hidden"
-            style={{ width: `${timeToPx(duration)}px`, height: `${timelineContentHeight}px` }}
+            style={{ width: `${timelineStartOffsetPx + timeToPx(duration)}px`, height: `${timelineContentHeight}px` }}
           >
-            <Ruler ticks={rulerTicks} timeToPx={timeToPx} formatTime={formatTime} />
+            <Ruler ticks={rulerTicks} timeToPx={timeToTrackPx} formatTime={formatTime} />
 
             <div
               ref={lanesContainerRef}
@@ -403,7 +468,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                     ref={(el) => laneRefs.current.set(lane.id, el)}
                     className={cn(
                       'relative overflow-hidden rounded-lg border bg-background/20',
-                      activeDropLaneId === lane.id && draggingRegionId
+                      (activeDropLaneId === lane.id && draggingRegionId) || mediaAssetDropLaneId === lane.id
                         ? 'border-primary/70 bg-primary/10'
                         : 'border-border/40',
                     )}
@@ -411,6 +476,13 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                       height: `${LANE_HEIGHT_PX}px`,
                       marginBottom: laneIndex === sortedLanes.length - 1 ? 0 : `${LANE_GAP_PX}px`,
                     }}
+                    onDragOver={(event) => handleMediaAssetDragOver(event, lane.id)}
+                    onDragLeave={() => {
+                      if (mediaAssetDropLaneId === lane.id) {
+                        setMediaAssetDropLaneId(null)
+                      }
+                    }}
+                    onDrop={(event) => handleMediaAssetDrop(event, lane.id)}
                   >
                     {showLaneActionButtons && (
                       <div
@@ -447,7 +519,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                       const zIndex = isSelected ? 100 : (region.zIndex ?? 1)
 
                       const regionStyle: React.CSSProperties = {
-                        left: `${timeToPx(region.startTime)}px`,
+                        left: `${timeToTrackPx(region.startTime)}px`,
                         width: `${timeToPx(region.duration)}px`,
                         zIndex,
                         opacity: movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : 1,
@@ -524,13 +596,41 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                         )
                       }
 
+                      if (region.type === 'media-audio') {
+                        return (
+                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
+                            <MediaAudioRegionBlock
+                              region={region}
+                              isSelected={isSelected}
+                              isBeingDragged={draggingRegionId === region.id}
+                              onMouseDown={handleRegionMouseDown}
+                              setRef={(el) => regionRefs.current.set(region.id, el)}
+                            />
+                          </div>
+                        )
+                      }
+
+                      if (region.type === 'change-sound') {
+                        return (
+                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
+                            <ChangeSoundRegionBlock
+                              region={region}
+                              isSelected={isSelected}
+                              isBeingDragged={draggingRegionId === region.id}
+                              onMouseDown={handleRegionMouseDown}
+                              setRef={(el) => regionRefs.current.set(region.id, el)}
+                            />
+                          </div>
+                        )
+                      }
+
                       return null
                     })}
 
                     {laneMovePreviewRegion &&
                       (() => {
                         const previewStyle: React.CSSProperties = {
-                          left: `${timeToPx(laneMovePreviewRegion.startTime)}px`,
+                          left: `${timeToTrackPx(laneMovePreviewRegion.startTime)}px`,
                           width: `${timeToPx(laneMovePreviewRegion.duration)}px`,
                           zIndex: 180,
                           opacity: 0.96,
@@ -595,13 +695,44 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                         }
 
                         if (laneMovePreviewRegion.type === 'swap') {
+                          const swapPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'swap' }>
+                          return (
+                          <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <SwapRegionBlock
+                              region={swapPreviewRegion}
+                              isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                              isBeingDragged
+                              onMouseDown={noopRegionMouseDown}
+                              setRef={noopSetRegionRef}
+                            />
+                          </div>
+                          )
+                        }
+
+                        if (laneMovePreviewRegion.type === 'media-audio') {
+                          const mediaAudioPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'media-audio' }>
                           return (
                             <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
-                              <SwapRegionBlock
-                                region={laneMovePreviewRegion as any}
+                              <MediaAudioRegionBlock
+                                region={mediaAudioPreviewRegion}
                                 isSelected={selectedRegionId === laneMovePreviewRegion.id}
                                 isBeingDragged
-                                onMouseDown={noopRegionMouseDown as any}
+                                onMouseDown={noopRegionMouseDown}
+                                setRef={noopSetRegionRef}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (laneMovePreviewRegion.type === 'change-sound') {
+                          const changeSoundPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'change-sound' }>
+                          return (
+                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                              <ChangeSoundRegionBlock
+                                region={changeSoundPreviewRegion}
+                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                isBeingDragged
+                                onMouseDown={noopRegionMouseDown}
                                 setRef={noopSetRegionRef}
                               />
                             </div>
@@ -618,8 +749,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
             {duration > 0 && (
               <div
                 ref={playheadRef}
-                className="absolute top-0 bottom-0 pointer-events-none"
-                style={{ zIndex: 9999, transform: `translateX(${timeToPx(currentTime)}px)` }}
+                className="absolute top-0 bottom-0 pointer-events-auto cursor-ew-resize"
+                style={{ zIndex: 9999, transform: `translateX(${timeToTrackPx(currentTime)}px)` }}
               >
                 <Playhead
                   height={Math.max(80, Math.floor((timelineRef.current?.clientHeight ?? 0) * 0.9))}

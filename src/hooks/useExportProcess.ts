@@ -97,6 +97,9 @@ export const useExportProcess = () => {
       syncOffset: fullState.syncOffset,
       audioPath: fullState.audioPath,
       audioUrl: fullState.audioUrl,
+      mediaAudioClip: fullState.mediaAudioClip,
+      mediaAudioRegions: fullState.mediaAudioRegions,
+      changeSoundRegions: fullState.changeSoundRegions,
     }
 
     setResult(null)

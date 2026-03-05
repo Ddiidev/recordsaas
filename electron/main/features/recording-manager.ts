@@ -22,6 +22,46 @@ type ImportedProjectPayload = {
   metadataPath?: string | null
   webcamVideoPath?: string | null
   audioPath?: string | null
+  mediaAudioClip?: {
+    id?: string
+    path?: string | null
+    url?: string | null
+    name?: string | null
+    duration?: number
+    startTime?: number
+  } | null
+  mediaAudioRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'media-audio'
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceStart?: number
+      isMuted?: boolean
+      volume?: number
+      fadeInDuration?: number
+      fadeOutDuration?: number
+      zIndex?: number
+    }
+  >
+  changeSoundRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'change-sound'
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceKey?: 'recording-mic'
+      isMuted?: boolean
+      volume?: number
+      fadeInDuration?: number
+      fadeOutDuration?: number
+      zIndex?: number
+    }
+  >
   recordingGeometry?: RecordingGeometry
   geometry?: RecordingGeometry
   scaleFactor?: number
@@ -71,6 +111,9 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   }
   if (session.audioPath) {
     filesToValidate.push(session.audioPath)
+  }
+  if (session.mediaAudioPath) {
+    filesToValidate.push(session.mediaAudioPath)
   }
 
   for (const filePath of filesToValidate) {
@@ -651,6 +694,7 @@ export async function stopRecording() {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.mediaAudioPath,
       session.scaleFactor,
     )
   }
@@ -922,7 +966,7 @@ export async function loadVideoFromFile() {
 
     await new Promise((resolve) => setTimeout(resolve, 500))
     appState.savingWin?.close()
-    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, session.scaleFactor)
+    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, undefined, session.scaleFactor)
     recorderWindow.close()
     return { canceled: false, filePath: screenVideoPath }
   } catch (error) {
@@ -1044,6 +1088,9 @@ export async function importProjectFromFile() {
       }
     }
 
+    const rawMediaAudioClip = canonicalMetadata?.mediaAudioClip || projectData.mediaAudioClip || null
+    const importedMediaAudioPath = await importMediaFile(rawMediaAudioClip?.path || null, 'media audio clip')
+
     const fallbackEvents = Array.isArray(projectData.events)
       ? projectData.events
       : Array.isArray(projectData.metadata)
@@ -1079,6 +1126,148 @@ export async function importProjectFromFile() {
       recordingGeometry: mergedGeometry,
     }
 
+    if (rawMediaAudioClip && importedMediaAudioPath) {
+      mergedRuntimeMetadata.mediaAudioClip = {
+        ...rawMediaAudioClip,
+        id: rawMediaAudioClip.id || `media-audio-${Date.now()}`,
+        path: importedMediaAudioPath,
+        url: `media://${importedMediaAudioPath}`,
+        name: rawMediaAudioClip.name || path.basename(importedMediaAudioPath),
+        duration:
+          typeof rawMediaAudioClip.duration === 'number' && Number.isFinite(rawMediaAudioClip.duration)
+            ? Math.max(0, rawMediaAudioClip.duration)
+            : 0,
+        startTime:
+          typeof rawMediaAudioClip.startTime === 'number' && Number.isFinite(rawMediaAudioClip.startTime)
+            ? Math.max(0, rawMediaAudioClip.startTime)
+            : 0,
+      }
+    } else {
+      mergedRuntimeMetadata.mediaAudioClip = null
+    }
+
+    const rawMediaAudioRegions = canonicalMetadata?.mediaAudioRegions || projectData.mediaAudioRegions || {}
+    const normalizedMediaAudioRegions: ImportedProjectPayload['mediaAudioRegions'] = {}
+    if (mergedRuntimeMetadata.mediaAudioClip && rawMediaAudioRegions && typeof rawMediaAudioRegions === 'object') {
+      const clipDuration = Math.max(0, mergedRuntimeMetadata.mediaAudioClip.duration || 0)
+
+      for (const [regionId, rawRegion] of Object.entries(rawMediaAudioRegions)) {
+        if (!rawRegion || typeof rawRegion !== 'object') continue
+
+        const startTime =
+          typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+            ? Math.max(0, rawRegion.startTime)
+            : 0
+        const sourceStart =
+          typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart)
+            ? Math.max(0, rawRegion.sourceStart)
+            : 0
+        const availableDuration = clipDuration > 0 ? Math.max(0.1, clipDuration - sourceStart) : 1
+        const duration =
+          typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+            ? Math.max(0.1, Math.min(rawRegion.duration, availableDuration))
+            : availableDuration
+        const fadeInDuration =
+          typeof rawRegion.fadeInDuration === 'number' && Number.isFinite(rawRegion.fadeInDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeInDuration, duration))
+            : 0
+        const fadeOutDuration =
+          typeof rawRegion.fadeOutDuration === 'number' && Number.isFinite(rawRegion.fadeOutDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeOutDuration, duration))
+            : 0
+        const volume =
+          typeof rawRegion.volume === 'number' && Number.isFinite(rawRegion.volume)
+            ? Math.max(0, Math.min(rawRegion.volume, 1))
+            : 1
+
+        normalizedMediaAudioRegions[regionId] = {
+          id: regionId || rawRegion.id || `media-audio-${Date.now()}`,
+          type: 'media-audio',
+          laneId: rawRegion.laneId || 'lane-1',
+          startTime,
+          duration,
+          sourceStart,
+          isMuted: rawRegion.isMuted === true,
+          volume,
+          fadeInDuration,
+          fadeOutDuration,
+          zIndex:
+            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
+              ? rawRegion.zIndex
+              : 0,
+        }
+      }
+
+      if (Object.keys(normalizedMediaAudioRegions).length === 0) {
+        const legacyDuration =
+          mergedRuntimeMetadata.mediaAudioClip.duration && mergedRuntimeMetadata.mediaAudioClip.duration > 0
+            ? mergedRuntimeMetadata.mediaAudioClip.duration
+            : 1
+        const regionId = `media-audio-${Date.now()}`
+        normalizedMediaAudioRegions[regionId] = {
+          id: regionId,
+          type: 'media-audio',
+          laneId: 'lane-1',
+          startTime: mergedRuntimeMetadata.mediaAudioClip.startTime || 0,
+          duration: legacyDuration,
+          sourceStart: 0,
+          isMuted: false,
+          volume: 1,
+          fadeInDuration: 0,
+          fadeOutDuration: 0,
+          zIndex: 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.mediaAudioRegions = normalizedMediaAudioRegions
+
+    const rawChangeSoundRegions = canonicalMetadata?.changeSoundRegions || projectData.changeSoundRegions || {}
+    const normalizedChangeSoundRegions: ImportedProjectPayload['changeSoundRegions'] = {}
+    if (rawChangeSoundRegions && typeof rawChangeSoundRegions === 'object') {
+      for (const [regionId, rawRegion] of Object.entries(rawChangeSoundRegions)) {
+        if (!rawRegion || typeof rawRegion !== 'object') continue
+
+        const startTime =
+          typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+            ? Math.max(0, rawRegion.startTime)
+            : 0
+        const duration =
+          typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+            ? Math.max(0.1, rawRegion.duration)
+            : 1
+        const volume =
+          typeof rawRegion.volume === 'number' && Number.isFinite(rawRegion.volume)
+            ? Math.max(0, Math.min(rawRegion.volume, 1))
+            : 1
+        const fadeInDuration =
+          typeof rawRegion.fadeInDuration === 'number' && Number.isFinite(rawRegion.fadeInDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeInDuration, duration))
+            : 0
+        const fadeOutDuration =
+          typeof rawRegion.fadeOutDuration === 'number' && Number.isFinite(rawRegion.fadeOutDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeOutDuration, duration))
+            : 0
+
+        normalizedChangeSoundRegions[regionId] = {
+          id: regionId || rawRegion.id || `change-sound-${Date.now()}`,
+          type: 'change-sound',
+          laneId: rawRegion.laneId || 'lane-1',
+          startTime,
+          duration,
+          sourceKey: 'recording-mic',
+          isMuted: rawRegion.isMuted === true,
+          volume,
+          fadeInDuration,
+          fadeOutDuration,
+          zIndex:
+            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
+              ? rawRegion.zIndex
+              : 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.changeSoundRegions = normalizedChangeSoundRegions
+
     if (mergedRuntimeMetadata.events.length === 0) {
       log.warn('[RecordingManager] Imported project contains no mouse events after metadata merge.')
     }
@@ -1092,6 +1281,7 @@ export async function importProjectFromFile() {
       metadataPath,
       webcamVideoPath,
       audioPath,
+      mediaAudioPath: importedMediaAudioPath,
       recordingGeometry: mergedGeometry,
       scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
       originalProjectPath: sourceProjectDir
@@ -1114,6 +1304,7 @@ export async function importProjectFromFile() {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.mediaAudioPath,
       session.scaleFactor,
       sourceProjectDir // Pass the original directory path
     )

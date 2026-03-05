@@ -6,6 +6,9 @@ import type {
   VideoDimensions,
   CursorTheme,
   CursorImageBitmap,
+  MediaAudioClip,
+  MediaAudioRegion,
+  ChangeSoundRegion,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { ZOOM } from '../../lib/constants'
@@ -19,6 +22,7 @@ export const initialProjectState: ProjectState = {
   videoUrl: null,
   audioPath: null,
   audioUrl: null,
+  mediaAudioClip: null,
   videoDimensions: { width: 0, height: 0 },
   recordingGeometry: null,
   screenSize: null,
@@ -31,6 +35,193 @@ export const initialProjectState: ProjectState = {
   platform: null,
   cursorTheme: null,
   hasAudioTrack: false,
+}
+
+const normalizeMediaPath = (filePath: string): string => filePath.replace(/^media:\/\//, '')
+
+const toMediaUrl = (path: string | null | undefined): string | null => {
+  if (!path) return null
+  return path.startsWith('media://') ? path : `media://${path}`
+}
+
+const clampToNonNegative = (value: number): number => Math.max(0, value)
+
+const clampStartTime = (value: number, duration: number): number => {
+  if (!Number.isFinite(duration) || duration <= 0) return clampToNonNegative(value)
+  return Math.max(0, Math.min(value, duration))
+}
+
+const fallbackNameFromPath = (filePath: string): string => {
+  const chunks = filePath.split(/[\\/]/).filter(Boolean)
+  return chunks[chunks.length - 1] || 'audio'
+}
+
+const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
+  if (!value || typeof value !== 'object') return null
+  const clip = value as Partial<MediaAudioClip>
+  if (!clip.path || typeof clip.path !== 'string') return null
+  const normalizedPath = normalizeMediaPath(clip.path)
+
+  const duration = typeof clip.duration === 'number' && Number.isFinite(clip.duration) ? clampToNonNegative(clip.duration) : 0
+  const startTime =
+    typeof clip.startTime === 'number' && Number.isFinite(clip.startTime) ? clampToNonNegative(clip.startTime) : 0
+
+  return {
+    id: typeof clip.id === 'string' && clip.id.length > 0 ? clip.id : `media-audio-${Date.now()}`,
+    path: normalizedPath,
+    url: toMediaUrl(normalizedPath) || '',
+    name: typeof clip.name === 'string' && clip.name.length > 0 ? clip.name : fallbackNameFromPath(normalizedPath),
+    duration,
+    startTime,
+  }
+}
+
+const parseMediaAudioRegion = (
+  value: unknown,
+  fallbackLaneId: string,
+  clipDuration: number,
+): MediaAudioRegion | null => {
+  if (!value || typeof value !== 'object') return null
+  const region = value as Partial<MediaAudioRegion>
+
+  const startTime = typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
+  const duration =
+    typeof region.duration === 'number' && Number.isFinite(region.duration)
+      ? Math.max(0.1, clampToNonNegative(region.duration))
+      : clipDuration > 0
+        ? clipDuration
+        : 1
+  const sourceStart =
+    typeof region.sourceStart === 'number' && Number.isFinite(region.sourceStart)
+      ? clampToNonNegative(region.sourceStart)
+      : 0
+
+  const maxDurationFromSource = clipDuration > 0 ? Math.max(0.1, clipDuration - sourceStart) : duration
+  const safeDuration = Math.max(0.1, Math.min(duration, maxDurationFromSource))
+
+  const fadeInDuration =
+    typeof region.fadeInDuration === 'number' && Number.isFinite(region.fadeInDuration)
+      ? Math.max(0, Math.min(region.fadeInDuration, safeDuration))
+      : 0
+  const fadeOutDuration =
+    typeof region.fadeOutDuration === 'number' && Number.isFinite(region.fadeOutDuration)
+      ? Math.max(0, Math.min(region.fadeOutDuration, safeDuration))
+      : 0
+  const volume =
+    typeof region.volume === 'number' && Number.isFinite(region.volume) ? Math.max(0, Math.min(region.volume, 1)) : 1
+
+  return {
+    id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `media-audio-${Date.now()}`,
+    type: 'media-audio',
+    laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
+    startTime,
+    duration: safeDuration,
+    sourceStart,
+    isMuted: region.isMuted === true,
+    volume,
+    fadeInDuration,
+    fadeOutDuration,
+    zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
+  }
+}
+
+const parseMediaAudioRegions = (
+  value: unknown,
+  fallbackLaneId: string,
+  clip: MediaAudioClip | null,
+): Record<string, MediaAudioRegion> => {
+  const clipDuration = clip?.duration ?? 0
+
+  if (value && typeof value === 'object') {
+    const parsed = Object.entries(value as Record<string, unknown>).reduce(
+      (acc, [regionId, rawValue]) => {
+        const parsedRegion = parseMediaAudioRegion(rawValue, fallbackLaneId, clipDuration)
+        if (!parsedRegion) return acc
+        parsedRegion.id = regionId || parsedRegion.id
+        acc[parsedRegion.id] = parsedRegion
+        return acc
+      },
+      {} as Record<string, MediaAudioRegion>,
+    )
+
+    if (Object.keys(parsed).length > 0) {
+      return parsed
+    }
+  }
+
+  if (!clip) {
+    return {}
+  }
+
+  const legacyDuration = clip.duration > 0 ? clip.duration : 1
+  const legacyRegion: MediaAudioRegion = {
+    id: `media-audio-${Date.now()}`,
+    type: 'media-audio',
+    laneId: fallbackLaneId,
+    startTime: clampToNonNegative(clip.startTime),
+    duration: Math.max(0.1, legacyDuration),
+    sourceStart: 0,
+    isMuted: false,
+    volume: 1,
+    fadeInDuration: 0,
+    fadeOutDuration: 0,
+    zIndex: 0,
+  }
+
+  return { [legacyRegion.id]: legacyRegion }
+}
+
+const parseChangeSoundRegion = (value: unknown, fallbackLaneId: string): ChangeSoundRegion | null => {
+  if (!value || typeof value !== 'object') return null
+  const region = value as Partial<ChangeSoundRegion>
+
+  const startTime =
+    typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
+  const duration =
+    typeof region.duration === 'number' && Number.isFinite(region.duration)
+      ? Math.max(0.1, clampToNonNegative(region.duration))
+      : 1
+  const sourceKey = region.sourceKey === 'recording-mic' ? 'recording-mic' : 'recording-mic'
+  const isMuted = region.isMuted === true
+  const volume =
+    typeof region.volume === 'number' && Number.isFinite(region.volume) ? Math.max(0, Math.min(region.volume, 1)) : 1
+  const fadeInDuration =
+    typeof region.fadeInDuration === 'number' && Number.isFinite(region.fadeInDuration)
+      ? Math.max(0, Math.min(region.fadeInDuration, duration))
+      : 0
+  const fadeOutDuration =
+    typeof region.fadeOutDuration === 'number' && Number.isFinite(region.fadeOutDuration)
+      ? Math.max(0, Math.min(region.fadeOutDuration, duration))
+      : 0
+
+  return {
+    id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `change-sound-${Date.now()}`,
+    type: 'change-sound',
+    laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
+    startTime,
+    duration,
+    sourceKey,
+    isMuted,
+    volume,
+    fadeInDuration,
+    fadeOutDuration,
+    zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
+  }
+}
+
+const parseChangeSoundRegions = (value: unknown, fallbackLaneId: string): Record<string, ChangeSoundRegion> => {
+  if (!value || typeof value !== 'object') return {}
+
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (acc, [regionId, rawValue]) => {
+      const parsedRegion = parseChangeSoundRegion(rawValue, fallbackLaneId)
+      if (!parsedRegion) return acc
+      parsedRegion.id = regionId || parsedRegion.id
+      acc[parsedRegion.id] = parsedRegion
+      return acc
+    },
+    {} as Record<string, ChangeSoundRegion>,
+  )
 }
 
 const extractProjectEvents = (parsedData: Record<string, unknown>): MetaDataItem[] => {
@@ -212,13 +403,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   ...initialProjectState,
   loadProject: async ({ videoPath, metadataPath, webcamVideoPath, audioPath, originalProjectPath }) => {
     // Always use media:// protocol for video, webcam, and audio URLs (revert to original logic)
-    const toUrl = (path: string | null | undefined) => {
-      if (!path) return null
-      return `media://${path}`
-    }
-    const videoUrl = toUrl(videoPath)
-    const webcamVideoUrl = toUrl(webcamVideoPath)
-    const audioUrl = toUrl(audioPath)
+    const videoUrl = toMediaUrl(videoPath)
+    const webcamVideoUrl = toMediaUrl(webcamVideoPath)
+    const audioUrl = toMediaUrl(audioPath)
 
     get().resetProjectState() // Clear previous project data first
 
@@ -242,6 +429,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.audioPath = audioPath || null
       state.audioUrl = audioUrl
       state.hasAudioTrack = !!audioUrl
+      state.mediaAudioClip = null
+      state.mediaAudioRegions = {}
+      state.changeSoundRegions = {}
       state.originalProjectPath = originalProjectPath
     })
 
@@ -265,6 +455,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         height: get().videoDimensions.height,
       }
       const recordingGeometry = (parsedData.recordingGeometry || parsedData.geometry || fallbackGeometry) as RecordingGeometry
+      const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
       const newZoomRegions = generateAutoZoomRegions(
         processedMetadata,
         recordingGeometry,
@@ -284,6 +475,31 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.speedRegions = (parsedData.speedRegions as typeof state.speedRegions) || {}
         state.blurRegions = (parsedData.blurRegions as typeof state.blurRegions) || {}
         state.timelineLanes = (parsedData.timelineLanes as typeof state.timelineLanes) || [createDefaultTimelineLane()]
+        state.mediaAudioClip = parsedMediaAudioClip
+        const fallbackMediaLaneId = getFallbackLaneId(state.timelineLanes)
+        state.mediaAudioRegions = parseMediaAudioRegions(parsedData.mediaAudioRegions, fallbackMediaLaneId, parsedMediaAudioClip)
+        state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
+        Object.values(state.mediaAudioRegions).forEach((region) => {
+          if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {
+            region.laneId = fallbackMediaLaneId
+          }
+          region.startTime = clampStartTime(region.startTime, state.duration)
+          region.volume = Math.max(0, Math.min(region.volume, 1))
+          region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
+          region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+        })
+        Object.values(state.changeSoundRegions).forEach((region) => {
+          if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {
+            region.laneId = fallbackMediaLaneId
+          }
+          region.startTime = clampStartTime(region.startTime, state.duration)
+          region.volume = Math.max(0, Math.min(region.volume, 1))
+          region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
+          region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+        })
+        if (state.mediaAudioClip) {
+          state.mediaAudioClip.startTime = clampStartTime(state.mediaAudioClip.startTime, state.duration)
+        }
 
         const frameStyles = parsedData.frameStyles as typeof state.frameStyles | undefined
         if (frameStyles) {
@@ -359,13 +575,47 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   setDuration: (duration) =>
     set((state) => {
       state.duration = duration
-      Object.values({ ...state.zoomRegions, ...state.cutRegions, ...state.speedRegions, ...state.blurRegions }).forEach(
+      Object.values({
+        ...state.zoomRegions,
+        ...state.cutRegions,
+        ...state.speedRegions,
+        ...state.blurRegions,
+        ...state.swapRegions,
+        ...state.changeSoundRegions,
+      }).forEach(
         (region) => {
           if (region.startTime + region.duration > duration) {
             region.duration = Math.max(0.1, duration - region.startTime)
           }
         },
       )
+      Object.values(state.mediaAudioRegions).forEach((region) => {
+        region.startTime = clampStartTime(region.startTime, duration)
+        if (region.startTime + region.duration > duration) {
+          region.duration = Math.max(0.1, duration - region.startTime)
+        }
+
+        if (state.mediaAudioClip?.duration && state.mediaAudioClip.duration > 0) {
+          const maxDurationFromSource = Math.max(0.1, state.mediaAudioClip.duration - region.sourceStart)
+          region.duration = Math.min(region.duration, maxDurationFromSource)
+        }
+
+        region.volume = Math.max(0, Math.min(region.volume, 1))
+        region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
+        region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+      })
+      Object.values(state.changeSoundRegions).forEach((region) => {
+        region.startTime = clampStartTime(region.startTime, duration)
+        if (region.startTime + region.duration > duration) {
+          region.duration = Math.max(0.1, duration - region.startTime)
+        }
+        region.volume = Math.max(0, Math.min(region.volume, 1))
+        region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
+        region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+      })
+      if (state.mediaAudioClip) {
+        state.mediaAudioClip.startTime = clampStartTime(state.mediaAudioClip.startTime, duration)
+      }
     }),
   resetProjectState: () => {
     set((state) => {
@@ -374,6 +624,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.cutRegions = {}
       state.speedRegions = {}
       state.blurRegions = {}
+      state.swapRegions = {}
+      state.mediaAudioRegions = {}
+      state.changeSoundRegions = {}
       state.timelineLanes = [createDefaultTimelineLane()]
       state.selectedRegionId = null
       state.activeZoomRegionId = null
@@ -429,6 +682,63 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   setHasAudioTrack: (hasAudio) => {
     set((state) => {
       state.hasAudioTrack = hasAudio
+    })
+  },
+  setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {
+    set((state) => {
+      const normalizedPath = normalizeMediaPath(path)
+      const resolvedStartTime = clampStartTime(startTime, state.duration)
+      state.mediaAudioClip = {
+        id: `media-audio-${Date.now()}`,
+        path: normalizedPath,
+        url: toMediaUrl(normalizedPath) || '',
+        name: name.trim() || fallbackNameFromPath(normalizedPath),
+        duration: clampToNonNegative(duration),
+        startTime: resolvedStartTime,
+      }
+    })
+  },
+  setMediaAudioStartTime: (startTime) => {
+    set((state) => {
+      if (!state.mediaAudioClip) return
+      const resolvedStart = clampStartTime(startTime, state.duration)
+      state.mediaAudioClip.startTime = resolvedStart
+
+      const selectedRegion = state.selectedRegionId ? state.mediaAudioRegions[state.selectedRegionId] : null
+      const firstRegion = Object.values(state.mediaAudioRegions)[0]
+      const targetRegion = selectedRegion || firstRegion
+      if (targetRegion) {
+        targetRegion.startTime = resolvedStart
+      }
+    })
+  },
+  setMediaAudioDuration: (duration) => {
+    set((state) => {
+      if (!state.mediaAudioClip) return
+      const safeDuration = clampToNonNegative(duration)
+      state.mediaAudioClip.duration = safeDuration
+
+      if (safeDuration <= 0) return
+
+      Object.values(state.mediaAudioRegions).forEach((region) => {
+        const maxDurationFromSource = Math.max(0.1, safeDuration - region.sourceStart)
+        if (region.duration <= 0 || region.duration > maxDurationFromSource) {
+          region.duration = maxDurationFromSource
+        }
+        region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
+        region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+      })
+    })
+  },
+  clearMediaAudioClip: () => {
+    set((state) => {
+      const selectedRegionId = state.selectedRegionId
+      const shouldClearSelection = selectedRegionId ? !!state.mediaAudioRegions[selectedRegionId] : false
+      state.mediaAudioClip = null
+      state.mediaAudioRegions = {}
+      if (shouldClearSelection) {
+        state.selectedRegionId = null
+      }
     })
   },
   setOriginalProjectPath: (path) => {

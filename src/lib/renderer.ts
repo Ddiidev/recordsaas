@@ -10,6 +10,10 @@ import {
 } from './timeline-lanes'
 
 type Rect = { x: number; y: number; width: number; height: number }
+type WindowWithScreenCache = Window & {
+  __screenCacheCanvas?: HTMLCanvasElement
+  __screenCacheCtx?: CanvasRenderingContext2D | null
+}
 
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
@@ -36,12 +40,13 @@ const getOrCreateCanvas = (
   }
 
   if (kind === 'screen') {
-    if (!(window as any).__screenCacheCanvas) {
-       ;(window as any).__screenCacheCanvas = document.createElement('canvas')
-       ;(window as any).__screenCacheCtx = (window as any).__screenCacheCanvas.getContext('2d')
+    const cacheWindow = window as WindowWithScreenCache
+    if (!cacheWindow.__screenCacheCanvas) {
+      cacheWindow.__screenCacheCanvas = document.createElement('canvas')
+      cacheWindow.__screenCacheCtx = cacheWindow.__screenCacheCanvas.getContext('2d')
     }
-    const canvas = (window as any).__screenCacheCanvas as HTMLCanvasElement
-    const ctx = (window as any).__screenCacheCtx as CanvasRenderingContext2D
+    const canvas = cacheWindow.__screenCacheCanvas
+    const ctx = cacheWindow.__screenCacheCtx
     if (!canvas || !ctx) return null
     if (canvas.width !== roundedWidth) canvas.width = roundedWidth
     if (canvas.height !== roundedHeight) canvas.height = roundedHeight

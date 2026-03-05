@@ -1,6 +1,6 @@
 import { useEditorStore } from '../../store/editorStore'
 import { RegionSettingsPanel } from './RegionSettingsPanel'
-import { Microphone, DeviceComputerCamera, LayoutBoard, Route, Pointer } from 'tabler-icons-react'
+import { Microphone, DeviceComputerCamera, LayoutBoard, Route, Pointer, FileImport } from 'tabler-icons-react'
 import { BackgroundSettings } from './sidepanel/BackgroundSettings'
 import { FrameEffectsSettings } from './sidepanel/FrameEffectsSettings'
 import { CameraSettings } from './sidepanel/CameraSettings'
@@ -11,6 +11,7 @@ import { useEffect, useMemo } from 'react'
 import { cn } from '../../lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { AudioSettings } from './sidepanel/AudioSettings'
+import { MediaAssetsPanel } from './sidepanel/MediaAssetsPanel'
 
 interface TabButtonProps {
   label: string
@@ -88,6 +89,8 @@ export function SidePanel() {
     blurRegions,
     speedRegions,
     swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
     webcamVideoUrl,
     hasAudioTrack,
     setSelectedRegionId,
@@ -101,6 +104,8 @@ export function SidePanel() {
       blurRegions: state.blurRegions,
       speedRegions: state.speedRegions,
       swapRegions: state.swapRegions,
+      mediaAudioRegions: state.mediaAudioRegions,
+      changeSoundRegions: state.changeSoundRegions,
       webcamVideoUrl: state.webcamVideoUrl,
       hasAudioTrack: state.hasAudioTrack,
       setSelectedRegionId: state.setSelectedRegionId,
@@ -112,8 +117,16 @@ export function SidePanel() {
   // Optimize region lookup using useMemo
   const selectedRegion = useMemo(() => {
     if (!selectedRegionId) return null
-    return zoomRegions[selectedRegionId] || cutRegions[selectedRegionId] || blurRegions[selectedRegionId] || speedRegions[selectedRegionId] || swapRegions[selectedRegionId]
-  }, [selectedRegionId, zoomRegions, cutRegions, blurRegions, speedRegions, swapRegions])
+    return (
+      zoomRegions[selectedRegionId] ||
+      cutRegions[selectedRegionId] ||
+      blurRegions[selectedRegionId] ||
+      speedRegions[selectedRegionId] ||
+      swapRegions[selectedRegionId] ||
+      mediaAudioRegions[selectedRegionId] ||
+      changeSoundRegions[selectedRegionId]
+    )
+  }, [selectedRegionId, zoomRegions, cutRegions, blurRegions, speedRegions, swapRegions, mediaAudioRegions, changeSoundRegions])
 
   // Auto switch to 'general' tab when a region is selected
   useEffect(() => {
@@ -159,6 +172,12 @@ export function SidePanel() {
             disabled={!hasAudioTrack}
           />
           <TabButton
+            label="Media"
+            icon={<FileImport className="w-5 h-5" />}
+            isActive={activeSidePanelTab === 'media'}
+            onClick={() => setActiveSidePanelTab('media')}
+          />
+          <TabButton
             label="Animation"
             icon={<Route className="w-5 h-5" />}
             isActive={activeSidePanelTab === 'animation'}
@@ -185,6 +204,9 @@ export function SidePanel() {
         </div>
         <div className="h-full" hidden={activeSidePanelTab !== 'audio'}>
           <AudioSettings />
+        </div>
+        <div className="h-full" hidden={activeSidePanelTab !== 'media'}>
+          <MediaAssetsPanel />
         </div>
         <div className="h-full" hidden={activeSidePanelTab !== 'animation'}>
           <AnimationSettingsPanel />

@@ -1,7 +1,7 @@
 // --- Types ---
 export type BackgroundType = 'color' | 'gradient' | 'image' | 'wallpaper'
 export type AspectRatio = '16:9' | '9:16' | '4:3' | '3:4' | '1:1'
-export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'animation' | 'settings'
+export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'media' | 'animation' | 'settings'
 export type AppearanceMode = 'light' | 'dark' | 'auto'
 
 export interface Background {
@@ -97,6 +97,36 @@ export interface SpeedRegion {
   zIndex: number
 }
 
+export interface MediaAudioRegion {
+  id: string
+  type: 'media-audio'
+  laneId: string
+  startTime: number
+  duration: number
+  sourceStart: number
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex: number
+}
+
+export type RecordingAudioSourceKey = 'recording-mic'
+
+export interface ChangeSoundRegion {
+  id: string
+  type: 'change-sound'
+  laneId: string
+  startTime: number
+  duration: number
+  sourceKey: RecordingAudioSourceKey
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex: number
+}
+
 export type BlurRegionStyle = 'blur' | 'pixelated'
 
 export interface BlurRegion {
@@ -126,7 +156,14 @@ export interface CameraSwapRegion {
   transitionDuration?: number
 }
 
-export type TimelineRegion = ZoomRegion | CutRegion | SpeedRegion | BlurRegion | CameraSwapRegion
+export type TimelineRegion =
+  | ZoomRegion
+  | CutRegion
+  | SpeedRegion
+  | BlurRegion
+  | CameraSwapRegion
+  | MediaAudioRegion
+  | ChangeSoundRegion
 
 export interface MetaDataItem {
   timestamp: number
@@ -199,6 +236,15 @@ export type VideoDimensions = Dimensions
 export type ScreenSize = Dimensions
 export type CursorTheme = Record<number, Record<string, CursorFrame[]>>
 
+export interface MediaAudioClip {
+  id: string
+  path: string
+  url: string
+  name: string
+  duration: number
+  startTime: number
+}
+
 // --- Slice State & Actions Types ---
 
 export interface ProjectState {
@@ -207,6 +253,7 @@ export interface ProjectState {
   videoUrl: string | null
   audioPath: string | null
   audioUrl: string | null
+  mediaAudioClip: MediaAudioClip | null
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
   screenSize: ScreenSize | null
@@ -236,6 +283,10 @@ export interface ProjectActions {
   setPostProcessingCursorScale: (scale: number) => Promise<void>
   reloadCursorTheme: (themeName: string) => Promise<void>
   setHasAudioTrack: (hasAudio: boolean) => void
+  setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
+  setMediaAudioStartTime: (startTime: number) => void
+  setMediaAudioDuration: (duration: number) => void
+  clearMediaAudioClip: () => void
   setOriginalProjectPath: (path: string) => void
 }
 
@@ -271,6 +322,8 @@ export interface TimelineState {
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
+  mediaAudioRegions: Record<string, MediaAudioRegion>
+  changeSoundRegions: Record<string, ChangeSoundRegion>
   previewCutRegion: CutRegion | null
   selectedRegionId: string | null
   activeZoomRegionId: string | null
@@ -288,6 +341,10 @@ export interface TimelineActions {
   addSpeedRegion: () => void
   addBlurRegion: () => void
   addSwapRegion: () => void
+  addMediaAudioRegion: (params?: { startTime?: number; laneId?: string; sourceStart?: number; duration?: number }) => void
+  addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
+  splitMediaAudioRegion: (regionId: string, splitTime: number) => void
+  splitChangeSoundRegion: (regionId: string, splitTime: number) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void

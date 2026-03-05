@@ -87,6 +87,13 @@
     background-color: var(--timeline-tick);
   }
 
+  .media-name-marquee-ltr {
+    animation-name: mediaNameMarqueeLtr;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform;
+  }
+
   .color-picker-container {
     @apply flex items-center gap-2 w-full;
   }
@@ -139,6 +146,15 @@
     to {
       transform: scale(1);
       opacity: 1;
+    }
+  }
+
+  @keyframes mediaNameMarqueeLtr {
+    from {
+      transform: translateX(var(--marquee-from, 0px));
+    }
+    to {
+      transform: translateX(var(--marquee-to, 0px));
     }
   }
 

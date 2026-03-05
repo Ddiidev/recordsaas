@@ -11,12 +11,22 @@ type ProjectPayload = {
   videoPath: string
   metadataPath: string
   webcamVideoPath?: string
+  audioPath?: string
+  originalProjectPath?: string
 }
 
 type ExportPayload = {
   projectState: any
   exportSettings: any
   outputPath: string
+}
+
+type MediaAudioImportResult = {
+  canceled: boolean
+  asset?: {
+    path: string
+    name: string
+  }
 }
 // Payload received from process
 type ProgressPayload = {
@@ -132,6 +142,7 @@ export const electronAPI = {
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
   loadVideoFromFile: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:load-from-file'),
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),
+  importMediaAudioAsset: (): Promise<MediaAudioImportResult> => ipcRenderer.invoke('media:import-audio'),
   getCursorScale: (): Promise<number> => ipcRenderer.invoke('desktop:get-cursor-scale'),
   setCursorScale: (scale: number): void => ipcRenderer.send('desktop:set-cursor-scale', scale),
 
