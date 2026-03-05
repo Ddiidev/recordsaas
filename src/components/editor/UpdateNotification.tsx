@@ -1,5 +1,5 @@
 // Notification button for available app updates
-import { Download } from 'tabler-icons-react'
+import { Download } from '@icons'
 import { Button } from '../ui/button'
 
 interface UpdateNotificationProps {

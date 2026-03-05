@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { IconoirProvider } from 'iconoir-react'
 import { useShallow } from 'zustand/react/shallow'
 import { EditorPage } from './pages/EditorPage'
 import { RecorderPage } from './pages/RecorderPage'
@@ -68,19 +69,21 @@ function App() {
     }
   }, [])
 
+  let content = <RecorderPage />
+
   if (route.startsWith('#renderer')) {
-    return <RendererPage />
+    content = <RendererPage />
+  } else if (route.startsWith('#editor')) {
+    content = <EditorPage />
+  } else if (route.startsWith('#recorder')) {
+    content = <RecorderPage />
   }
 
-  if (route.startsWith('#editor')) {
-    return <EditorPage />
-  }
-
-  if (route.startsWith('#recorder')) {
-    return <RecorderPage />
-  }
-
-  return <RecorderPage />
+  return (
+    <IconoirProvider iconProps={{ width: '1em', height: '1em', strokeWidth: 1.85 }}>
+      {content}
+    </IconoirProvider>
+  )
 }
 
 export default App

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Login, Logout, UserCircle } from 'tabler-icons-react'
+import { Loader2, Login, Logout, UserCircle } from '@icons'
 import type { AuthSession } from '../../types/auth'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'

@@ -15,7 +15,7 @@ import {
   DeviceComputerCameraOff,
   ZoomIn,
   ArrowsUpRight,
-} from 'tabler-icons-react'
+} from '@icons'
 import { Button } from '../../ui/button'
 import { Switch } from '../../ui/switch'
 import { Slider } from '../../ui/slider'

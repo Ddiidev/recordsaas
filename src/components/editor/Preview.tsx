@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, memo, useState, useCallback } from 'react'
 import { useEditorStore } from '../../store/editorStore'
-import { Movie } from 'tabler-icons-react'
-import { FullscreenIcon, ExitFullscreenIcon } from '../ui/icons'
 import {
+  ExitFullscreenIcon,
+  FullscreenIcon,
+  IconShell,
+  Movie,
   PlayerPlay,
   PlayerTrackPrev as RewindIcon,
   PlayerPause,
   PlayerSkipBack,
   PlayerSkipForward,
-} from 'tabler-icons-react'
+} from '@icons'
 import { useShallow } from 'zustand/react/shallow'
 import { formatTime } from '../../lib/utils'
 import { Slider } from '../ui/slider'
@@ -776,10 +778,10 @@ export const Preview = memo(
               className="rounded-lg shadow-2xl"
             />
           ) : (
-            <div className="w-full h-full bg-gradient-to-br from-muted/30 to-muted/10 border-2 border-dashed border-border/40 rounded-xl flex flex-col items-center justify-center text-muted-foreground gap-4 backdrop-blur-sm">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center backdrop-blur-md border border-border/30 shadow-md">
-                <Movie className="w-10 h-10 text-primary/60" />
-              </div>
+            <div className="flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 text-muted-foreground backdrop-blur-sm">
+              <IconShell active className="h-20 w-20 shadow-md">
+                <Movie className="h-10 w-10 text-primary/60" />
+              </IconShell>
               <div className="text-center space-y-1">
                 <p className="text-lg font-semibold text-foreground/80">No project loaded</p>
                 <p className="text-sm text-muted-foreground/70">Load a project to begin editing</p>
@@ -849,7 +851,7 @@ export const Preview = memo(
             style={{ maxWidth: isPreviewFullScreen ? 'min(90%, 800px)' : '100%' }}
           >
             <div
-              className="bg-card/95 backdrop-blur-xl border border-border/40 shadow-md rounded-xl px-3 py-2 flex items-center gap-2 max-w-full mx-auto"
+              className="mx-auto flex max-w-full items-center gap-2 rounded-lg border border-border/40 bg-card/95 px-3 py-2 shadow-md backdrop-blur-xl"
               style={{
                 width: isPreviewFullScreen ? 'auto' : controlBarWidth,
                 minWidth: isPreviewFullScreen ? 'auto' : 420,
@@ -860,7 +862,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={togglePlay}
                 title="Play/Pause (Space)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 {isPlaying ? <PlayerPause className="w-4 h-4" /> : <PlayerPlay className="w-4 h-4 ml-0.5" />}
               </Button>
@@ -869,7 +871,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={handleRewind}
                 title="Rewind to Start"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <RewindIcon className="w-4 h-4" />
               </Button>
@@ -878,7 +880,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={() => onSeekFrame('prev')}
                 title="Previous Frame (J)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <PlayerSkipBack className="w-4 h-4" />
               </Button>
@@ -887,7 +889,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={() => onSeekFrame('next')}
                 title="Next Frame (K)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <PlayerSkipForward className="w-4 h-4" />
               </Button>
@@ -910,7 +912,7 @@ export const Preview = memo(
                 variant="ghost"
                 size="icon"
                 onClick={togglePreviewFullScreen}
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 {isPreviewFullScreen ? (
                   <ExitFullscreenIcon className="w-4 h-4" />

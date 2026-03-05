@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Settings, InfoCircle, Keyboard, UserCircle } from 'tabler-icons-react'
+import { IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
@@ -16,11 +16,11 @@ interface SettingsModalProps {
 
 export type SettingsTab = 'general' | 'shortcuts' | 'account' | 'about'
 
-const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'general', label: 'General', icon: <Settings className="w-5 h-5" /> },
-  { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard className="w-5 h-5" /> },
-  { id: 'account', label: 'Account', icon: <UserCircle className="w-5 h-5" /> },
-  { id: 'about', label: 'About', icon: <InfoCircle className="w-5 h-5" /> },
+const TABS: Array<{ id: SettingsTab; label: string; icon: IconComponent; solid?: IconComponent }> = [
+  { id: 'general', label: 'General', icon: Settings },
+  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+  { id: 'account', label: 'Account', icon: UserCircle },
+  { id: 'about', label: 'About', icon: InfoCircle, solid: InfoCircleSolid },
 ]
 
 export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultTab = 'general' }: SettingsModalProps) {
@@ -61,7 +61,7 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
       <div
         data-interactive="true"
         className={cn(
-          'w-full max-w-3xl h-[60vh] max-h-[500px] flex flex-row m-4 rounded-xl bg-card border shadow-2xl overflow-hidden relative',
+          'relative m-4 flex h-[60vh] max-h-[500px] w-full max-w-3xl flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
           isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'
         )}
         onClick={(e) => e.stopPropagation()}
@@ -71,10 +71,10 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="absolute top-4 right-4 z-[60] w-8 h-8 rounded-lg text-muted-foreground hover:bg-destructive hover:text-white transition-colors"
+            className="icon-hover absolute right-4 top-4 z-[60] h-8 w-8 rounded-md border border-border/60 text-muted-foreground transition-colors hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
           >
             <span className="sr-only">Close</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <X className="h-4 w-4" />
           </Button>
         )}
         {/* Sidebar */}
@@ -86,13 +86,20 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  'w-full flex items-center gap-3 text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'icon-hover flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium transition-all duration-150',
                   activeTab === tab.id
-                    ? 'bg-accent text-primary'
-                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    ? 'bg-accent text-primary shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
                 )}
               >
-                {tab.icon}
+                <span className="flex h-9 w-9 items-center justify-center">
+                  <IconSwitch
+                    regular={tab.icon}
+                    solid={tab.solid}
+                    active={activeTab === tab.id}
+                    className="h-[18px] w-[18px]"
+                  />
+                </span>
                 <span>{tab.label}</span>
               </button>
             ))}

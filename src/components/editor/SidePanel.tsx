@@ -1,6 +1,19 @@
 import { useEditorStore } from '../../store/editorStore'
 import { RegionSettingsPanel } from './RegionSettingsPanel'
-import { Microphone, DeviceComputerCamera, LayoutBoard, Route, Pointer, FileImport } from 'tabler-icons-react'
+import {
+  CameraSolid,
+  DeviceComputerCamera,
+  FileImport,
+  IconShell,
+  IconSwitch,
+  LayoutBoard,
+  Microphone,
+  MicrophoneSolid,
+  PathArrowSolid,
+  Pointer,
+  Route,
+  UploadSquareSolid,
+} from '@icons'
 import { BackgroundSettings } from './sidepanel/BackgroundSettings'
 import { FrameEffectsSettings } from './sidepanel/FrameEffectsSettings'
 import { CameraSettings } from './sidepanel/CameraSettings'
@@ -29,15 +42,19 @@ function TabButton({ label, icon, isActive, onClick, disabled }: TabButtonProps)
           <button
             onClick={onClick}
             className={cn(
-              'w-full flex flex-col items-center justify-center p-1 rounded-lg transition-colors',
-              'hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ring-offset-sidebar',
-              isActive ? 'bg-accent text-primary' : 'text-muted-foreground hover:text-foreground',
-              disabled && 'opacity-50 cursor-not-allowed hover:bg-transparent',
+              'icon-hover group flex w-full flex-col items-center justify-center rounded-lg px-1.5 py-2 transition-all duration-150',
+              'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ring-offset-sidebar',
+              isActive
+                ? 'bg-accent/70 text-primary shadow-sm'
+                : 'text-muted-foreground hover:bg-accent/25 hover:text-foreground',
+              disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground',
             )}
             aria-label={label}
             disabled={disabled}
           >
-            <div className="w-6 h-6 flex items-center justify-center">{icon}</div>
+            <span className="flex h-9 w-9 items-center justify-center">
+              {icon}
+            </span>
           </button>
         </TooltipTrigger>
         <TooltipContent
@@ -58,9 +75,9 @@ function FrameSettingsPanel() {
       {/* Header */}
       <div className="p-6 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <LayoutBoard className="w-5 h-5 text-primary" />
-          </div>
+          <IconShell active className="h-10 w-10">
+            <LayoutBoard className="h-5 w-5" />
+          </IconShell>
           <div>
             <h2 className="text-lg font-semibold text-sidebar-foreground">General Settings</h2>
             <p className="text-sm text-muted-foreground">Customize your video&apos;s appearance</p>
@@ -149,43 +166,71 @@ export function SidePanel() {
   return (
     <div className="h-full flex">
       {/* Vertical Tab Navigator (Always visible) */}
-      <div className="w-[64px] flex-shrink-0 p-3 border-r border-sidebar-border bg-sidebar/80">
+      <div className="w-[64px] flex-shrink-0 border-r border-sidebar-border bg-sidebar/90 p-3">
         <div className="flex flex-col items-center space-y-2">
           <TabButton
             label="General"
-            icon={<LayoutBoard className="w-5 h-5" />}
+            icon={<IconSwitch regular={LayoutBoard} active={activeSidePanelTab === 'general'} className="h-[18px] w-[18px]" />}
             isActive={activeSidePanelTab === 'general'}
             onClick={() => setActiveSidePanelTab('general')}
           />
           <TabButton
             label="Camera"
-            icon={<DeviceComputerCamera className="w-5 h-5" />}
+            icon={
+              <IconSwitch
+                regular={DeviceComputerCamera}
+                solid={CameraSolid}
+                active={activeSidePanelTab === 'camera'}
+                className="h-[18px] w-[18px]"
+              />
+            }
             isActive={activeSidePanelTab === 'camera'}
             onClick={() => setActiveSidePanelTab('camera')}
             disabled={!webcamVideoUrl}
           />
           <TabButton
             label="Audio"
-            icon={<Microphone className="w-5 h-5" />}
+            icon={
+              <IconSwitch
+                regular={Microphone}
+                solid={MicrophoneSolid}
+                active={activeSidePanelTab === 'audio'}
+                className="h-[18px] w-[18px]"
+              />
+            }
             isActive={activeSidePanelTab === 'audio'}
             onClick={() => setActiveSidePanelTab('audio')}
             disabled={!hasAudioTrack}
           />
           <TabButton
             label="Media"
-            icon={<FileImport className="w-5 h-5" />}
+            icon={
+              <IconSwitch
+                regular={FileImport}
+                solid={UploadSquareSolid}
+                active={activeSidePanelTab === 'media'}
+                className="h-[18px] w-[18px]"
+              />
+            }
             isActive={activeSidePanelTab === 'media'}
             onClick={() => setActiveSidePanelTab('media')}
           />
           <TabButton
             label="Animation"
-            icon={<Route className="w-5 h-5" />}
+            icon={
+              <IconSwitch
+                regular={Route}
+                solid={PathArrowSolid}
+                active={activeSidePanelTab === 'animation'}
+                className="h-[18px] w-[18px]"
+              />
+            }
             isActive={activeSidePanelTab === 'animation'}
             onClick={() => setActiveSidePanelTab('animation')}
           />
           <TabButton
             label="Cursor"
-            icon={<Pointer className="w-5 h-5" />}
+            icon={<IconSwitch regular={Pointer} active={activeSidePanelTab === 'cursor'} className="h-[18px] w-[18px]" />}
             isActive={activeSidePanelTab === 'cursor'}
             onClick={() => setActiveSidePanelTab('cursor')}
           />

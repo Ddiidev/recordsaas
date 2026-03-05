@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { TimelineRegion, BlurRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
-import { Search } from 'tabler-icons-react'
+import { Search } from '@icons'
 
 interface BlurRegionBlockProps {
   region: BlurRegion

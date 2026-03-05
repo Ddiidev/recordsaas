@@ -6,7 +6,7 @@ import { Input } from '../ui/input'
 import { PresetPreview } from './PresetPreview'
 import type { Preset } from '../../types'
 import { cn } from '../../lib/utils'
-import { Plus, Trash, Check, Lock, Rectangle, BoxPadding, BorderRadius, Shadow, BorderAll } from 'tabler-icons-react'
+import { Plus, Trash, Check, Lock, Rectangle, BoxPadding, BorderRadius, Shadow, BorderAll } from '@icons'
 
 interface PresetModalProps {
   isOpen: boolean

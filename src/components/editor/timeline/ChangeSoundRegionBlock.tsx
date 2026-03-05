@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { AdjustmentsHorizontal, Scissors, Trash } from 'tabler-icons-react'
+import { AdjustmentsHorizontal, Scissors, Trash } from '@icons'
 import type { ChangeSoundRegion, TimelineRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { useEditorStore } from '../../../store/editorStore'

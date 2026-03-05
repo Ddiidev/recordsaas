@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Music, Scissors, Trash } from 'tabler-icons-react'
+import { Music, Scissors, Trash } from '@icons'
 import type { MediaAudioRegion, TimelineRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { useEditorStore } from '../../../store/editorStore'

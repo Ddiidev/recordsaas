@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
-import { Upload, Loader2, CircleCheck, CircleX, Folder, Ban } from 'tabler-icons-react'
+import { Upload, Loader2, CircleCheck, CircleX, Folder, Ban } from '@icons'
 import { Input } from '../ui/input'
 import { cn } from '../../lib/utils'
 import { useEditorStore } from '../../store/editorStore'

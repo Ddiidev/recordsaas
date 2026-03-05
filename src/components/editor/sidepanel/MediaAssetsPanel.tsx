@@ -1,15 +1,19 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   FileImport,
   Music,
   AdjustmentsHorizontal,
+  type IconComponent,
+  IconShell,
+  IconSwitch,
+  MusicNoteSolid,
   Photo,
   Video,
   Upload,
   Trash,
   GripVertical,
-} from 'tabler-icons-react'
+} from '@icons'
 import { useEditorStore } from '../../../store/editorStore'
 import { cn, formatTime } from '../../../lib/utils'
 import { Button } from '../../ui/button'
@@ -17,17 +21,20 @@ import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../../lib/medi
 
 type MediaCategory = 'audio' | 'image' | 'video'
 
-const categoryConfig: Array<{ id: MediaCategory; label: string; icon: React.ReactNode }> = [
-  { id: 'audio', label: 'Audio', icon: <Music className="h-4 w-4" /> },
-  { id: 'image', label: 'Image', icon: <Photo className="h-4 w-4" /> },
-  { id: 'video', label: 'Video', icon: <Video className="h-4 w-4" /> },
+const categoryConfig: Array<{
+  id: MediaCategory
+  label: string
+  icon: IconComponent
+  solid?: IconComponent
+}> = [
+  { id: 'audio', label: 'Audio', icon: Music, solid: MusicNoteSolid },
+  { id: 'image', label: 'Image', icon: Photo },
+  { id: 'video', label: 'Video', icon: Video },
 ]
 
-const PlaceholderCategory = ({ icon, title, message }: { icon: React.ReactNode; title: string; message: string }) => (
-  <div className="rounded-xl border border-border bg-card/60 p-5 text-center">
-    <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground">
-      {icon}
-    </div>
+const PlaceholderCategory = ({ icon, title, message }: { icon: ReactNode; title: string; message: string }) => (
+  <div className="rounded-lg border border-border bg-card/60 p-5 text-center">
+    <IconShell className="mx-auto mb-3 h-11 w-11">{icon}</IconShell>
     <p className="text-sm font-semibold text-foreground">{title}</p>
     <p className="mt-1 text-xs text-muted-foreground">{message}</p>
   </div>
@@ -130,7 +137,7 @@ export function MediaAssetsPanel() {
           draggable
           onDragStart={handleChangeSoundDragStart}
           onDoubleClick={handlePlaceChangeSoundAtPlayhead}
-          className="group cursor-grab rounded-xl border border-sky-500/30 bg-sky-500/5 px-3 py-3 active:cursor-grabbing"
+          className="group cursor-grab rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-3 active:cursor-grabbing"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-start gap-2">
@@ -152,14 +159,14 @@ export function MediaAssetsPanel() {
         <Button
           onClick={handleImportAudio}
           disabled={isImporting}
-          className="w-full justify-center gap-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+          className="icon-hover w-full justify-center gap-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Upload className={cn('h-4 w-4', isImporting && 'animate-pulse')} />
           {isImporting ? 'Importing...' : 'Import Audio'}
         </Button>
 
         {!mediaAudioClip ? (
-          <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
+          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
             <p className="text-sm font-medium text-foreground">No media audio clip</p>
             <p className="mt-1 text-xs text-muted-foreground">Import one and drag it to the timeline.</p>
           </div>
@@ -168,7 +175,7 @@ export function MediaAssetsPanel() {
             draggable
             onDragStart={handleDragStart}
             onDoubleClick={handlePlaceAtPlayhead}
-            className="group cursor-grab rounded-xl border border-primary/30 bg-primary/5 px-3 py-3 active:cursor-grabbing"
+            className="group cursor-grab rounded-lg border border-primary/30 bg-primary/5 px-3 py-3 active:cursor-grabbing"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2">
@@ -204,9 +211,9 @@ export function MediaAssetsPanel() {
     <div className="h-full flex flex-col">
       <div className="p-6 border-b border-sidebar-border flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <FileImport className="w-5 h-5 text-primary" />
-          </div>
+          <IconShell active className="h-10 w-10">
+            <FileImport className="h-5 w-5" />
+          </IconShell>
           <div>
             <h2 className="text-lg font-semibold text-sidebar-foreground">Media Assets</h2>
             <p className="text-sm text-muted-foreground">Import and place media on the timeline</p>
@@ -222,13 +229,20 @@ export function MediaAssetsPanel() {
               type="button"
               onClick={() => setActiveCategory(category.id)}
               className={cn(
-                'flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-semibold transition-colors',
+                'icon-hover flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-semibold transition-all duration-150',
                 activeCategory === category.id
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
               )}
             >
-              {category.icon}
+              <span className="flex h-7 w-7 items-center justify-center">
+                <IconSwitch
+                  regular={category.icon}
+                  solid={category.solid}
+                  active={activeCategory === category.id}
+                  className="h-4 w-4"
+                />
+              </span>
               <span>{category.label}</span>
             </button>
           ))}

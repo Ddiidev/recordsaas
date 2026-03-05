@@ -1,7 +1,7 @@
 import { useEditorStore } from '../../../store/editorStore'
 import type { ZoomRegion } from '../../../types'
 import { Collapse } from '../../ui/collapse'
-import { Route } from 'tabler-icons-react'
+import { Route } from '@icons'
 import { ZOOM, DEFAULTS } from '../../../lib/constants'
 import { EASING_MAP } from '../../../lib/easing'
 import { cn } from '../../../lib/utils'

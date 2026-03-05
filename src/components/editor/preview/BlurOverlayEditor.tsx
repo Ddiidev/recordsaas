@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowsMove } from 'tabler-icons-react'
+import { ArrowsMove } from '@icons'
 import type { BlurRegion, FrameStyles, TimelineLane, VideoDimensions } from '../../../types'
 import { BLUR_REGION } from '../../../lib/constants'
 import { isRegionActiveAtTime, sortRegionsByLanePrecedence } from '../../../lib/timeline-lanes'

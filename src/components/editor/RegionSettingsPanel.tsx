@@ -13,7 +13,7 @@ import type {
 } from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh, Music, AdjustmentsHorizontal } from 'tabler-icons-react'
+import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh, Music, AdjustmentsHorizontal } from '@icons'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
