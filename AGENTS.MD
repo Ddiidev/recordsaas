@@ -129,6 +129,7 @@ IPC contract baseline (media import):
 `.rsproj` compatibility baseline:
 - Serialized fields of interest include `mediaAudioClip`, `mediaAudioRegions`, `changeSoundRegions`.
 - Serialized camera/layout fields of interest include `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `swapRegions`.
+- Imported `.rsproj` files are the source of truth for editor-authored state such as `timelineLanes`, `mediaAudioClip`, `mediaAudioRegions`, and `changeSoundRegions`; canonical metadata is only used for capture-native data like events/cursor/geometry/platform.
 - Backward compatibility defaults if fields are absent:
 - `mediaAudioClip = null`
 - `mediaAudioRegions = {}`

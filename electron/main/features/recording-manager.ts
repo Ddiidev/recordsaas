@@ -22,6 +22,13 @@ type ImportedProjectPayload = {
   metadataPath?: string | null
   webcamVideoPath?: string | null
   audioPath?: string | null
+  timelineLanes?: Array<{
+    id?: string
+    name?: string
+    order?: number
+    visible?: boolean
+    locked?: boolean
+  }>
   mediaAudioClip?: {
     id?: string
     path?: string | null
@@ -81,6 +88,69 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
   geometry: RecordingGeometry
   recordingGeometry: RecordingGeometry
   syncOffset: number
+}
+
+const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
+const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
+
+function hasOwnField<K extends keyof ImportedProjectPayload>(payload: ImportedProjectPayload, key: K): boolean {
+  return Object.prototype.hasOwnProperty.call(payload, key)
+}
+
+function getProjectFirstField<K extends keyof ImportedProjectPayload>(
+  projectData: ImportedProjectPayload,
+  canonicalMetadata: ImportedProjectPayload | null,
+  key: K,
+): ImportedProjectPayload[K] | undefined {
+  if (hasOwnField(projectData, key)) {
+    return projectData[key]
+  }
+  return canonicalMetadata?.[key]
+}
+
+function normalizeTimelineLanes(
+  lanes: ImportedProjectPayload['timelineLanes'],
+): NonNullable<ImportedProjectPayload['timelineLanes']> {
+  if (!Array.isArray(lanes) || lanes.length === 0) {
+    return [
+      {
+        id: DEFAULT_TIMELINE_LANE_ID,
+        name: DEFAULT_TIMELINE_LANE_NAME,
+        order: 0,
+        visible: true,
+        locked: false,
+      },
+    ]
+  }
+
+  return [...lanes]
+    .map((lane, index) => ({
+      id: typeof lane?.id === 'string' && lane.id.length > 0 ? lane.id : `${DEFAULT_TIMELINE_LANE_ID}-${index + 1}`,
+      name:
+        typeof lane?.name === 'string' && lane.name.trim().length > 0
+          ? lane.name.trim()
+          : `${DEFAULT_TIMELINE_LANE_NAME.split(' ')[0]} ${index + 1}`,
+      order: typeof lane?.order === 'number' && Number.isFinite(lane.order) ? lane.order : index,
+      visible: lane?.visible !== false,
+      locked: lane?.locked === true,
+    }))
+    .sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
+    .map((lane, index) => ({ ...lane, order: index }))
+}
+
+function getFallbackTimelineLaneId(lanes: NonNullable<ImportedProjectPayload['timelineLanes']>): string {
+  return lanes[0]?.id || DEFAULT_TIMELINE_LANE_ID
+}
+
+function resolveImportedLaneId(
+  laneId: string | undefined,
+  lanes: NonNullable<ImportedProjectPayload['timelineLanes']>,
+  fallbackLaneId: string,
+): string {
+  if (laneId && lanes.some((lane) => lane.id === laneId)) {
+    return laneId
+  }
+  return fallbackLaneId
 }
 
 /**
@@ -1088,7 +1158,11 @@ export async function importProjectFromFile() {
       }
     }
 
-    const rawMediaAudioClip = canonicalMetadata?.mediaAudioClip || projectData.mediaAudioClip || null
+    const rawTimelineLanes = getProjectFirstField(projectData, canonicalMetadata, 'timelineLanes')
+    const normalizedTimelineLanes = normalizeTimelineLanes(rawTimelineLanes)
+    const fallbackTimelineLaneId = getFallbackTimelineLaneId(normalizedTimelineLanes)
+
+    const rawMediaAudioClip = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioClip') || null
     const importedMediaAudioPath = await importMediaFile(rawMediaAudioClip?.path || null, 'media audio clip')
 
     const fallbackEvents = Array.isArray(projectData.events)
@@ -1124,6 +1198,7 @@ export async function importProjectFromFile() {
       cursorImages: mergedCursorImages,
       geometry: mergedGeometry,
       recordingGeometry: mergedGeometry,
+      timelineLanes: normalizedTimelineLanes,
     }
 
     if (rawMediaAudioClip && importedMediaAudioPath) {
@@ -1146,7 +1221,7 @@ export async function importProjectFromFile() {
       mergedRuntimeMetadata.mediaAudioClip = null
     }
 
-    const rawMediaAudioRegions = canonicalMetadata?.mediaAudioRegions || projectData.mediaAudioRegions || {}
+    const rawMediaAudioRegions = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioRegions') || {}
     const normalizedMediaAudioRegions: ImportedProjectPayload['mediaAudioRegions'] = {}
     if (mergedRuntimeMetadata.mediaAudioClip && rawMediaAudioRegions && typeof rawMediaAudioRegions === 'object') {
       const clipDuration = Math.max(0, mergedRuntimeMetadata.mediaAudioClip.duration || 0)
@@ -1183,7 +1258,7 @@ export async function importProjectFromFile() {
         normalizedMediaAudioRegions[regionId] = {
           id: regionId || rawRegion.id || `media-audio-${Date.now()}`,
           type: 'media-audio',
-          laneId: rawRegion.laneId || 'lane-1',
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
           startTime,
           duration,
           sourceStart,
@@ -1207,7 +1282,7 @@ export async function importProjectFromFile() {
         normalizedMediaAudioRegions[regionId] = {
           id: regionId,
           type: 'media-audio',
-          laneId: 'lane-1',
+          laneId: fallbackTimelineLaneId,
           startTime: mergedRuntimeMetadata.mediaAudioClip.startTime || 0,
           duration: legacyDuration,
           sourceStart: 0,
@@ -1221,7 +1296,7 @@ export async function importProjectFromFile() {
     }
     mergedRuntimeMetadata.mediaAudioRegions = normalizedMediaAudioRegions
 
-    const rawChangeSoundRegions = canonicalMetadata?.changeSoundRegions || projectData.changeSoundRegions || {}
+    const rawChangeSoundRegions = getProjectFirstField(projectData, canonicalMetadata, 'changeSoundRegions') || {}
     const normalizedChangeSoundRegions: ImportedProjectPayload['changeSoundRegions'] = {}
     if (rawChangeSoundRegions && typeof rawChangeSoundRegions === 'object') {
       for (const [regionId, rawRegion] of Object.entries(rawChangeSoundRegions)) {
@@ -1251,7 +1326,7 @@ export async function importProjectFromFile() {
         normalizedChangeSoundRegions[regionId] = {
           id: regionId || rawRegion.id || `change-sound-${Date.now()}`,
           type: 'change-sound',
-          laneId: rawRegion.laneId || 'lane-1',
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
           startTime,
           duration,
           sourceKey: 'recording-mic',
