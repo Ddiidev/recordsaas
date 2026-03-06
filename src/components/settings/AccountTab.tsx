@@ -130,7 +130,7 @@ export function AccountTab() {
                 src={session.user.picture}
                 alt={userName}
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
+                className="h-full w-full rounded-[inherit] object-cover"
               />
             ) : (
               <UserCircle className="w-8 h-8 text-muted-foreground" />

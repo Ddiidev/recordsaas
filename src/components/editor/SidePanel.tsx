@@ -42,17 +42,17 @@ function TabButton({ label, icon, isActive, onClick, disabled }: TabButtonProps)
           <button
             onClick={onClick}
             className={cn(
-              'icon-hover group flex w-full flex-col items-center justify-center rounded-lg px-1.5 py-2 transition-all duration-150',
+              'icon-hover group flex aspect-square w-full items-center justify-center rounded-lg border border-transparent transition-all duration-150',
               'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ring-offset-sidebar',
               isActive
-                ? 'bg-accent/70 text-primary shadow-sm'
+                ? 'border-primary/70 bg-accent/40 text-primary'
                 : 'text-muted-foreground hover:bg-accent/25 hover:text-foreground',
-              disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground',
+              disabled && 'cursor-not-allowed border-transparent opacity-50 hover:bg-transparent hover:text-muted-foreground',
             )}
             aria-label={label}
             disabled={disabled}
           >
-            <span className="flex h-9 w-9 items-center justify-center">
+            <span className="flex h-6 w-6 items-center justify-center">
               {icon}
             </span>
           </button>
