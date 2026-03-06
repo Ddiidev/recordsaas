@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, memo, useState, useCallback } from 'react'
 import { useEditorStore } from '../../store/editorStore'
-import { Movie } from 'tabler-icons-react'
-import { FullscreenIcon, ExitFullscreenIcon } from '../ui/icons'
 import {
+  ExitFullscreenIcon,
+  FullscreenIcon,
+  IconShell,
+  Movie,
   PlayerPlay,
   PlayerTrackPrev as RewindIcon,
   PlayerPause,
   PlayerSkipBack,
   PlayerSkipForward,
-} from 'tabler-icons-react'
+} from '@icons'
 import { useShallow } from 'zustand/react/shallow'
 import { formatTime } from '../../lib/utils'
 import { Slider } from '../ui/slider'
@@ -33,10 +35,14 @@ export const Preview = memo(
     const {
       videoUrl,
       audioUrl,
+      mediaAudioClip,
+      mediaAudioRegions,
+      changeSoundRegions,
       zoomRegions,
       cutRegions,
       speedRegions,
       blurRegions,
+      swapRegions,
       timelineLanes,
       selectedRegionId,
       webcamVideoUrl,
@@ -47,6 +53,7 @@ export const Preview = memo(
       togglePreviewFullScreen,
       frameStyles,
       isWebcamVisible,
+      webcamLayout,
       webcamPosition,
       webcamStyles,
       videoDimensions,
@@ -63,10 +70,14 @@ export const Preview = memo(
       useShallow((state) => ({
         videoUrl: state.videoUrl,
         audioUrl: state.audioUrl,
+        mediaAudioClip: state.mediaAudioClip,
+        mediaAudioRegions: state.mediaAudioRegions,
+        changeSoundRegions: state.changeSoundRegions,
         zoomRegions: state.zoomRegions,
         cutRegions: state.cutRegions,
         speedRegions: state.speedRegions,
         blurRegions: state.blurRegions,
+        swapRegions: state.swapRegions,
         timelineLanes: state.timelineLanes,
         selectedRegionId: state.selectedRegionId,
         webcamVideoUrl: state.webcamVideoUrl,
@@ -77,6 +88,7 @@ export const Preview = memo(
         togglePreviewFullScreen: state.togglePreviewFullScreen,
         frameStyles: state.frameStyles,
         isWebcamVisible: state.isWebcamVisible,
+        webcamLayout: state.webcamLayout,
         webcamPosition: state.webcamPosition,
         webcamStyles: state.webcamStyles,
         videoDimensions: state.videoDimensions,
@@ -92,17 +104,79 @@ export const Preview = memo(
       })),
     )
 
-    const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack } = useEditorStore.getState()
+    const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack, setMediaAudioDuration } = useEditorStore.getState()
     const isPlaying = useEditorStore((state) => state.isPlaying)
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
-    const audioRef = useRef<HTMLAudioElement>(null)
+    const recordingAudioRef = useRef<HTMLAudioElement>(null)
+    const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
     const lastUiSyncAtRef = useRef(0)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
+    const hasSeparateAudioTracks = !!audioUrl || !!mediaAudioClip?.url
+
+    const resolveRecordingForTime = useCallback(
+      (playbackTime: number) => {
+        if (!audioUrl) {
+          return { isActive: false, sourceTime: 0, volumeMultiplier: 0 }
+        }
+
+        const activeRegion = getTopActiveRegionAtTime(Object.values(changeSoundRegions), playbackTime, timelineLanes)
+        if (!activeRegion) {
+          return { isActive: true, sourceTime: playbackTime, volumeMultiplier: 1 }
+        }
+
+        const localTime = Math.max(0, playbackTime - activeRegion.startTime)
+        const safeDuration = Math.max(0.001, activeRegion.duration)
+        const timeFromStart = Math.min(localTime, safeDuration)
+        const timeToEnd = Math.max(0, safeDuration - timeFromStart)
+        const fadeInGain =
+          activeRegion.fadeInDuration > 0 ? Math.max(0, Math.min(1, timeFromStart / activeRegion.fadeInDuration)) : 1
+        const fadeOutGain =
+          activeRegion.fadeOutDuration > 0 ? Math.max(0, Math.min(1, timeToEnd / activeRegion.fadeOutDuration)) : 1
+        const baseGain = activeRegion.isMuted ? 0 : Math.max(0, Math.min(1, activeRegion.volume))
+
+        return {
+          isActive: true,
+          sourceTime: playbackTime,
+          volumeMultiplier: Math.max(0, Math.min(1, baseGain * Math.min(fadeInGain, fadeOutGain))),
+        }
+      },
+      [audioUrl, changeSoundRegions, timelineLanes],
+    )
+
+    const resolveMediaForTime = useCallback(
+      (playbackTime: number) => {
+        if (!mediaAudioClip) {
+          return { isActive: false, sourceTime: 0, volumeMultiplier: 0 }
+        }
+        const activeRegion = getTopActiveRegionAtTime(Object.values(mediaAudioRegions), playbackTime, timelineLanes)
+        if (!activeRegion) {
+          return { isActive: false, sourceTime: 0, volumeMultiplier: 0 }
+        }
+
+        const localTime = Math.max(0, playbackTime - activeRegion.startTime)
+        const sourceTime = Math.max(0, activeRegion.sourceStart + localTime)
+        const safeDuration = Math.max(0.001, activeRegion.duration)
+        const timeFromStart = Math.min(localTime, safeDuration)
+        const timeToEnd = Math.max(0, safeDuration - timeFromStart)
+        const fadeInGain =
+          activeRegion.fadeInDuration > 0 ? Math.max(0, Math.min(1, timeFromStart / activeRegion.fadeInDuration)) : 1
+        const fadeOutGain =
+          activeRegion.fadeOutDuration > 0 ? Math.max(0, Math.min(1, timeToEnd / activeRegion.fadeOutDuration)) : 1
+        const baseGain = activeRegion.isMuted ? 0 : Math.max(0, Math.min(1, activeRegion.volume))
+
+        return {
+          isActive: true,
+          sourceTime,
+          volumeMultiplier: Math.max(0, Math.min(1, baseGain * Math.min(fadeInGain, fadeOutGain))),
+        }
+      },
+      [mediaAudioClip, mediaAudioRegions, timelineLanes],
+    )
 
     // --- Start of Changes for Fullscreen Controls ---
     const [isControlBarVisible, setIsControlBarVisible] = useState(false)
@@ -263,8 +337,10 @@ export const Preview = memo(
       cutRegions,
       speedRegions,
       blurRegions,
+      swapRegions,
       timelineLanes,
       isWebcamVisible,
+      webcamLayout,
       webcamPosition,
       webcamStyles,
       videoDimensions,
@@ -286,29 +362,102 @@ export const Preview = memo(
       const video = videoRef.current
       if (!video) return
       const webcamVideo = webcamVideoRef.current
-      const audio = audioRef.current
+      const recordingAudio = recordingAudioRef.current
+      const mediaAudio = mediaAudioRef.current
       if (isPlaying) {
         video.play().catch(console.error)
         webcamVideo?.play().catch(console.error)
-        audio?.play().catch(console.error)
+        if (recordingAudio) {
+          const resolvedRecording = resolveRecordingForTime(video.currentTime)
+          if (resolvedRecording.isActive) {
+            if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
+              recordingAudio.currentTime = resolvedRecording.sourceTime
+            }
+            recordingAudio.playbackRate = video.playbackRate
+            recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+            recordingAudio.play().catch(console.error)
+          } else {
+            recordingAudio.pause()
+            recordingAudio.currentTime = 0
+          }
+        }
+        if (mediaAudio) {
+          const resolvedMedia = resolveMediaForTime(video.currentTime)
+          if (resolvedMedia.isActive) {
+            if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
+              mediaAudio.currentTime = resolvedMedia.sourceTime
+            }
+            mediaAudio.playbackRate = video.playbackRate
+            mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+            mediaAudio.play().catch(console.error)
+          } else {
+            mediaAudio.pause()
+            mediaAudio.currentTime = 0
+          }
+        }
       } else {
         video.pause()
         webcamVideo?.pause()
-        audio?.pause()
+        recordingAudio?.pause()
+        mediaAudio?.pause()
         // When pausing, reset playbackRate to 1 so scrubbing is at normal speed
         video.playbackRate = 1
         if (webcamVideo) webcamVideo.playbackRate = 1
-        if (audio) audio.playbackRate = 1
+        if (recordingAudio) recordingAudio.playbackRate = 1
+        if (mediaAudio) mediaAudio.playbackRate = 1
       }
-    }, [isPlaying, videoRef])
+    }, [isPlaying, resolveRecordingForTime, resolveMediaForTime, videoRef, volume])
+
+    useEffect(() => {
+      const video = videoRef.current
+      const recordingAudio = recordingAudioRef.current
+      if (!video || !recordingAudio) return
+
+      const resolvedRecording = resolveRecordingForTime(video.currentTime)
+      if (!resolvedRecording.isActive) {
+        recordingAudio.pause()
+        recordingAudio.currentTime = 0
+        return
+      }
+
+      if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
+        recordingAudio.currentTime = resolvedRecording.sourceTime
+      }
+      recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+      if (!isPlaying) {
+        recordingAudio.pause()
+      }
+    }, [audioUrl, isPlaying, resolveRecordingForTime, videoRef, volume])
+
+    useEffect(() => {
+      const video = videoRef.current
+      const mediaAudio = mediaAudioRef.current
+      if (!video || !mediaAudio) return
+
+      const resolvedMedia = resolveMediaForTime(video.currentTime)
+      if (!resolvedMedia.isActive) {
+        mediaAudio.pause()
+        mediaAudio.currentTime = 0
+        return
+      }
+
+      if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
+        mediaAudio.currentTime = resolvedMedia.sourceTime
+      }
+      mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+      if (!isPlaying) {
+        mediaAudio.pause()
+      }
+    }, [mediaAudioClip?.url, isPlaying, resolveMediaForTime, videoRef, volume])
 
     // Effect to handle volume and mute state
     useEffect(() => {
       const video = videoRef.current
-      const audio = audioRef.current
+      const recordingAudio = recordingAudioRef.current
+      const mediaAudio = mediaAudioRef.current
       if (video) {
         // Video is always muted when we have a separate audio track
-        if (audioUrl) {
+        if (hasSeparateAudioTracks) {
           video.muted = true
         } else {
           // No separate audio, use video's own audio
@@ -316,16 +465,25 @@ export const Preview = memo(
           video.muted = isMuted
         }
       }
-      if (audio) {
-        audio.volume = volume
-        audio.muted = isMuted
+      if (recordingAudio) {
+        const playbackTime = video?.currentTime ?? currentTime
+        const resolvedRecording = resolveRecordingForTime(playbackTime)
+        recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+        recordingAudio.muted = isMuted
       }
-    }, [volume, isMuted, videoRef, audioUrl])
+      if (mediaAudio) {
+        const playbackTime = video?.currentTime ?? currentTime
+        const resolvedMedia = resolveMediaForTime(playbackTime)
+        mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+        mediaAudio.muted = isMuted
+      }
+    }, [volume, isMuted, videoRef, hasSeparateAudioTracks, currentTime, resolveRecordingForTime, resolveMediaForTime])
 
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
-      const audio = audioRef.current
+      const recordingAudio = recordingAudioRef.current
+      const mediaAudio = mediaAudioRef.current
       let playbackTime = video.currentTime
 
       // Handle cut regions without depending on store currentTime updates during playback
@@ -334,9 +492,24 @@ export const Preview = memo(
         if (activeCutRegion) {
           playbackTime = activeCutRegion.startTime + activeCutRegion.duration
           video.currentTime = playbackTime
-          // Sync audio with the jump
-          if (audio) {
-            audio.currentTime = playbackTime
+          const resolvedRecording = resolveRecordingForTime(playbackTime)
+          const resolvedMedia = resolveMediaForTime(playbackTime)
+
+          if (recordingAudio) {
+            if (resolvedRecording.isActive) {
+              recordingAudio.currentTime = resolvedRecording.sourceTime
+            } else {
+              recordingAudio.pause()
+              recordingAudio.currentTime = 0
+            }
+          }
+          if (mediaAudio) {
+            if (resolvedMedia.isActive) {
+              mediaAudio.currentTime = resolvedMedia.sourceTime
+            } else {
+              mediaAudio.pause()
+              mediaAudio.currentTime = 0
+            }
           }
           syncCurrentTimeToStore(playbackTime, true)
         }
@@ -355,10 +528,15 @@ export const Preview = memo(
         playbackTime = endTrimRegion.startTime
         video.currentTime = playbackTime
         video.pause()
-        // Also pause audio
-        if (audio) {
-          audio.currentTime = playbackTime
-          audio.pause()
+        if (recordingAudio) {
+          const resolvedRecording = resolveRecordingForTime(playbackTime)
+          recordingAudio.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
+          recordingAudio.pause()
+        }
+        if (mediaAudio) {
+          const resolvedMedia = resolveMediaForTime(playbackTime)
+          mediaAudio.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
+          mediaAudio.pause()
         }
         syncCurrentTimeToStore(playbackTime, true)
       }
@@ -368,12 +546,41 @@ export const Preview = memo(
           webcamVideoRef.current.currentTime = playbackTime
         }
       }
-      if (audio) {
-        // Sync audio with video
-        if (Math.abs(audio.currentTime - playbackTime) > 0.1) {
-          audio.currentTime = playbackTime
+      if (recordingAudio) {
+        const resolvedRecording = resolveRecordingForTime(playbackTime)
+        if (resolvedRecording.isActive) {
+          if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
+            recordingAudio.currentTime = resolvedRecording.sourceTime
+          }
+          recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+          recordingAudio.playbackRate = video.playbackRate
+          if (isPlaying && recordingAudio.paused) {
+            recordingAudio.play().catch(console.error)
+          }
+        } else {
+          if (!recordingAudio.paused) {
+            recordingAudio.pause()
+          }
+          recordingAudio.currentTime = 0
         }
-        audio.playbackRate = video.playbackRate // Sync audio speed
+      }
+      if (mediaAudio) {
+        const resolvedMedia = resolveMediaForTime(playbackTime)
+        if (resolvedMedia.isActive) {
+          if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
+            mediaAudio.currentTime = resolvedMedia.sourceTime
+          }
+          mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+          mediaAudio.playbackRate = video.playbackRate
+          if (isPlaying && mediaAudio.paused) {
+            mediaAudio.play().catch(console.error)
+          }
+        } else {
+          if (!mediaAudio.paused) {
+            mediaAudio.pause()
+          }
+          mediaAudio.currentTime = 0
+        }
       }
 
       if (isPlaying) {
@@ -432,18 +639,49 @@ export const Preview = memo(
       }
     }, [videoRef])
 
-    const handleAudioLoadedMetadata = useCallback(() => {
+    const handleRecordingAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
-      const audio = audioRef.current
-      if (video && audio) {
-        audio.currentTime = video.currentTime
-        if (video.paused) {
-          audio.pause()
+      const recordingAudio = recordingAudioRef.current
+      if (video && recordingAudio) {
+        const resolvedRecording = resolveRecordingForTime(video.currentTime)
+        if (!resolvedRecording.isActive) {
+          recordingAudio.pause()
+          recordingAudio.currentTime = 0
         } else {
-          audio.play().catch(console.error)
+          recordingAudio.currentTime = resolvedRecording.sourceTime
+          recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+          if (video.paused) {
+            recordingAudio.pause()
+          } else {
+            recordingAudio.play().catch(console.error)
+          }
         }
       }
-    }, [videoRef])
+    }, [resolveRecordingForTime, videoRef, volume])
+
+    const handleMediaAudioLoadedMetadata = useCallback(() => {
+      const video = videoRef.current
+      const mediaAudio = mediaAudioRef.current
+      if (video && mediaAudio) {
+        if (mediaAudioClip && Number.isFinite(mediaAudio.duration)) {
+          setMediaAudioDuration(mediaAudio.duration)
+        }
+        const resolvedMedia = resolveMediaForTime(video.currentTime)
+
+        if (!resolvedMedia.isActive) {
+          mediaAudio.pause()
+          mediaAudio.currentTime = 0
+        } else {
+          mediaAudio.currentTime = resolvedMedia.sourceTime
+          mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+          if (video.paused) {
+            mediaAudio.pause()
+          } else {
+            mediaAudio.play().catch(console.error)
+          }
+        }
+      }
+    }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, videoRef, volume])
 
     const handleVideoPlay = useCallback(() => {
       setPlaying(true)
@@ -488,8 +726,13 @@ export const Preview = memo(
       if (webcamVideoRef.current) {
         webcamVideoRef.current.currentTime = value
       }
-      if (audioRef.current) {
-        audioRef.current.currentTime = value
+      if (recordingAudioRef.current) {
+        const resolvedRecording = resolveRecordingForTime(value)
+        recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
+      }
+      if (mediaAudioRef.current) {
+        const resolvedMedia = resolveMediaForTime(value)
+        mediaAudioRef.current.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
       }
     }
 
@@ -508,8 +751,13 @@ export const Preview = memo(
       if (webcamVideoRef.current) {
         webcamVideoRef.current.currentTime = rewindTime
       }
-      if (audioRef.current) {
-        audioRef.current.currentTime = rewindTime
+      if (recordingAudioRef.current) {
+        const resolvedRecording = resolveRecordingForTime(rewindTime)
+        recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
+      }
+      if (mediaAudioRef.current) {
+        const resolvedMedia = resolveMediaForTime(rewindTime)
+        mediaAudioRef.current.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
       }
     }
 
@@ -536,10 +784,10 @@ export const Preview = memo(
               className="rounded-lg shadow-2xl"
             />
           ) : (
-            <div className="w-full h-full bg-gradient-to-br from-muted/30 to-muted/10 border-2 border-dashed border-border/40 rounded-xl flex flex-col items-center justify-center text-muted-foreground gap-4 backdrop-blur-sm">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center backdrop-blur-md border border-border/30 shadow-md">
-                <Movie className="w-10 h-10 text-primary/60" />
-              </div>
+            <div className="flex h-full w-full flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-border/40 bg-gradient-to-br from-muted/30 to-muted/10 text-muted-foreground backdrop-blur-sm">
+              <IconShell active className="h-20 w-20 shadow-md">
+                <Movie className="h-10 w-10 text-primary/60" />
+              </IconShell>
               <div className="text-center space-y-1">
                 <p className="text-lg font-semibold text-foreground/80">No project loaded</p>
                 <p className="text-sm text-muted-foreground/70">Load a project to begin editing</p>
@@ -573,9 +821,17 @@ export const Preview = memo(
         />
         {audioUrl && (
           <audio
-            ref={audioRef}
+            ref={recordingAudioRef}
             src={audioUrl}
-            onLoadedMetadata={handleAudioLoadedMetadata}
+            onLoadedMetadata={handleRecordingAudioLoadedMetadata}
+            style={{ display: 'none' }}
+          />
+        )}
+        {mediaAudioClip?.url && (
+          <audio
+            ref={mediaAudioRef}
+            src={mediaAudioClip.url}
+            onLoadedMetadata={handleMediaAudioLoadedMetadata}
             style={{ display: 'none' }}
           />
         )}
@@ -601,7 +857,7 @@ export const Preview = memo(
             style={{ maxWidth: isPreviewFullScreen ? 'min(90%, 800px)' : '100%' }}
           >
             <div
-              className="bg-card/95 backdrop-blur-xl border border-border/40 shadow-md rounded-xl px-3 py-2 flex items-center gap-2 max-w-full mx-auto"
+              className="mx-auto flex max-w-full items-center gap-2 rounded-lg border border-border/40 bg-card/95 px-3 py-2 shadow-md backdrop-blur-xl"
               style={{
                 width: isPreviewFullScreen ? 'auto' : controlBarWidth,
                 minWidth: isPreviewFullScreen ? 'auto' : 420,
@@ -612,7 +868,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={togglePlay}
                 title="Play/Pause (Space)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 {isPlaying ? <PlayerPause className="w-4 h-4" /> : <PlayerPlay className="w-4 h-4 ml-0.5" />}
               </Button>
@@ -621,7 +877,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={handleRewind}
                 title="Rewind to Start"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <RewindIcon className="w-4 h-4" />
               </Button>
@@ -630,7 +886,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={() => onSeekFrame('prev')}
                 title="Previous Frame (J)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <PlayerSkipBack className="w-4 h-4" />
               </Button>
@@ -639,7 +895,7 @@ export const Preview = memo(
                 size="icon"
                 onClick={() => onSeekFrame('next')}
                 title="Next Frame (K)"
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 <PlayerSkipForward className="w-4 h-4" />
               </Button>
@@ -662,7 +918,7 @@ export const Preview = memo(
                 variant="ghost"
                 size="icon"
                 onClick={togglePreviewFullScreen}
-                className="flex-shrink-0 text-foreground hover:text-foreground hover:bg-accent h-10 w-10 rounded-xl transition-all duration-150"
+                className="icon-hover h-10 w-10 flex-shrink-0 rounded-md text-foreground hover:bg-accent hover:text-foreground"
               >
                 {isPreviewFullScreen ? (
                   <ExitFullscreenIcon className="w-4 h-4" />

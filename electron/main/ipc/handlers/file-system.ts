@@ -2,19 +2,16 @@
 
 import fs from 'node:fs/promises'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function handleReadFile(_event: any, filePath: string): Promise<string> {
+export async function handleReadFile(_event: unknown, filePath: string): Promise<string> {
   return fs.readFile(filePath, 'utf-8')
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function handleReadFileBuffer(_event: any, filePath: string): Promise<Buffer> {
+export async function handleReadFileBuffer(_event: unknown, filePath: string): Promise<Buffer> {
   return fs.readFile(filePath)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleSaveProject(
-  _event: any,
+  _event: unknown,
   payload: { targetFolder: string; projectData: string; mediaFiles: string[] }
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -51,8 +48,8 @@ export async function handleSaveProject(
     }
 
     return { success: true }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error saving project:', error)
-    return { success: false, error: error.message }
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown save error' }
   }
 }

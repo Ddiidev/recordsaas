@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Minus, X } from 'tabler-icons-react'
+import { Minus, X } from '@icons'
+import { cn } from '../../lib/utils'
 
 const Maximize2 = (props: React.SVGProps<SVGSVGElement>) => (
   <svg
@@ -43,6 +44,33 @@ const Minimize2 = (props: React.SVGProps<SVGSVGElement>) => (
   </svg>
 )
 
+function WindowControlButton({
+  icon,
+  label,
+  onClick,
+  intent = 'neutral',
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  intent?: 'neutral' | 'close'
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'icon-hover flex h-7 w-7 items-center justify-center rounded-md border transition-all duration-150',
+        'border-border/60 bg-background/75 text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground',
+        intent === 'close' &&
+          'hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/40',
+      )}
+      aria-label={label}
+    >
+      {icon}
+    </button>
+  )
+}
+
 export function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false)
 
@@ -69,32 +97,16 @@ export function WindowControls() {
 
   // Render for Linux (macOS has native controls)
   return (
-    <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
-      <button
-        onClick={handleClose}
-        className="group w-3 h-3 bg-red-400 rounded-full flex justify-center items-center transition-colors duration-200 hover:bg-red-600"
-        aria-label="Close"
-      >
-        <X className="w-1.5 h-1.5 text-red-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-      </button>
-      <button
-        onClick={handleMinimize}
-        className="group w-3 h-3 bg-yellow-400 rounded-full flex justify-center items-center transition-colors duration-200 hover:bg-yellow-600"
-        aria-label="Minimize"
-      >
-        <Minus className="w-1.5 h-1.5 text-yellow-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-      </button>
-      <button
+    <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
+      <WindowControlButton icon={<Minus className="h-3.5 w-3.5" />} label="Minimize" onClick={handleMinimize} />
+      <WindowControlButton
+        icon={
+          isMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />
+        }
+        label={isMaximized ? 'Restore' : 'Maximize'}
         onClick={handleMaximize}
-        className="group w-3 h-3 bg-green-400 rounded-full flex justify-center items-center transition-colors duration-200 hover:bg-green-600"
-        aria-label={isMaximized ? 'Restore' : 'Maximize'}
-      >
-        {isMaximized ? (
-          <Minimize2 className="w-1.5 h-1.5 text-green-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-        ) : (
-          <Maximize2 className="w-1.5 h-1.5 text-green-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-        )}
-      </button>
+      />
+      <WindowControlButton icon={<X className="h-3.5 w-3.5" />} label="Close" onClick={handleClose} intent="close" />
     </div>
   )
 }

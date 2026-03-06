@@ -1,9 +1,10 @@
-import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search, Refresh } from 'tabler-icons-react'
+import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search, Refresh, AdjustmentsHorizontal } from '@icons'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Slider } from '../ui/slider'
 import { ToolbarButton } from './ToolbarButton'
+import { sortTimelineLanes } from '../../lib/timeline-lanes'
 
 export function PreviewControls() {
   const {
@@ -12,6 +13,9 @@ export function PreviewControls() {
     addSpeedRegion,
     addBlurRegion,
     addSwapRegion,
+    addChangeSoundRegion,
+    currentTime,
+    timelineLanes,
     timelineZoom,
     setTimelineZoom,
     selectedRegionId,
@@ -19,6 +23,7 @@ export function PreviewControls() {
     aspectRatio,
     setAspectRatio,
   } = useEditorStore()
+  const fallbackLaneId = sortTimelineLanes(timelineLanes)[0]?.id ?? 'lane-1'
 
   const { undo, redo, pastStates, futureStates } = useEditorStore.temporal.getState()
 
@@ -51,6 +56,14 @@ export function PreviewControls() {
           <ToolbarButton tooltip="Add Camera Swap" onClick={() => addSwapRegion()} disabled={!!selectedRegionId}>
             <Refresh className="w-4 h-4" />
             <span>Swap</span>
+          </ToolbarButton>
+          <ToolbarButton
+            tooltip="Add Change Sound Region"
+            onClick={() => addChangeSoundRegion({ startTime: currentTime, laneId: fallbackLaneId })}
+            disabled={!!selectedRegionId}
+          >
+            <AdjustmentsHorizontal className="w-4 h-4" />
+            <span>Change Sound</span>
           </ToolbarButton>
           <ToolbarButton
             variant="icon"

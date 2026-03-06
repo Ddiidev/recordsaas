@@ -1,7 +1,7 @@
 // --- Types ---
 export type BackgroundType = 'color' | 'gradient' | 'image' | 'wallpaper'
 export type AspectRatio = '16:9' | '9:16' | '4:3' | '3:4' | '1:1'
-export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'animation' | 'settings'
+export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'media' | 'animation' | 'settings'
 export type AppearanceMode = 'light' | 'dark' | 'auto'
 
 export interface Background {
@@ -43,6 +43,26 @@ export interface CursorStyles {
   clickScaleEasing: string
 }
 
+export type BlurRegionStyle = 'blur' | 'pixelated'
+export type CameraSwapTransition = 'none' | 'fade' | 'slide' | 'scale'
+
+export interface BlurPresetDefaults {
+  duration: number
+  style: BlurRegionStyle
+  intensity: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface SwapPresetDefaults {
+  duration: number
+  showDesktopOverlay: boolean
+  transition: CameraSwapTransition
+  transitionDuration: number
+}
+
 export interface Preset {
   id: string
   name: string
@@ -51,7 +71,10 @@ export interface Preset {
   isDefault?: boolean
   webcamStyles?: WebcamStyles
   webcamPosition?: WebcamPosition
+  webcamLayout?: WebcamLayout
   isWebcamVisible?: boolean
+  blurDefaults?: BlurPresetDefaults
+  swapDefaults?: SwapPresetDefaults
 }
 
 export interface TimelineLane {
@@ -97,7 +120,35 @@ export interface SpeedRegion {
   zIndex: number
 }
 
-export type BlurRegionStyle = 'blur' | 'pixelated'
+export interface MediaAudioRegion {
+  id: string
+  type: 'media-audio'
+  laneId: string
+  startTime: number
+  duration: number
+  sourceStart: number
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex: number
+}
+
+export type RecordingAudioSourceKey = 'recording-mic'
+
+export interface ChangeSoundRegion {
+  id: string
+  type: 'change-sound'
+  laneId: string
+  startTime: number
+  duration: number
+  sourceKey: RecordingAudioSourceKey
+  isMuted: boolean
+  volume: number
+  fadeInDuration: number
+  fadeOutDuration: number
+  zIndex: number
+}
 
 export interface BlurRegion {
   id: string
@@ -121,12 +172,19 @@ export interface CameraSwapRegion {
   startTime: number
   duration: number
   showDesktopOverlay: boolean
-  transition: 'none' | 'fade' | 'slide' | 'scale'
+  transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number
 }
 
-export type TimelineRegion = ZoomRegion | CutRegion | SpeedRegion | BlurRegion | CameraSwapRegion
+export type TimelineRegion =
+  | ZoomRegion
+  | CutRegion
+  | SpeedRegion
+  | BlurRegion
+  | CameraSwapRegion
+  | MediaAudioRegion
+  | ChangeSoundRegion
 
 export interface MetaDataItem {
   timestamp: number
@@ -174,7 +232,22 @@ export interface WebcamPosition {
     | 'right-center'
 }
 
-export type WebcamShape = 'circle' | 'square' | 'rectangle'
+export interface WebcamCrop {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export type WebcamShape = 'circle' | 'square' | 'rectangle' | 'phone'
+export type WebcamLayoutMode = 'overlay' | 'side-by-side'
+export type WebcamLayoutSide = 'left' | 'right'
+
+export interface WebcamLayout {
+  mode: WebcamLayoutMode
+  side: WebcamLayoutSide
+  webcamWidthPercent: number
+}
 
 export interface WebcamStyles {
   shape: WebcamShape
@@ -191,6 +264,7 @@ export interface WebcamStyles {
   border: boolean
   borderWidth: number
   borderColor: string
+  crop: WebcamCrop
 }
 
 export type Dimensions = { width: number; height: number }
@@ -198,6 +272,15 @@ export type RecordingGeometry = { x: number; y: number; width: number; height: n
 export type VideoDimensions = Dimensions
 export type ScreenSize = Dimensions
 export type CursorTheme = Record<number, Record<string, CursorFrame[]>>
+
+export interface MediaAudioClip {
+  id: string
+  path: string
+  url: string
+  name: string
+  duration: number
+  startTime: number
+}
 
 // --- Slice State & Actions Types ---
 
@@ -207,6 +290,7 @@ export interface ProjectState {
   videoUrl: string | null
   audioPath: string | null
   audioUrl: string | null
+  mediaAudioClip: MediaAudioClip | null
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
   screenSize: ScreenSize | null
@@ -236,6 +320,10 @@ export interface ProjectActions {
   setPostProcessingCursorScale: (scale: number) => Promise<void>
   reloadCursorTheme: (themeName: string) => Promise<void>
   setHasAudioTrack: (hasAudio: boolean) => void
+  setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
+  setMediaAudioStartTime: (startTime: number) => void
+  setMediaAudioDuration: (duration: number) => void
+  clearMediaAudioClip: () => void
   setOriginalProjectPath: (path: string) => void
 }
 
@@ -271,6 +359,8 @@ export interface TimelineState {
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
+  mediaAudioRegions: Record<string, MediaAudioRegion>
+  changeSoundRegions: Record<string, ChangeSoundRegion>
   previewCutRegion: CutRegion | null
   selectedRegionId: string | null
   activeZoomRegionId: string | null
@@ -288,6 +378,10 @@ export interface TimelineActions {
   addSpeedRegion: () => void
   addBlurRegion: () => void
   addSwapRegion: () => void
+  addMediaAudioRegion: (params?: { startTime?: number; laneId?: string; sourceStart?: number; duration?: number }) => void
+  addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
+  splitMediaAudioRegion: (regionId: string, splitTime: number) => void
+  splitChangeSoundRegion: (regionId: string, splitTime: number) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void
@@ -311,6 +405,7 @@ export interface PresetActions {
   updateActivePreset: () => void
   deletePreset: (id: string) => void
   _ensureActivePresetIsWritable: () => void
+  _updateActivePresetToolDefaults: (defaults: { blurDefaults?: BlurPresetDefaults; swapDefaults?: SwapPresetDefaults }) => void
   _persistPresets: (presets: Record<string, Preset>) => Promise<void>
 }
 
@@ -318,10 +413,12 @@ export interface WebcamState {
   webcamVideoPath: string | null
   webcamVideoUrl: string | null
   isWebcamVisible: boolean
+  webcamLayout: WebcamLayout
   webcamPosition: WebcamPosition
   webcamStyles: WebcamStyles
 }
 export interface WebcamActions {
+  updateWebcamLayout: (layout: Partial<WebcamLayout>) => void
   setWebcamPosition: (position: WebcamPosition) => void
   setWebcamVisibility: (isVisible: boolean) => void
   updateWebcamStyle: (style: Partial<WebcamStyles>) => void
@@ -360,6 +457,7 @@ export type RenderableState = Pick<
   | 'frameStyles'
   | 'videoDimensions'
   | 'aspectRatio'
+  | 'webcamLayout'
   | 'webcamPosition'
   | 'webcamStyles'
   | 'isWebcamVisible'

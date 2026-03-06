@@ -1,4 +1,4 @@
-import { Pointer, Shadow, HandClick } from 'tabler-icons-react'
+import { Pointer, Shadow, HandClick } from '@icons'
 import { SparklesIcon } from '../../ui/icons'
 import { Collapse } from '../../ui/collapse'
 import { cn } from '../../../lib/utils'

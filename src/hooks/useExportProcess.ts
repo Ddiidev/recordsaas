@@ -85,8 +85,10 @@ export const useExportProcess = () => {
       cutRegions: fullState.cutRegions,
       speedRegions: fullState.speedRegions,
       blurRegions: fullState.blurRegions,
+      swapRegions: fullState.swapRegions,
       timelineLanes: fullState.timelineLanes,
       webcamVideoPath: fullState.webcamVideoPath,
+      webcamLayout: fullState.webcamLayout,
       webcamPosition: fullState.webcamPosition,
       webcamStyles: fullState.webcamStyles,
       isWebcamVisible: fullState.isWebcamVisible,
@@ -97,6 +99,9 @@ export const useExportProcess = () => {
       syncOffset: fullState.syncOffset,
       audioPath: fullState.audioPath,
       audioUrl: fullState.audioUrl,
+      mediaAudioClip: fullState.mediaAudioClip,
+      mediaAudioRegions: fullState.mediaAudioRegions,
+      changeSoundRegions: fullState.changeSoundRegions,
     }
 
     setResult(null)

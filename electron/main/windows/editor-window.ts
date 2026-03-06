@@ -22,6 +22,7 @@ export function createEditorWindow(
   recordingGeometry: RecordingGeometry,
   webcamVideoPath?: string,
   audioPath?: string,
+  mediaAudioPath?: string,
   scaleFactor: number = 1,
   originalProjectPath?: string
 ) {
@@ -38,6 +39,7 @@ export function createEditorWindow(
     recordingGeometry,
     webcamVideoPath,
     audioPath,
+    mediaAudioPath,
     scaleFactor,
     originalProjectPath,
   }
@@ -149,10 +151,11 @@ export async function cleanupEditorFiles(files: {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  mediaAudioPath?: string
   originalProjectPath?: string
 }) {
   log.info('[EditorWindow] Cleaning up session files:', files)
-  const unlinkPromises = [files.screenVideoPath, files.webcamVideoPath, files.audioPath, files.metadataPath]
+  const unlinkPromises = [files.screenVideoPath, files.webcamVideoPath, files.audioPath, files.mediaAudioPath, files.metadataPath]
     .filter(Boolean)
     .map((filePath) => (fsSync.existsSync(filePath!) ? fs.unlink(filePath!) : Promise.resolve()))
   try {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
+  CameraSolid,
   Microphone,
   MicrophoneOff,
   DeviceComputerCamera,
@@ -12,10 +13,13 @@ import {
   Pointer,
   FileImport,
   Folder,
+  IconShell,
+  IconSwitch,
+  MicrophoneSolid,
   Square,
   Settings,
   UserCircle,
-} from 'tabler-icons-react'
+} from '@icons'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
@@ -491,7 +495,7 @@ export function RecorderPage() {
               <button
                 onClick={() => window.electronAPI.closeWindow()}
                 style={{ WebkitAppRegion: 'no-drag' }}
-                className="absolute -top-2.5 -left-2.5 z-20 flex items-center justify-center w-6 h-6 rounded-md bg-destructive/90 hover:bg-destructive text-white shadow-lg transition-all hover:scale-110"
+                className="icon-hover absolute -left-2.5 -top-2.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-destructive/30 bg-destructive/90 text-white shadow-lg transition-all hover:scale-110 hover:bg-destructive"
                 aria-label="Close Recorder"
                 disabled={isRecording || actionInProgress !== 'none'}
               >
@@ -504,7 +508,7 @@ export function RecorderPage() {
               <button
                 onClick={() => window.electronAPI.closeWindow()}
                 style={{ WebkitAppRegion: 'no-drag' }}
-                className="absolute -top-2.5 -right-2.5 z-20 flex items-center justify-center w-6 h-6 rounded-md bg-destructive/90 hover:bg-destructive text-white shadow-lg transition-all hover:scale-110"
+                className="icon-hover absolute -right-2.5 -top-2.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-destructive/30 bg-destructive/90 text-white shadow-lg transition-all hover:scale-110 hover:bg-destructive"
                 aria-label="Close Recorder"
                 disabled={isRecording || actionInProgress !== 'none'}
               >
@@ -514,18 +518,18 @@ export function RecorderPage() {
 
             {/* Source Toggle */}
             <div
-              className="flex items-center p-1 bg-muted/60 rounded-xl border border-border/50"
+              className="flex items-center rounded-lg border border-border/50 bg-muted/45 p-1"
               style={{ WebkitAppRegion: 'no-drag' }}
             >
               <SourceButton
-                icon={<DeviceDesktop size={16} />}
+                icon={<IconSwitch regular={DeviceDesktop} active={source === 'fullscreen'} className="h-4 w-4" />}
                 isActive={source === 'fullscreen'}
                 onClick={() => setSource('fullscreen')}
                 tooltip="Full Screen"
                 disabled={isRecording || actionInProgress !== 'none'}
               />
               <SourceButton
-                icon={<Marquee2 size={16} />}
+                icon={<IconSwitch regular={Marquee2} active={source === 'area'} className="h-4 w-4" />}
                 isActive={source === 'area'}
                 onClick={() => setSource('area')}
                 tooltip="Area"
@@ -548,8 +552,10 @@ export function RecorderPage() {
                   aria-label="Select display"
                 >
                   <SelectValue asChild>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <DeviceDesktop size={14} className="text-primary shrink-0" />
+                    <div className="flex items-center gap-2 text-xs">
+                      <IconShell active className="h-6 w-6 shrink-0">
+                        <DeviceDesktop size={14} />
+                      </IconShell>
                       <span className="truncate">
                         {displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...'}
                       </span>
@@ -576,12 +582,14 @@ export function RecorderPage() {
                   aria-label="Select webcam"
                 >
                   <SelectValue asChild>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      {selectedWebcamId !== 'none' ? (
-                        <DeviceComputerCamera size={14} className="text-primary shrink-0" />
-                      ) : (
-                        <DeviceComputerCameraOff size={14} className="text-muted-foreground/60" />
-                      )}
+                    <div className="flex items-center gap-2 text-xs">
+                      <IconShell active={selectedWebcamId !== 'none'} disabled={selectedWebcamId === 'none'} className="h-6 w-6 shrink-0">
+                        {selectedWebcamId !== 'none' ? (
+                          <IconSwitch regular={DeviceComputerCamera} solid={CameraSolid} active className="h-3.5 w-3.5" />
+                        ) : (
+                          <DeviceComputerCameraOff size={14} className="text-muted-foreground/70" />
+                        )}
+                      </IconShell>
                       <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
                         {webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam'}
                       </span>
@@ -609,12 +617,14 @@ export function RecorderPage() {
                   aria-label="Select microphone"
                 >
                   <SelectValue asChild>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      {selectedMicId !== 'none' ? (
-                        <Microphone size={14} className="text-primary shrink-0" />
-                      ) : (
-                        <MicrophoneOff size={14} className="text-muted-foreground/60" />
-                      )}
+                    <div className="flex items-center gap-2 text-xs">
+                      <IconShell active={selectedMicId !== 'none'} disabled={selectedMicId === 'none'} className="h-6 w-6 shrink-0">
+                        {selectedMicId !== 'none' ? (
+                          <IconSwitch regular={Microphone} solid={MicrophoneSolid} active className="h-3.5 w-3.5" />
+                        ) : (
+                          <MicrophoneOff size={14} className="text-muted-foreground/70" />
+                        )}
+                      </IconShell>
                       <span className={cn('truncate', selectedMicId === 'none' && 'text-muted-foreground')}>
                         {mics.find((m) => m.id === selectedMicId)?.name || 'No microphone'}
                       </span>
@@ -638,7 +648,9 @@ export function RecorderPage() {
             {platform === 'linux' && (
               <>
                 <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
-                  <Pointer size={14} className="text-muted-foreground/60" />
+                  <IconShell className="h-6 w-6">
+                    <Pointer size={14} />
+                  </IconShell>
                   <Select
                     value={String(cursorScale)}
                     onValueChange={handleCursorScaleChange}
@@ -670,7 +682,7 @@ export function RecorderPage() {
                         onClick={handleStop}
                         variant="destructive"
                         size="icon"
-                        className="h-10 w-10 rounded-lg shadow-lg"
+                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
                       >
                         <Square size={16} fill="currentColor" />
                       </Button>
@@ -686,7 +698,7 @@ export function RecorderPage() {
                         onClick={handleStart}
                         disabled={isInitializing || actionInProgress !== 'none'}
                         size="icon"
-                        className="h-10 w-10 rounded-lg shadow-lg"
+                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
                       >
                         <Video size={18} />
                       </Button>
@@ -703,7 +715,7 @@ export function RecorderPage() {
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
-                      className="h-10 w-10 rounded-lg shadow-lg"
+                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
                     >
                       <Folder size={18} />
                     </Button>
@@ -719,7 +731,7 @@ export function RecorderPage() {
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
-                      className="h-10 w-10 rounded-lg shadow-lg"
+                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
                     >
                       <FileImport size={18} />
                     </Button>
@@ -735,7 +747,7 @@ export function RecorderPage() {
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
-                      className="h-10 w-10 rounded-lg shadow-lg"
+                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
                     >
                       <Settings size={18} />
                     </Button>
@@ -753,14 +765,14 @@ export function RecorderPage() {
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
-                      className="h-10 w-10 rounded-xl border-2 border-emerald-500 bg-background/80 hover:bg-background cursor-pointer shadow-lg overflow-hidden p-0"
+                      className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-xl border-2 border-emerald-500 bg-background p-0 shadow-lg hover:bg-background"
                     >
                       {authSession.user?.picture ? (
                         <img
                           src={authSession.user.picture}
                           alt={accountTooltip}
                           referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
+                          className="h-full w-full rounded-[inherit] object-cover"
                         />
                       ) : (
                         <UserCircle size={20} className="text-muted-foreground" />
@@ -787,7 +799,7 @@ export function RecorderPage() {
           {/* Webcam Preview */}
           <div
             className={cn(
-              'mt-4 mx-auto w-48 aspect-square rounded-2xl overflow-hidden shadow-xl bg-black transition-all duration-300',
+              'mx-auto mt-4 aspect-square w-48 overflow-hidden rounded-lg bg-black shadow-xl transition-all duration-300',
               isWebcamPreviewVisible
                 ? 'opacity-100 scale-100'
                 : 'opacity-0 scale-95 pointer-events-none',
@@ -829,14 +841,16 @@ const SourceButton = ({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { icon: React.ReactNode; isActive: boolean; tooltip?: string }) => (
   <button
     className={cn(
-      'flex items-center justify-center w-10 h-9 rounded-lg transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      'icon-hover flex h-10 w-10 items-center justify-center rounded-md transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
       isActive
-        ? 'bg-primary shadow-sm text-primary-foreground'
-        : 'text-muted-foreground hover:text-foreground hover:bg-background/50',
+        ? 'bg-background text-primary shadow-sm'
+        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
     )}
     title={tooltip}
     {...props}
   >
-    {icon}
+    <span className="flex h-8 w-8 items-center justify-center">
+      {icon}
+    </span>
   </button>
 )

@@ -2,7 +2,7 @@
 import type React from 'react'
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { useEditorStore } from '../../../store/editorStore'
-import { Loader2 } from 'tabler-icons-react'
+import { Loader2 } from '@icons'
 
 interface FocusPointPickerProps {
   regionId: string

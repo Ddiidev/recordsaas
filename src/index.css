@@ -46,6 +46,83 @@
     @apply focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background;
   }
 
+  .icon-shell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: calc(var(--radius) + 2px);
+    border: 1px solid transparent;
+    transition:
+      background-color 0.16s ease,
+      border-color 0.16s ease,
+      color 0.16s ease,
+      box-shadow 0.16s ease,
+      transform 0.16s ease;
+  }
+
+  .icon-shell-muted {
+    color: var(--muted-foreground);
+    background-color: color-mix(in srgb, var(--muted) 72%, transparent);
+    border-color: color-mix(in srgb, var(--border) 88%, transparent);
+  }
+
+  .icon-shell-active {
+    color: var(--primary);
+    background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--primary) 22%, transparent);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  .icon-shell-disabled {
+    opacity: 0.45;
+  }
+
+  .icon-glyph {
+    transform-origin: center;
+    transition:
+      transform 0.16s ease,
+      color 0.16s ease,
+      opacity 0.16s ease,
+      stroke-width 0.16s ease;
+    will-change: transform;
+  }
+
+  .icon-glyph-active {
+    transform: translateY(-0.5px) scale(1.08);
+  }
+
+  .icon-hover:hover .icon-glyph,
+  button:hover .icon-glyph,
+  [role='button']:hover .icon-glyph,
+  .group:hover .icon-glyph {
+    transform: translateY(-1px) scale(1.12);
+    stroke-width: 2.05;
+  }
+
+  button:disabled .icon-glyph,
+  [role='button'][aria-disabled='true'] .icon-glyph,
+  .icon-shell-disabled .icon-glyph {
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .icon-shell,
+    .icon-glyph {
+      transition:
+        background-color 0.12s ease,
+        border-color 0.12s ease,
+        color 0.12s ease,
+        opacity 0.12s ease;
+    }
+
+    .icon-hover:hover .icon-glyph,
+    button:hover .icon-glyph,
+    [role='button']:hover .icon-glyph,
+    .group:hover .icon-glyph {
+      transform: none;
+    }
+  }
+
   .btn-export-premium {
     background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.85) 100%);
     color: hsl(var(--primary-foreground));
@@ -85,6 +162,13 @@
 
   .timeline-tick {
     background-color: var(--timeline-tick);
+  }
+
+  .media-name-marquee-ltr {
+    animation-name: mediaNameMarqueeLtr;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform;
   }
 
   .color-picker-container {
@@ -139,6 +223,15 @@
     to {
       transform: scale(1);
       opacity: 1;
+    }
+  }
+
+  @keyframes mediaNameMarqueeLtr {
+    from {
+      transform: translateX(var(--marquee-from, 0px));
+    }
+    to {
+      transform: translateX(var(--marquee-to, 0px));
     }
   }
 
@@ -275,7 +368,7 @@
   --color-picker-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   --color-picker-input-bg: hsl(0 0% 99%);
   --color-picker-input-border: hsl(0 0% 89%);
-  --radius: 0.28rem;
+  --radius: 0.24rem;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-heading: 'Outfit', 'Inter', sans-serif;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;

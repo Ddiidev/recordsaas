@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Login, Logout, UserCircle } from 'tabler-icons-react'
+import { Loader2, Login, Logout, UserCircle } from '@icons'
 import type { AuthSession } from '../../types/auth'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
@@ -130,7 +130,7 @@ export function AccountTab() {
                 src={session.user.picture}
                 alt={userName}
                 referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
+                className="h-full w-full rounded-[inherit] object-cover"
               />
             ) : (
               <UserCircle className="w-8 h-8 text-muted-foreground" />

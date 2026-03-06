@@ -6,7 +6,7 @@ import { Input } from '../ui/input'
 import { PresetPreview } from './PresetPreview'
 import type { Preset } from '../../types'
 import { cn } from '../../lib/utils'
-import { Plus, Trash, Check, Lock, Rectangle, BoxPadding, BorderRadius, Shadow, BorderAll } from 'tabler-icons-react'
+import { Plus, Trash, Check, Lock, Rectangle, BoxPadding, BorderRadius, Shadow, BorderAll } from '@icons'
 
 interface PresetModalProps {
   isOpen: boolean
@@ -112,7 +112,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
             </Button>
           )}
           <h2 className="text-xl font-bold text-foreground mb-1">Manage Presets</h2>
-          <p className="text-sm text-muted-foreground">Select, create, or delete your frame style presets.</p>
+          <p className="text-sm text-muted-foreground">Select, create, or delete presets for frame, webcam, blur, and swap defaults.</p>
         </div>
 
         <div className="flex-1 flex flex-row overflow-hidden">
@@ -170,7 +170,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
                 disabled={!newPresetName.trim()}
                 className="w-full h-10 font-medium shadow-sm"
               >
-                <Plus className="w-4 h-4 mr-2" /> Save Current Style
+                <Plus className="w-4 h-4 mr-2" /> Save Current Preset
               </Button>
             </div>
           </div>
@@ -200,6 +200,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
                     styles={previewPreset.styles}
                     aspectRatio={previewPreset.aspectRatio}
                     isWebcamVisible={previewPreset.isWebcamVisible}
+                    webcamLayout={previewPreset.webcamLayout}
                     webcamPosition={previewPreset.webcamPosition}
                     webcamStyles={previewPreset.webcamStyles}
                   />

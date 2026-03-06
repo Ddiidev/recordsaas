@@ -13,6 +13,7 @@ interface UseTimelineInteractionProps {
   duration: number
   defaultLaneId: string
   resolveLaneIdFromClientY: (clientY: number) => string | null
+  timelineStartOffsetPx: number
 }
 
 type DragMovePreview = {
@@ -21,6 +22,18 @@ type DragMovePreview = {
   sourceLaneId: string
   startTime: number
   duration: number
+}
+
+type DraggingRegionState = {
+  id: string
+  regionType: TimelineRegion['type']
+  type: 'move' | 'resize-left' | 'resize-right'
+  initialX: number
+  initialStartTime: number
+  initialDuration: number
+  initialSourceStart: number | null
+  initialLaneId: string
+  isCut: boolean
 }
 
 /**
@@ -37,20 +50,13 @@ export const useTimelineInteraction = ({
   duration,
   defaultLaneId,
   resolveLaneIdFromClientY,
+  timelineStartOffsetPx,
 }: UseTimelineInteractionProps) => {
   const { addCutRegion, deleteRegion, setPreviewCutRegion, updateRegion, setCurrentTime, setSelectedRegionId } =
     useEditorStore()
   const draggedLaneIdRef = useRef<string | null>(null)
 
-  const [draggingRegion, setDraggingRegion] = useState<{
-    id: string
-    type: 'move' | 'resize-left' | 'resize-right'
-    initialX: number
-    initialStartTime: number
-    initialDuration: number
-    initialLaneId: string
-    isCut: boolean
-  } | null>(null)
+  const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
   const [activeDropLaneId, setActiveDropLaneId] = useState<string | null>(null)
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false)
   const [isDraggingLeftStrip, setIsDraggingLeftStrip] = useState(false)
@@ -81,10 +87,12 @@ export const useTimelineInteraction = ({
       setActiveDropLaneId(type === 'move' ? initialLaneId : null)
       setDraggingRegion({
         id: region.id,
+        regionType: region.type,
         type,
         initialX: e.clientX,
         initialStartTime: region.startTime,
         initialDuration: region.duration,
+        initialSourceStart: region.type === 'media-audio' ? region.sourceStart : null,
         initialLaneId,
         isCut: region.type === 'cut',
       })
@@ -97,7 +105,7 @@ export const useTimelineInteraction = ({
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingPlayhead && timelineRef.current) {
         const rect = timelineRef.current.getBoundingClientRect()
-        updateVideoTime(pxToTime(e.clientX - rect.left))
+        updateVideoTime(pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)))
         return
       }
 
@@ -106,7 +114,7 @@ export const useTimelineInteraction = ({
         if (!element) return
         const deltaTime = pxToTime(e.clientX - draggingRegion.initialX)
 
-        const calcMovedRegion = (dragRegion: any, dTime: number, clientY: number | null) => {
+        const calcMovedRegion = (dragRegion: DraggingRegionState, dTime: number, clientY: number | null) => {
           const maxStartTime = duration - dragRegion.initialDuration
           const intendedStartTime = dragRegion.initialStartTime + dTime
           let targetLaneId = clientY !== null ? (resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId) : (draggedLaneIdRef.current || dragRegion.initialLaneId)
@@ -118,7 +126,9 @@ export const useTimelineInteraction = ({
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
               ...Object.values(state.blurRegions),
-              ...Object.values(state.swapRegions)
+              ...Object.values(state.swapRegions),
+              ...Object.values(state.mediaAudioRegions),
+              ...Object.values(state.changeSoundRegions),
             ].filter(r => r.id !== dragRegion.id && r.laneId === lane)
             
             const findValid = (lane: string) => {
@@ -158,26 +168,34 @@ export const useTimelineInteraction = ({
           return { newStartTime, targetLaneId }
         }
 
-        const calcResizeRight = (dragRegion: any, dTime: number) => {
+        const calcResizeRight = (dragRegion: DraggingRegionState, dTime: number) => {
+          const state = useEditorStore.getState()
           let maxDuration = duration - dragRegion.initialStartTime
           if (!dragRegion.isCut) {
-            const state = useEditorStore.getState()
             const obstacles = [
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
               ...Object.values(state.blurRegions),
-              ...Object.values(state.swapRegions)
+              ...Object.values(state.swapRegions),
+              ...Object.values(state.mediaAudioRegions),
+              ...Object.values(state.changeSoundRegions),
             ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001)
             if (obstacles.length > 0) {
               const nextObs = obstacles.reduce((min, o) => o.startTime < min.startTime ? o : min, obstacles[0])
               maxDuration = Math.min(maxDuration, nextObs.startTime - dragRegion.initialStartTime)
             }
           }
+          if (dragRegion.regionType === 'media-audio') {
+            const sourceClipDuration = state.mediaAudioClip?.duration || 0
+            if (sourceClipDuration > 0 && dragRegion.initialSourceStart !== null) {
+              maxDuration = Math.min(maxDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart))
+            }
+          }
           const intendedDuration = dragRegion.initialDuration + dTime
           return { intendedDuration, maxDuration }
         }
 
-        const calcResizeLeft = (dragRegion: any, dTime: number) => {
+        const calcResizeLeft = (dragRegion: DraggingRegionState, dTime: number) => {
           const initialEndTime = dragRegion.initialStartTime + dragRegion.initialDuration
           let minStartTime = 0
           if (!dragRegion.isCut) {
@@ -186,12 +204,18 @@ export const useTimelineInteraction = ({
               ...Object.values(state.zoomRegions),
               ...Object.values(state.speedRegions),
               ...Object.values(state.blurRegions),
-              ...Object.values(state.swapRegions)
+              ...Object.values(state.swapRegions),
+              ...Object.values(state.mediaAudioRegions),
+              ...Object.values(state.changeSoundRegions),
             ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime + r.duration <= dragRegion.initialStartTime + 0.001)
             if (obstacles.length > 0) {
               const prevObs = obstacles.reduce((max, o) => (o.startTime + o.duration) > (max.startTime + max.duration) ? o : max, obstacles[0])
               minStartTime = prevObs.startTime + prevObs.duration
             }
+          }
+          if (dragRegion.regionType === 'media-audio' && dragRegion.initialSourceStart !== null) {
+            const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
+            minStartTime = Math.max(minStartTime, sourceBoundStart)
           }
           const tentativeStartTime = Math.max(minStartTime, Math.min(dragRegion.initialStartTime + dTime, initialEndTime))
           const newDuration = initialEndTime - tentativeStartTime
@@ -264,7 +288,7 @@ export const useTimelineInteraction = ({
       if ((isDraggingLeftStrip || isDraggingRightStrip) && timelineRef.current) {
         document.body.style.cursor = 'grabbing'
         const rect = timelineRef.current.getBoundingClientRect()
-        const timeAtMouse = pxToTime(Math.max(0, e.clientX - rect.left))
+        const timeAtMouse = pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx))
         let newPreview: CutRegion | null = null
         if (isDraggingLeftStrip) {
           const duration = Math.min(timeAtMouse, useEditorStore.getState().duration)
@@ -310,9 +334,9 @@ export const useTimelineInteraction = ({
           deleteRegion(draggingRegion.id)
         } else {
           const deltaTime = pxToTime(e.clientX - draggingRegion.initialX)
-          const finalUpdates: Partial<TimelineRegion> = {}
+          const finalUpdates: Partial<TimelineRegion> & { sourceStart?: number } = {}
           
-          const calcMovedRegion = (dragRegion: any, dTime: number, clientY: number | null) => {
+          const calcMovedRegion = (dragRegion: DraggingRegionState, dTime: number, clientY: number | null) => {
             const maxStartTime = duration - dragRegion.initialDuration
             const intendedStartTime = dragRegion.initialStartTime + dTime
             let targetLaneId = clientY !== null ? (resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId) : (draggedLaneIdRef.current || dragRegion.initialLaneId)
@@ -323,7 +347,10 @@ export const useTimelineInteraction = ({
               const getObstacles = (lane: string) => [
                 ...Object.values(state.zoomRegions),
                 ...Object.values(state.speedRegions),
-                ...Object.values(state.blurRegions)
+                ...Object.values(state.blurRegions),
+                ...Object.values(state.swapRegions),
+                ...Object.values(state.mediaAudioRegions),
+                ...Object.values(state.changeSoundRegions),
               ].filter(r => r.id !== dragRegion.id && r.laneId === lane)
               
               const findValid = (lane: string) => {
@@ -363,25 +390,34 @@ export const useTimelineInteraction = ({
             return { newStartTime, targetLaneId }
           }
 
-          const calcResizeRight = (dragRegion: any, dTime: number) => {
+          const calcResizeRight = (dragRegion: DraggingRegionState, dTime: number) => {
+            const state = useEditorStore.getState()
             let maxDuration = duration - dragRegion.initialStartTime
             if (!dragRegion.isCut) {
-              const state = useEditorStore.getState()
               const obstacles = [
                 ...Object.values(state.zoomRegions),
                 ...Object.values(state.speedRegions),
-                ...Object.values(state.blurRegions)
+                ...Object.values(state.blurRegions),
+                ...Object.values(state.swapRegions),
+                ...Object.values(state.mediaAudioRegions),
+                ...Object.values(state.changeSoundRegions),
               ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001)
               if (obstacles.length > 0) {
                 const nextObs = obstacles.reduce((min, o) => o.startTime < min.startTime ? o : min, obstacles[0])
                 maxDuration = Math.min(maxDuration, nextObs.startTime - dragRegion.initialStartTime)
               }
             }
+            if (dragRegion.regionType === 'media-audio') {
+              const sourceClipDuration = state.mediaAudioClip?.duration || 0
+              if (sourceClipDuration > 0 && dragRegion.initialSourceStart !== null) {
+                maxDuration = Math.min(maxDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart))
+              }
+            }
             const intendedDuration = dragRegion.initialDuration + dTime
             return { intendedDuration, maxDuration }
           }
 
-          const calcResizeLeft = (dragRegion: any, dTime: number) => {
+          const calcResizeLeft = (dragRegion: DraggingRegionState, dTime: number) => {
             const initialEndTime = dragRegion.initialStartTime + dragRegion.initialDuration
             let minStartTime = 0
             if (!dragRegion.isCut) {
@@ -389,12 +425,19 @@ export const useTimelineInteraction = ({
               const obstacles = [
                 ...Object.values(state.zoomRegions),
                 ...Object.values(state.speedRegions),
-                ...Object.values(state.blurRegions)
+                ...Object.values(state.blurRegions),
+                ...Object.values(state.swapRegions),
+                ...Object.values(state.mediaAudioRegions),
+                ...Object.values(state.changeSoundRegions),
               ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime + r.duration <= dragRegion.initialStartTime + 0.001)
               if (obstacles.length > 0) {
                 const prevObs = obstacles.reduce((max, o) => (o.startTime + o.duration) > (max.startTime + max.duration) ? o : max, obstacles[0])
                 minStartTime = prevObs.startTime + prevObs.duration
               }
+            }
+            if (dragRegion.regionType === 'media-audio' && dragRegion.initialSourceStart !== null) {
+              const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
+              minStartTime = Math.max(minStartTime, sourceBoundStart)
             }
             const tentativeStartTime = Math.max(minStartTime, Math.min(dragRegion.initialStartTime + dTime, initialEndTime))
             const newDuration = initialEndTime - tentativeStartTime
@@ -421,6 +464,10 @@ export const useTimelineInteraction = ({
             }
             finalUpdates.duration = newDuration
             finalUpdates.startTime = newStartTime
+            if (draggingRegion.regionType === 'media-audio' && draggingRegion.initialSourceStart !== null) {
+              const sourceDelta = newStartTime - draggingRegion.initialStartTime
+              finalUpdates.sourceStart = Math.max(0, draggingRegion.initialSourceStart + sourceDelta)
+            }
           }
           
           if (draggingRegion.type !== 'move' && finalUpdates.duration! < TIMELINE.REGION_DELETE_THRESHOLD) {
@@ -481,6 +528,7 @@ export const useTimelineInteraction = ({
     isRegionHidden,
     defaultLaneId,
     resolveLaneIdFromClientY,
+    timelineStartOffsetPx,
   ])
 
   return {
@@ -492,7 +540,7 @@ export const useTimelineInteraction = ({
     handlePlayheadMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
       e.stopPropagation()
       setIsDraggingPlayhead(true)
-      document.body.style.cursor = 'grabbing'
+      document.body.style.cursor = 'ew-resize'
     },
     handleLeftStripMouseDown: () => {
       const state = useEditorStore.getState()

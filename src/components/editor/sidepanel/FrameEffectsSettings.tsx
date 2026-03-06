@@ -4,7 +4,7 @@ import { ColorPicker } from '../../ui/color-picker'
 import { Slider } from '../../ui/slider'
 import { Collapse } from '../../ui/collapse'
 import { rgbaToHexAlpha, hexToRgb } from '../../../lib/utils'
-import { BoxPadding, Shadow, BorderAll } from 'tabler-icons-react'
+import { BoxPadding, Shadow, BorderAll } from '@icons'
 import { DEFAULTS } from '../../../lib/constants'
 
 export function FrameEffectsSettings() {

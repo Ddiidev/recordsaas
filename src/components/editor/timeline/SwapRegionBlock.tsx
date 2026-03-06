@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react'
 import type { CameraSwapRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
-import { Refresh } from 'tabler-icons-react'
+import { Refresh } from '@icons'
 
 interface SwapRegionBlockProps {
   region: CameraSwapRegion

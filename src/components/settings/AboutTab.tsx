@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Button } from '../ui/button'
-import { BrandGithub } from 'tabler-icons-react'
+import { BrandGithub } from '@icons'
 
 export function AboutTab() {
   const [appVersion, setAppVersion] = useState('...')

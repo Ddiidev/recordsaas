@@ -1,7 +1,7 @@
 import { memo, useState } from 'react'
 import { TimelineRegion, SpeedRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
-import { PlayerTrackNext, Check } from 'tabler-icons-react'
+import { PlayerTrackNext, Check } from '@icons'
 import { useEditorStore } from '../../../store/editorStore'
 import { ContextMenu, ContextMenuItem, ContextMenuDivider, ContextMenuLabel } from '../../ui/context-menu'
 

@@ -1,10 +1,19 @@
 // Settings panel for editing timeline regions (zoom, cut, and blur)
 import { useState, useEffect } from 'react'
 import { useEditorStore } from '../../store/editorStore'
-import type { TimelineRegion, ZoomRegion, BlurRegion, BlurRegionStyle, SpeedRegion, CameraSwapRegion } from '../../types'
+import type {
+  TimelineRegion,
+  ZoomRegion,
+  BlurRegion,
+  BlurRegionStyle,
+  SpeedRegion,
+  CameraSwapRegion,
+  MediaAudioRegion,
+  ChangeSoundRegion,
+} from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh } from 'tabler-icons-react'
+import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh, Music, AdjustmentsHorizontal } from '@icons'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
@@ -262,7 +271,9 @@ function SpeedSettings({ region }: { region: SpeedRegion }) {
 
 function SwapSettings({ region }: { region: CameraSwapRegion }) {
   const { updateRegion, deleteRegion } = useEditorStore.getState()
+  const webcamLayoutMode = useEditorStore((state) => state.webcamLayout.mode)
   const [durationText, setDurationText] = useState((region.transitionDuration ?? 0.3).toFixed(1))
+  const supportsDesktopOverlay = webcamLayoutMode === 'overlay'
 
   useEffect(() => {
     setDurationText((region.transitionDuration ?? 0.3).toFixed(1))
@@ -270,18 +281,27 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-0.5">
-          <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Keep the screen visible in a smaller window
+      {supportsDesktopOverlay ? (
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Keep the screen visible in a smaller window
+            </p>
+          </div>
+          <Switch
+            checked={region.showDesktopOverlay}
+            onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
+          />
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
+          <span className="text-sm font-medium text-sidebar-foreground block">Desktop overlay locked off</span>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            In side-by-side, swap expands the webcam and hides the screen.
           </p>
         </div>
-        <Switch
-          checked={region.showDesktopOverlay}
-          onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
-        />
-      </div>
+      )}
 
       <div className="space-y-2.5">
         <span className="text-sm font-medium text-sidebar-foreground">Transition Animation</span>
@@ -352,12 +372,251 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
   )
 }
 
+function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
+  const { updateRegion, deleteRegion, splitMediaAudioRegion, currentTime, mediaAudioClip } = useEditorStore(
+    (state) => ({
+      updateRegion: state.updateRegion,
+      deleteRegion: state.deleteRegion,
+      splitMediaAudioRegion: state.splitMediaAudioRegion,
+      currentTime: state.currentTime,
+      mediaAudioClip: state.mediaAudioClip,
+    }),
+  )
+
+  const canSplitAtPlayhead = currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
+  const effectiveVolume = region.isMuted ? 0 : region.volume
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <span className="text-sm font-medium text-sidebar-foreground block">Mute</span>
+          <p className="text-xs text-muted-foreground leading-relaxed">Disable media audio for this clip.</p>
+        </div>
+        <Switch checked={region.isMuted} onCheckedChange={(checked) => updateRegion(region.id, { isMuted: checked })} />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Volume</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{Math.round(effectiveVolume * 100)}%</span>
+        </div>
+        <Slider
+          min={0}
+          max={1}
+          step={0.01}
+          value={effectiveVolume}
+          onChange={(value) => updateRegion(region.id, { volume: Math.max(0, Math.min(value, 1)), isMuted: false })}
+          disabled={region.isMuted}
+        />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Fade In</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{region.fadeInDuration.toFixed(2)}s</span>
+        </div>
+        <Slider
+          min={0}
+          max={region.duration}
+          step={0.01}
+          value={region.fadeInDuration}
+          onChange={(value) => updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })}
+        />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Fade Out</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{region.fadeOutDuration.toFixed(2)}s</span>
+        </div>
+        <Slider
+          min={0}
+          max={region.duration}
+          step={0.01}
+          value={region.fadeOutDuration}
+          onChange={(value) => updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">
+          Source offset: {region.sourceStart.toFixed(2)}s
+          {mediaAudioClip?.name ? ` • ${mediaAudioClip.name}` : ''}
+        </p>
+      </div>
+
+      <div className="pt-2 space-y-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => splitMediaAudioRegion(region.id, currentTime)}
+          disabled={!canSplitAtPlayhead}
+          className="w-full h-10 border-border bg-card/70 text-foreground hover:bg-accent hover:text-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <Scissors className="w-4 h-4" />
+          <span>Split at playhead</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => deleteRegion(region.id)}
+          className="w-full h-10 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <Trash className="w-4 h-4" />
+          <span>Delete Clip</span>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
+  const { updateRegion, deleteRegion, splitChangeSoundRegion, currentTime } = useEditorStore((state) => ({
+    updateRegion: state.updateRegion,
+    deleteRegion: state.deleteRegion,
+    splitChangeSoundRegion: state.splitChangeSoundRegion,
+    currentTime: state.currentTime,
+  }))
+
+  const canSplitAtPlayhead = currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
+  const effectiveVolume = region.isMuted ? 0 : region.volume
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2.5">
+        <span className="text-sm font-medium text-sidebar-foreground">Source</span>
+        <Select value={region.sourceKey} onValueChange={(value) => updateRegion(region.id, { sourceKey: value as ChangeSoundRegion['sourceKey'] })}>
+          <SelectTrigger className="h-10 text-sm border-border bg-card shadow-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="recording-mic">Microfone</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <span className="text-sm font-medium text-sidebar-foreground block">Mute</span>
+          <p className="text-xs text-muted-foreground leading-relaxed">Disable this source for the selected region.</p>
+        </div>
+        <Switch checked={region.isMuted} onCheckedChange={(checked) => updateRegion(region.id, { isMuted: checked })} />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Volume</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{Math.round(effectiveVolume * 100)}%</span>
+        </div>
+        <Slider
+          min={0}
+          max={1}
+          step={0.01}
+          value={effectiveVolume}
+          onChange={(value) => updateRegion(region.id, { volume: Math.max(0, Math.min(value, 1)), isMuted: false })}
+          disabled={region.isMuted}
+        />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Fade In</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{region.fadeInDuration.toFixed(2)}s</span>
+        </div>
+        <Slider
+          min={0}
+          max={region.duration}
+          step={0.01}
+          value={region.fadeInDuration}
+          onChange={(value) => updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })}
+        />
+      </div>
+
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Fade Out</span>
+          <span className="text-xs font-semibold text-primary tabular-nums">{region.fadeOutDuration.toFixed(2)}s</span>
+        </div>
+        <Slider
+          min={0}
+          max={region.duration}
+          step={0.01}
+          value={region.fadeOutDuration}
+          onChange={(value) => updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })}
+        />
+      </div>
+
+      <div className="pt-2 space-y-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => splitChangeSoundRegion(region.id, currentTime)}
+          disabled={!canSplitAtPlayhead}
+          className="w-full h-10 border-border bg-card/70 text-foreground hover:bg-accent hover:text-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <Scissors className="w-4 h-4" />
+          <span>Split at playhead</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => deleteRegion(region.id)}
+          className="w-full h-10 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <Trash className="w-4 h-4" />
+          <span>Delete Clip</span>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
-  const RegionIcon = region.type === 'zoom' ? Camera : region.type === 'cut' ? Scissors : region.type === 'speed' ? PlayerTrackNext : region.type === 'swap' ? Refresh : Search
+  const RegionIcon =
+    region.type === 'zoom'
+      ? Camera
+      : region.type === 'cut'
+        ? Scissors
+        : region.type === 'speed'
+          ? PlayerTrackNext
+          : region.type === 'swap'
+            ? Refresh
+            : region.type === 'media-audio'
+              ? Music
+              : region.type === 'change-sound'
+                ? AdjustmentsHorizontal
+                : Search
   const regionColor =
-    region.type === 'zoom' ? 'text-primary' : region.type === 'cut' ? 'text-destructive' : region.type === 'speed' ? 'text-speed-accent' : region.type === 'swap' ? 'text-orange-500' : 'text-amber-500'
+    region.type === 'zoom'
+      ? 'text-primary'
+      : region.type === 'cut'
+        ? 'text-destructive'
+        : region.type === 'speed'
+          ? 'text-speed-accent'
+          : region.type === 'swap'
+            ? 'text-orange-500'
+            : region.type === 'media-audio'
+              ? 'text-emerald-500'
+              : region.type === 'change-sound'
+                ? 'text-sky-500'
+                : 'text-amber-500'
   const regionBg =
-    region.type === 'zoom' ? 'bg-primary/10' : region.type === 'cut' ? 'bg-destructive/10' : region.type === 'speed' ? 'bg-speed-accent/10' : region.type === 'swap' ? 'bg-orange-500/10' : 'bg-amber-500/10'
+    region.type === 'zoom'
+      ? 'bg-primary/10'
+      : region.type === 'cut'
+        ? 'bg-destructive/10'
+        : region.type === 'speed'
+          ? 'bg-speed-accent/10'
+          : region.type === 'swap'
+            ? 'bg-orange-500/10'
+            : region.type === 'media-audio'
+              ? 'bg-emerald-500/10'
+              : region.type === 'change-sound'
+                ? 'bg-sky-500/10'
+                : 'bg-amber-500/10'
 
   return (
     <div className="h-full flex flex-col">
@@ -376,9 +635,13 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                   ? 'Cut segment settings'
                   : region.type === 'speed'
                     ? 'Playback speed controls'
-                    : region.type === 'swap'
+                  : region.type === 'swap'
                       ? 'Camera swap settings'
-                      : 'Blur asset controls'}
+                      : region.type === 'media-audio'
+                        ? 'Audio clip trim, split, and fades'
+                        : region.type === 'change-sound'
+                          ? 'Recording audio mix controls'
+                          : 'Blur asset controls'}
             </p>
           </div>
         </div>
@@ -397,6 +660,12 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
 
         {/* Swap-specific Controls */}
         {region.type === 'swap' && <SwapSettings region={region} />}
+
+        {/* Media Audio Controls */}
+        {region.type === 'media-audio' && <MediaAudioSettings region={region} />}
+
+        {/* Change Sound Controls */}
+        {region.type === 'change-sound' && <ChangeSoundSettings region={region} />}
 
         {/* Cut Region Info */}
         {region.type === 'cut' && (

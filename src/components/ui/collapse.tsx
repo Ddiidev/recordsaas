@@ -1,6 +1,6 @@
 import * as React from 'react'
 import * as CollapsiblePrimitive from '@radix-ui/react-collapsible'
-import { ChevronDown, Refresh } from 'tabler-icons-react'
+import { ChevronDown, Refresh } from '@icons'
 
 interface CollapseProps {
   title: string

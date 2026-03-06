@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useEditorStore } from '../../../store/editorStore'
-import { Route, Wand, Check } from 'tabler-icons-react'
+import { Route, Wand, Check } from '@icons'
 import { ZOOM, DEFAULTS } from '../../../lib/constants'
 import { EASING_MAP } from '../../../lib/easing'
 import { cn } from '../../../lib/utils'

@@ -22,6 +22,53 @@ type ImportedProjectPayload = {
   metadataPath?: string | null
   webcamVideoPath?: string | null
   audioPath?: string | null
+  timelineLanes?: Array<{
+    id?: string
+    name?: string
+    order?: number
+    visible?: boolean
+    locked?: boolean
+  }>
+  mediaAudioClip?: {
+    id?: string
+    path?: string | null
+    url?: string | null
+    name?: string | null
+    duration?: number
+    startTime?: number
+  } | null
+  mediaAudioRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'media-audio'
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceStart?: number
+      isMuted?: boolean
+      volume?: number
+      fadeInDuration?: number
+      fadeOutDuration?: number
+      zIndex?: number
+    }
+  >
+  changeSoundRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'change-sound'
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceKey?: 'recording-mic'
+      isMuted?: boolean
+      volume?: number
+      fadeInDuration?: number
+      fadeOutDuration?: number
+      zIndex?: number
+    }
+  >
   recordingGeometry?: RecordingGeometry
   geometry?: RecordingGeometry
   scaleFactor?: number
@@ -41,6 +88,69 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
   geometry: RecordingGeometry
   recordingGeometry: RecordingGeometry
   syncOffset: number
+}
+
+const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
+const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
+
+function hasOwnField<K extends keyof ImportedProjectPayload>(payload: ImportedProjectPayload, key: K): boolean {
+  return Object.prototype.hasOwnProperty.call(payload, key)
+}
+
+function getProjectFirstField<K extends keyof ImportedProjectPayload>(
+  projectData: ImportedProjectPayload,
+  canonicalMetadata: ImportedProjectPayload | null,
+  key: K,
+): ImportedProjectPayload[K] | undefined {
+  if (hasOwnField(projectData, key)) {
+    return projectData[key]
+  }
+  return canonicalMetadata?.[key]
+}
+
+function normalizeTimelineLanes(
+  lanes: ImportedProjectPayload['timelineLanes'],
+): NonNullable<ImportedProjectPayload['timelineLanes']> {
+  if (!Array.isArray(lanes) || lanes.length === 0) {
+    return [
+      {
+        id: DEFAULT_TIMELINE_LANE_ID,
+        name: DEFAULT_TIMELINE_LANE_NAME,
+        order: 0,
+        visible: true,
+        locked: false,
+      },
+    ]
+  }
+
+  return [...lanes]
+    .map((lane, index) => ({
+      id: typeof lane?.id === 'string' && lane.id.length > 0 ? lane.id : `${DEFAULT_TIMELINE_LANE_ID}-${index + 1}`,
+      name:
+        typeof lane?.name === 'string' && lane.name.trim().length > 0
+          ? lane.name.trim()
+          : `${DEFAULT_TIMELINE_LANE_NAME.split(' ')[0]} ${index + 1}`,
+      order: typeof lane?.order === 'number' && Number.isFinite(lane.order) ? lane.order : index,
+      visible: lane?.visible !== false,
+      locked: lane?.locked === true,
+    }))
+    .sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
+    .map((lane, index) => ({ ...lane, order: index }))
+}
+
+function getFallbackTimelineLaneId(lanes: NonNullable<ImportedProjectPayload['timelineLanes']>): string {
+  return lanes[0]?.id || DEFAULT_TIMELINE_LANE_ID
+}
+
+function resolveImportedLaneId(
+  laneId: string | undefined,
+  lanes: NonNullable<ImportedProjectPayload['timelineLanes']>,
+  fallbackLaneId: string,
+): string {
+  if (laneId && lanes.some((lane) => lane.id === laneId)) {
+    return laneId
+  }
+  return fallbackLaneId
 }
 
 /**
@@ -71,6 +181,9 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   }
   if (session.audioPath) {
     filesToValidate.push(session.audioPath)
+  }
+  if (session.mediaAudioPath) {
+    filesToValidate.push(session.mediaAudioPath)
   }
 
   for (const filePath of filesToValidate) {
@@ -651,6 +764,7 @@ export async function stopRecording() {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.mediaAudioPath,
       session.scaleFactor,
     )
   }
@@ -922,7 +1036,7 @@ export async function loadVideoFromFile() {
 
     await new Promise((resolve) => setTimeout(resolve, 500))
     appState.savingWin?.close()
-    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, session.scaleFactor)
+    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, undefined, session.scaleFactor)
     recorderWindow.close()
     return { canceled: false, filePath: screenVideoPath }
   } catch (error) {
@@ -1044,6 +1158,13 @@ export async function importProjectFromFile() {
       }
     }
 
+    const rawTimelineLanes = getProjectFirstField(projectData, canonicalMetadata, 'timelineLanes')
+    const normalizedTimelineLanes = normalizeTimelineLanes(rawTimelineLanes)
+    const fallbackTimelineLaneId = getFallbackTimelineLaneId(normalizedTimelineLanes)
+
+    const rawMediaAudioClip = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioClip') || null
+    const importedMediaAudioPath = await importMediaFile(rawMediaAudioClip?.path || null, 'media audio clip')
+
     const fallbackEvents = Array.isArray(projectData.events)
       ? projectData.events
       : Array.isArray(projectData.metadata)
@@ -1077,7 +1198,150 @@ export async function importProjectFromFile() {
       cursorImages: mergedCursorImages,
       geometry: mergedGeometry,
       recordingGeometry: mergedGeometry,
+      timelineLanes: normalizedTimelineLanes,
     }
+
+    if (rawMediaAudioClip && importedMediaAudioPath) {
+      mergedRuntimeMetadata.mediaAudioClip = {
+        ...rawMediaAudioClip,
+        id: rawMediaAudioClip.id || `media-audio-${Date.now()}`,
+        path: importedMediaAudioPath,
+        url: `media://${importedMediaAudioPath}`,
+        name: rawMediaAudioClip.name || path.basename(importedMediaAudioPath),
+        duration:
+          typeof rawMediaAudioClip.duration === 'number' && Number.isFinite(rawMediaAudioClip.duration)
+            ? Math.max(0, rawMediaAudioClip.duration)
+            : 0,
+        startTime:
+          typeof rawMediaAudioClip.startTime === 'number' && Number.isFinite(rawMediaAudioClip.startTime)
+            ? Math.max(0, rawMediaAudioClip.startTime)
+            : 0,
+      }
+    } else {
+      mergedRuntimeMetadata.mediaAudioClip = null
+    }
+
+    const rawMediaAudioRegions = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioRegions') || {}
+    const normalizedMediaAudioRegions: ImportedProjectPayload['mediaAudioRegions'] = {}
+    if (mergedRuntimeMetadata.mediaAudioClip && rawMediaAudioRegions && typeof rawMediaAudioRegions === 'object') {
+      const clipDuration = Math.max(0, mergedRuntimeMetadata.mediaAudioClip.duration || 0)
+
+      for (const [regionId, rawRegion] of Object.entries(rawMediaAudioRegions)) {
+        if (!rawRegion || typeof rawRegion !== 'object') continue
+
+        const startTime =
+          typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+            ? Math.max(0, rawRegion.startTime)
+            : 0
+        const sourceStart =
+          typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart)
+            ? Math.max(0, rawRegion.sourceStart)
+            : 0
+        const availableDuration = clipDuration > 0 ? Math.max(0.1, clipDuration - sourceStart) : 1
+        const duration =
+          typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+            ? Math.max(0.1, Math.min(rawRegion.duration, availableDuration))
+            : availableDuration
+        const fadeInDuration =
+          typeof rawRegion.fadeInDuration === 'number' && Number.isFinite(rawRegion.fadeInDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeInDuration, duration))
+            : 0
+        const fadeOutDuration =
+          typeof rawRegion.fadeOutDuration === 'number' && Number.isFinite(rawRegion.fadeOutDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeOutDuration, duration))
+            : 0
+        const volume =
+          typeof rawRegion.volume === 'number' && Number.isFinite(rawRegion.volume)
+            ? Math.max(0, Math.min(rawRegion.volume, 1))
+            : 1
+
+        normalizedMediaAudioRegions[regionId] = {
+          id: regionId || rawRegion.id || `media-audio-${Date.now()}`,
+          type: 'media-audio',
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
+          startTime,
+          duration,
+          sourceStart,
+          isMuted: rawRegion.isMuted === true,
+          volume,
+          fadeInDuration,
+          fadeOutDuration,
+          zIndex:
+            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
+              ? rawRegion.zIndex
+              : 0,
+        }
+      }
+
+      if (Object.keys(normalizedMediaAudioRegions).length === 0) {
+        const legacyDuration =
+          mergedRuntimeMetadata.mediaAudioClip.duration && mergedRuntimeMetadata.mediaAudioClip.duration > 0
+            ? mergedRuntimeMetadata.mediaAudioClip.duration
+            : 1
+        const regionId = `media-audio-${Date.now()}`
+        normalizedMediaAudioRegions[regionId] = {
+          id: regionId,
+          type: 'media-audio',
+          laneId: fallbackTimelineLaneId,
+          startTime: mergedRuntimeMetadata.mediaAudioClip.startTime || 0,
+          duration: legacyDuration,
+          sourceStart: 0,
+          isMuted: false,
+          volume: 1,
+          fadeInDuration: 0,
+          fadeOutDuration: 0,
+          zIndex: 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.mediaAudioRegions = normalizedMediaAudioRegions
+
+    const rawChangeSoundRegions = getProjectFirstField(projectData, canonicalMetadata, 'changeSoundRegions') || {}
+    const normalizedChangeSoundRegions: ImportedProjectPayload['changeSoundRegions'] = {}
+    if (rawChangeSoundRegions && typeof rawChangeSoundRegions === 'object') {
+      for (const [regionId, rawRegion] of Object.entries(rawChangeSoundRegions)) {
+        if (!rawRegion || typeof rawRegion !== 'object') continue
+
+        const startTime =
+          typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+            ? Math.max(0, rawRegion.startTime)
+            : 0
+        const duration =
+          typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+            ? Math.max(0.1, rawRegion.duration)
+            : 1
+        const volume =
+          typeof rawRegion.volume === 'number' && Number.isFinite(rawRegion.volume)
+            ? Math.max(0, Math.min(rawRegion.volume, 1))
+            : 1
+        const fadeInDuration =
+          typeof rawRegion.fadeInDuration === 'number' && Number.isFinite(rawRegion.fadeInDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeInDuration, duration))
+            : 0
+        const fadeOutDuration =
+          typeof rawRegion.fadeOutDuration === 'number' && Number.isFinite(rawRegion.fadeOutDuration)
+            ? Math.max(0, Math.min(rawRegion.fadeOutDuration, duration))
+            : 0
+
+        normalizedChangeSoundRegions[regionId] = {
+          id: regionId || rawRegion.id || `change-sound-${Date.now()}`,
+          type: 'change-sound',
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
+          startTime,
+          duration,
+          sourceKey: 'recording-mic',
+          isMuted: rawRegion.isMuted === true,
+          volume,
+          fadeInDuration,
+          fadeOutDuration,
+          zIndex:
+            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
+              ? rawRegion.zIndex
+              : 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.changeSoundRegions = normalizedChangeSoundRegions
 
     if (mergedRuntimeMetadata.events.length === 0) {
       log.warn('[RecordingManager] Imported project contains no mouse events after metadata merge.')
@@ -1092,6 +1356,7 @@ export async function importProjectFromFile() {
       metadataPath,
       webcamVideoPath,
       audioPath,
+      mediaAudioPath: importedMediaAudioPath,
       recordingGeometry: mergedGeometry,
       scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
       originalProjectPath: sourceProjectDir
@@ -1114,6 +1379,7 @@ export async function importProjectFromFile() {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.mediaAudioPath,
       session.scaleFactor,
       sourceProjectDir // Pass the original directory path
     )

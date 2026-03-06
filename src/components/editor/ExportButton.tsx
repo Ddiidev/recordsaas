@@ -1,5 +1,5 @@
 // Primary button to trigger video export
-import { Upload, Loader2 } from 'tabler-icons-react'
+import { Upload, Loader2 } from '@icons'
 import { Button } from '../ui/button'
 import { cn } from '../../lib/utils'
 

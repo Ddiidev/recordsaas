@@ -7,7 +7,7 @@ import {
   Volume as MaxVolume,
   Volume3 as MuteVolume,
   MicrophoneOff,
-} from 'tabler-icons-react'
+} from '@icons'
 import { Collapse } from '../../ui/collapse'
 import { Slider } from '../../ui/slider'
 import { Button } from '../../ui/button'
