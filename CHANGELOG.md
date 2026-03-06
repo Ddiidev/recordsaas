@@ -1,3 +1,10 @@
+## [2.4.2](https://github.com/Ddiidev/recordsaas/compare/v2.4.1...v2.4.2) (2026-03-06)
+
+
+### Bug Fixes
+
+* **release:** trigger semantic-release build ([d3813b2](https://github.com/Ddiidev/recordsaas/commit/d3813b29912e9fc93e43110af8a2f20a7f2b3d95))
+
 ## [2.4.1](https://github.com/Ddiidev/recordsaas/compare/v2.4.0...v2.4.1) (2026-03-02)
 
 
