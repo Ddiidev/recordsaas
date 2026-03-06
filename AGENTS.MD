@@ -130,12 +130,22 @@ IPC contract baseline (media import):
 - Serialized fields of interest include `mediaAudioClip`, `mediaAudioRegions`, `changeSoundRegions`.
 - Serialized camera/layout fields of interest include `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `swapRegions`.
 - Imported `.rsproj` files are the source of truth for editor-authored state such as `timelineLanes`, `mediaAudioClip`, `mediaAudioRegions`, and `changeSoundRegions`; canonical metadata is only used for capture-native data like events/cursor/geometry/platform.
+- Active preset values are the fallback source for `webcamLayout`, `webcamPosition`, `webcamStyles`, and `isWebcamVisible` when the imported project omits those fields; project-authored values still take precedence when present.
 - Backward compatibility defaults if fields are absent:
 - `mediaAudioClip = null`
 - `mediaAudioRegions = {}`
 - `changeSoundRegions = {}`
 - `webcamLayout = { mode: 'overlay', side: 'right', webcamWidthPercent: 30 }`
 - `swapRegions = {}`
+
+Preset persistence baseline:
+- `Preset` stores `styles`, `aspectRatio`, `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `blurDefaults`, and `swapDefaults`.
+- `blurDefaults` control only the defaults for newly inserted blur regions: `duration`, `style`, `intensity`, `x`, `y`, `width`, `height`.
+- `swapDefaults` control only the defaults for newly inserted swap regions: `duration`, `showDesktopOverlay`, `transition`, `transitionDuration`.
+- Editing an existing blur or swap region updates the active preset defaults for that tool; it does not serialize timeline regions into the preset.
+- Backward compatibility defaults if preset fields are absent:
+- `blurDefaults = { duration: 3, style: 'blur', intensity: 10, x: 0.35, y: 0.35, width: 0.3, height: 0.2 }`
+- `swapDefaults = { duration: 15, showDesktopOverlay: true, transition: 'fade', transitionDuration: 0.3 }`
 
 Webcam layout contract baseline:
 - `webcamLayout.mode`: `overlay | side-by-side`
@@ -146,6 +156,7 @@ Webcam layout contract baseline:
 - `overlay` keeps current PiP camera behavior, honors position/size/zoom controls, and now supports the vertical `phone` shape.
 - `side-by-side` reserves a side column using the split control, keeps webcam shape/border/shadow/flip/crop styling active, and ignores overlay size/position/smart-position controls.
 - `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
+- New recordings/projects without serialized webcam layout or visibility must inherit those values from the active preset before falling back to app defaults.
 
 ## 5. UI and Styling Baseline (Tokens and Consistency)
 
@@ -322,6 +333,7 @@ Desktop-safe integration rule:
 - `src/types/index.ts`
 - `src/store/slices/projectSlice.ts`
 - `src/store/slices/timelineSlice.ts`
+- `src/store/slices/presetSlice.ts`
 - `electron/preload.ts`
 - `electron/main/ipc/index.ts`
 - `electron/main/ipc/handlers/export.ts`
@@ -394,7 +406,7 @@ Escalation path:
 | Media-audio insertion/region behavior bug | `src/types/index.ts`, `src/store/slices/timelineSlice.ts`, `src/components/editor/timeline/MediaAudioRegionBlock.tsx`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Region creation/move behavior + playback sync |
 | IPC media import issue | `electron/main/ipc/index.ts`, `electron/main/ipc/handlers/media.ts`, `electron/preload.ts`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Import dialog path + runtime copy rule + renderer response handling |
 | Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | Export output has expected mix and region effects |
-| `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project with missing fields and confirm safe defaults |
+| `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
 

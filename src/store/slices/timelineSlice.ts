@@ -1,15 +1,18 @@
-import { BLUR_REGION, TIMELINE, ZOOM } from '../../lib/constants'
+import { BLUR_REGION, SWAP_REGION, TIMELINE, ZOOM } from '../../lib/constants'
 import type { TimelineState, TimelineActions, Slice } from '../../types'
 import type {
   BlurRegion,
+  BlurPresetDefaults,
   CutRegion,
   ZoomRegion,
   SpeedRegion,
   CameraSwapRegion,
+  SwapPresetDefaults,
   MediaAudioRegion,
   ChangeSoundRegion,
   TimelineLane,
   TimelineRegion,
+  Preset,
 } from '../../types'
 import {
   normalizeTimelineLanes,
@@ -33,6 +36,48 @@ export const initialTimelineState: TimelineState = {
   isCurrentlyCut: false,
   timelineZoom: 1,
 }
+
+const BLUR_DEFAULT_UPDATE_KEYS: Array<keyof BlurPresetDefaults> = ['duration', 'style', 'intensity', 'x', 'y', 'width', 'height']
+const SWAP_DEFAULT_UPDATE_KEYS: Array<keyof SwapPresetDefaults> = [
+  'duration',
+  'showDesktopOverlay',
+  'transition',
+  'transitionDuration',
+]
+
+const getBlurDefaults = (preset: Preset | null | undefined): BlurPresetDefaults => ({
+  duration: preset?.blurDefaults?.duration ?? BLUR_REGION.DEFAULT_DURATION,
+  style: preset?.blurDefaults?.style ?? BLUR_REGION.STYLE.DEFAULT,
+  intensity: preset?.blurDefaults?.intensity ?? BLUR_REGION.INTENSITY.defaultValue,
+  x: preset?.blurDefaults?.x ?? BLUR_REGION.X.defaultValue,
+  y: preset?.blurDefaults?.y ?? BLUR_REGION.Y.defaultValue,
+  width: preset?.blurDefaults?.width ?? BLUR_REGION.WIDTH.defaultValue,
+  height: preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
+})
+
+const getSwapDefaults = (preset: Preset | null | undefined): SwapPresetDefaults => ({
+  duration: preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
+  showDesktopOverlay: preset?.swapDefaults?.showDesktopOverlay ?? SWAP_REGION.SHOW_DESKTOP_OVERLAY,
+  transition: preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
+  transitionDuration: preset?.swapDefaults?.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
+})
+
+const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
+  duration: region.duration,
+  style: region.style,
+  intensity: region.intensity,
+  x: region.x,
+  y: region.y,
+  width: region.width,
+  height: region.height,
+})
+
+const toSwapPresetDefaults = (region: CameraSwapRegion): SwapPresetDefaults => ({
+  duration: region.duration,
+  showDesktopOverlay: region.showDesktopOverlay,
+  transition: region.transition,
+  transitionDuration: region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
+})
 
 const getAllRegions = (state: {
   zoomRegions: Record<string, ZoomRegion>
@@ -355,6 +400,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
+    const activePresetId = get().activePresetId
+    const activePreset = activePresetId ? get().presets[activePresetId] : null
+    const blurDefaults = getBlurDefaults(activePreset)
 
     const id = `blur-${Date.now()}`
     const newRegion: BlurRegion = {
@@ -362,13 +410,13 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       type: 'blur',
       laneId: preferredLaneId,
       startTime: currentTime,
-      duration: BLUR_REGION.DEFAULT_DURATION,
-      style: BLUR_REGION.STYLE.DEFAULT,
-      intensity: BLUR_REGION.INTENSITY.defaultValue,
-      x: BLUR_REGION.X.defaultValue,
-      y: BLUR_REGION.Y.defaultValue,
-      width: BLUR_REGION.WIDTH.defaultValue,
-      height: BLUR_REGION.HEIGHT.defaultValue,
+      duration: blurDefaults.duration,
+      style: blurDefaults.style,
+      intensity: blurDefaults.intensity,
+      x: blurDefaults.x,
+      y: blurDefaults.y,
+      width: blurDefaults.width,
+      height: blurDefaults.height,
       zIndex: 0,
     }
 
@@ -411,6 +459,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
+    const activePresetId = get().activePresetId
+    const activePreset = activePresetId ? get().presets[activePresetId] : null
+    const swapDefaults = getSwapDefaults(activePreset)
 
     const id = `swap-${Date.now()}`
     const newRegion: CameraSwapRegion = {
@@ -418,10 +469,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       type: 'swap',
       laneId: preferredLaneId,
       startTime: currentTime,
-      duration: 15.0,
-      showDesktopOverlay: true,
-      transition: 'fade',
-      transitionDuration: 0.3,
+      duration: swapDefaults.duration,
+      showDesktopOverlay: swapDefaults.showDesktopOverlay,
+      transition: swapDefaults.transition,
+      transitionDuration: swapDefaults.transitionDuration,
       zIndex: 0,
     }
 
@@ -653,6 +704,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     })
   },
   updateRegion: (id, updates) => {
+    const shouldSyncBlurDefaults = BLUR_DEFAULT_UPDATE_KEYS.some((key) => key in updates)
+    const shouldSyncSwapDefaults = SWAP_DEFAULT_UPDATE_KEYS.some((key) => key in updates)
+
     set((state) => {
       const region = getRegionById(state, id)
       if (region) {
@@ -679,6 +733,20 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         }
       }
     })
+
+    if (shouldSyncBlurDefaults) {
+      const updatedBlurRegion = get().blurRegions[id]
+      if (updatedBlurRegion) {
+        get()._updateActivePresetToolDefaults({ blurDefaults: toBlurPresetDefaults(updatedBlurRegion) })
+      }
+    }
+
+    if (shouldSyncSwapDefaults) {
+      const updatedSwapRegion = get().swapRegions[id]
+      if (updatedSwapRegion) {
+        get()._updateActivePresetToolDefaults({ swapDefaults: toSwapPresetDefaults(updatedSwapRegion) })
+      }
+    }
   },
   deleteRegion: (id) => {
     set((state) => {

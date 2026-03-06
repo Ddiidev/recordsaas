@@ -98,6 +98,21 @@ export const BLUR_REGION = {
   },
 }
 
+export const SWAP_REGION = {
+  DEFAULT_DURATION: 15.0,
+  SHOW_DESKTOP_OVERLAY: true,
+  TRANSITION: {
+    DEFAULT: 'fade' as const,
+    OPTIONS: ['none', 'fade', 'slide', 'scale'] as const,
+  },
+  TRANSITION_DURATION: {
+    min: 0.1,
+    max: 2.0,
+    step: 0.1,
+    defaultValue: 0.3,
+  },
+}
+
 // --- Editor Defaults ---
 export const DEFAULTS = {
   FRAME: {

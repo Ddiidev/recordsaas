@@ -765,14 +765,14 @@ export function RecorderPage() {
                       disabled={isInitializing || actionInProgress !== 'none' || isRecording}
                       variant="secondary"
                       size="icon"
-                      className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-lg border border-emerald-500/40 bg-background/80 p-0 shadow-lg hover:bg-background"
+                      className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-xl border-2 border-emerald-500 bg-background p-0 shadow-lg hover:bg-background"
                     >
                       {authSession.user?.picture ? (
                         <img
                           src={authSession.user.picture}
                           alt={accountTooltip}
                           referrerPolicy="no-referrer"
-                          className="h-full w-full rounded-full object-cover p-0.5"
+                          className="h-full w-full rounded-[inherit] object-cover"
                         />
                       ) : (
                         <UserCircle size={20} className="text-muted-foreground" />

@@ -112,7 +112,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
             </Button>
           )}
           <h2 className="text-xl font-bold text-foreground mb-1">Manage Presets</h2>
-          <p className="text-sm text-muted-foreground">Select, create, or delete your frame style presets.</p>
+          <p className="text-sm text-muted-foreground">Select, create, or delete presets for frame, webcam, blur, and swap defaults.</p>
         </div>
 
         <div className="flex-1 flex flex-row overflow-hidden">
@@ -170,7 +170,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
                 disabled={!newPresetName.trim()}
                 className="w-full h-10 font-medium shadow-sm"
               >
-                <Plus className="w-4 h-4 mr-2" /> Save Current Style
+                <Plus className="w-4 h-4 mr-2" /> Save Current Preset
               </Button>
             </div>
           </div>

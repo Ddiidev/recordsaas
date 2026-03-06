@@ -43,18 +43,21 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
       }
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
   setWebcamPosition: (position: WebcamPosition) => {
     set((state) => {
       state.webcamPosition = position
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
   setWebcamVisibility: (isVisible: boolean) => {
     set((state) => {
       state.isWebcamVisible = isVisible
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
   updateWebcamStyle: (style: Partial<WebcamStyles>) => {
     set((state) => {
@@ -65,5 +68,6 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
       Object.assign(state.webcamStyles, nextStyle)
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
 })

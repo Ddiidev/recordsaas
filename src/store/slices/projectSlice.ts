@@ -15,7 +15,7 @@ import type {
   ChangeSoundRegion,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
-import { DEFAULTS, ZOOM } from '../../lib/constants'
+import { DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
 import { initialFrameState, recalculateCanvasDimensions } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
@@ -334,15 +334,15 @@ const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegi
   const duration =
     typeof region.duration === 'number' && Number.isFinite(region.duration)
       ? Math.max(0.1, clampToNonNegative(region.duration))
-      : 15
+      : SWAP_REGION.DEFAULT_DURATION
   const transition =
     region.transition === 'none' || region.transition === 'fade' || region.transition === 'slide' || region.transition === 'scale'
       ? region.transition
-      : 'fade'
+      : SWAP_REGION.TRANSITION.DEFAULT
   const transitionDuration =
     typeof region.transitionDuration === 'number' && Number.isFinite(region.transitionDuration)
-      ? Math.max(0.1, Math.min(2, region.transitionDuration))
-      : 0.3
+      ? Math.max(SWAP_REGION.TRANSITION_DURATION.min, Math.min(SWAP_REGION.TRANSITION_DURATION.max, region.transitionDuration))
+      : SWAP_REGION.TRANSITION_DURATION.defaultValue
 
   return {
     id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `swap-${Date.now()}`,
@@ -566,9 +566,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.frameStyles = JSON.parse(JSON.stringify(presetToApply.styles))
         state.aspectRatio = presetToApply.aspectRatio
       } else {
-        state.frameStyles = initialFrameState.frameStyles
+        state.frameStyles = JSON.parse(JSON.stringify(initialFrameState.frameStyles))
       }
-      state.webcamLayout = JSON.parse(JSON.stringify(initialWebcamState.webcamLayout))
+      state.webcamLayout = presetToApply?.webcamLayout
+        ? JSON.parse(JSON.stringify(presetToApply.webcamLayout))
+        : JSON.parse(JSON.stringify(initialWebcamState.webcamLayout))
       state.webcamPosition = presetToApply?.webcamPosition
         ? JSON.parse(JSON.stringify(presetToApply.webcamPosition))
         : JSON.parse(JSON.stringify(initialWebcamState.webcamPosition))
@@ -580,7 +582,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.videoUrl = videoUrl
       state.webcamVideoPath = webcamVideoPath || null
       state.webcamVideoUrl = webcamVideoUrl
-      state.isWebcamVisible = !!webcamVideoUrl
+      state.isWebcamVisible = webcamVideoUrl ? presetToApply?.isWebcamVisible ?? true : false
       state.audioPath = audioPath || null
       state.audioUrl = audioUrl
       state.hasAudioTrack = !!audioUrl
@@ -648,7 +650,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         const hasWebcamAsset = !!state.webcamVideoUrl
         if (hasWebcamAsset) {
           state.isWebcamVisible =
-            typeof parsedData.isWebcamVisible === 'boolean' ? parsedData.isWebcamVisible : true
+            typeof parsedData.isWebcamVisible === 'boolean'
+              ? parsedData.isWebcamVisible
+              : presetToApply?.isWebcamVisible ?? true
         } else {
           state.isWebcamVisible = false
         }
@@ -657,7 +661,10 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
             region.laneId = fallbackTimelineLaneId
           }
           region.startTime = clampStartTime(region.startTime, state.duration)
-          region.transitionDuration = Math.max(0.1, Math.min(2, region.transitionDuration ?? 0.3))
+          region.transitionDuration = Math.max(
+            SWAP_REGION.TRANSITION_DURATION.min,
+            Math.min(SWAP_REGION.TRANSITION_DURATION.max, region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue),
+          )
         })
         Object.values(state.mediaAudioRegions).forEach((region) => {
           if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {

@@ -64,12 +64,14 @@ export const createFrameSlice: Slice<FrameState, FrameActions> = (set, get) => (
       Object.assign(state.frameStyles, style)
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
   updateBackground: (bg) => {
     set((state) => {
       Object.assign(state.frameStyles.background, bg)
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
   setAspectRatio: (ratio) => {
     set((state) => {
@@ -77,5 +79,6 @@ export const createFrameSlice: Slice<FrameState, FrameActions> = (set, get) => (
       recalculateCanvasDimensions(state)
     })
     get()._ensureActivePresetIsWritable()
+    get().updateActivePreset()
   },
 })

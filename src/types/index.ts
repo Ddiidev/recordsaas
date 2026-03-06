@@ -43,6 +43,26 @@ export interface CursorStyles {
   clickScaleEasing: string
 }
 
+export type BlurRegionStyle = 'blur' | 'pixelated'
+export type CameraSwapTransition = 'none' | 'fade' | 'slide' | 'scale'
+
+export interface BlurPresetDefaults {
+  duration: number
+  style: BlurRegionStyle
+  intensity: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface SwapPresetDefaults {
+  duration: number
+  showDesktopOverlay: boolean
+  transition: CameraSwapTransition
+  transitionDuration: number
+}
+
 export interface Preset {
   id: string
   name: string
@@ -53,6 +73,8 @@ export interface Preset {
   webcamPosition?: WebcamPosition
   webcamLayout?: WebcamLayout
   isWebcamVisible?: boolean
+  blurDefaults?: BlurPresetDefaults
+  swapDefaults?: SwapPresetDefaults
 }
 
 export interface TimelineLane {
@@ -128,8 +150,6 @@ export interface ChangeSoundRegion {
   zIndex: number
 }
 
-export type BlurRegionStyle = 'blur' | 'pixelated'
-
 export interface BlurRegion {
   id: string
   type: 'blur'
@@ -152,7 +172,7 @@ export interface CameraSwapRegion {
   startTime: number
   duration: number
   showDesktopOverlay: boolean
-  transition: 'none' | 'fade' | 'slide' | 'scale'
+  transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number
 }
@@ -385,6 +405,7 @@ export interface PresetActions {
   updateActivePreset: () => void
   deletePreset: (id: string) => void
   _ensureActivePresetIsWritable: () => void
+  _updateActivePresetToolDefaults: (defaults: { blurDefaults?: BlurPresetDefaults; swapDefaults?: SwapPresetDefaults }) => void
   _persistPresets: (presets: Record<string, Preset>) => Promise<void>
 }
 
