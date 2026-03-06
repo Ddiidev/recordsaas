@@ -119,7 +119,7 @@ export const DEFAULTS = {
   },
   CAMERA: {
     STYLE: {
-      SHAPE: { defaultValue: 'square' as const, values: ['circle', 'square', 'rectangle'] as const },
+      SHAPE: { defaultValue: 'square' as const, values: ['circle', 'square', 'rectangle', 'phone'] as const },
       RADIUS: { min: 0, max: 50, step: 1, defaultValue: 35 },
       FLIP: { defaultValue: false },
       SCALE_ON_ZOOM: { defaultValue: true },
@@ -133,6 +133,18 @@ export const DEFAULTS = {
       SIZE: { min: 10, max: 100, step: 1, defaultValue: 40 },
       SIZE_ON_ZOOM: { min: 10, max: 80, step: 1, defaultValue: 40 },
       POSITION: { defaultValue: 'bottom-right' },
+    },
+    LAYOUT: {
+      MODE: { defaultValue: 'overlay' as const, values: ['overlay', 'side-by-side'] as const },
+      SIDE: { defaultValue: 'right' as const, values: ['left', 'right'] as const },
+      WIDTH_PERCENT: { min: 20, max: 50, step: 1, defaultValue: 30 },
+    },
+    CROP: {
+      MIN_VISIBLE_PORTION: 0.1,
+      TOP: { min: 0, max: 0.45, step: 0.01, defaultValue: 0 },
+      RIGHT: { min: 0, max: 0.45, step: 0.01, defaultValue: 0 },
+      BOTTOM: { min: 0, max: 0.45, step: 0.01, defaultValue: 0 },
+      LEFT: { min: 0, max: 0.45, step: 0.01, defaultValue: 0 },
     },
     EFFECTS: {
       BLUR: { min: 0, max: 80, step: 1, defaultValue: 20 },

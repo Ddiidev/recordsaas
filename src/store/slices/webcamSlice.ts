@@ -1,10 +1,18 @@
 import { DEFAULTS } from '../../lib/constants'
-import type { WebcamState, WebcamActions, WebcamPosition, WebcamStyles, Slice } from '../../types'
+import type { WebcamState, WebcamActions, WebcamLayout, WebcamPosition, WebcamStyles, Slice } from '../../types'
+import { getDefaultWebcamCrop, normalizeWebcamCrop } from '../../lib/webcam'
+
+const DEFAULT_WEBCAM_LAYOUT: WebcamLayout = {
+  mode: DEFAULTS.CAMERA.LAYOUT.MODE.defaultValue,
+  side: DEFAULTS.CAMERA.LAYOUT.SIDE.defaultValue,
+  webcamWidthPercent: DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.defaultValue,
+}
 
 export const initialWebcamState: WebcamState = {
   webcamVideoPath: null,
   webcamVideoUrl: null,
   isWebcamVisible: false,
+  webcamLayout: DEFAULT_WEBCAM_LAYOUT,
   webcamPosition: { pos: 'bottom-right' },
   webcamStyles: {
     shape: 'square',
@@ -21,11 +29,21 @@ export const initialWebcamState: WebcamState = {
     border: DEFAULTS.CAMERA.STYLE.BORDER.ENABLED.defaultValue,
     borderWidth: DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.defaultValue,
     borderColor: DEFAULTS.CAMERA.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+    crop: getDefaultWebcamCrop(),
   },
 }
 
 export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) => ({
   ...initialWebcamState,
+  updateWebcamLayout: (layout) => {
+    set((state) => {
+      state.webcamLayout = {
+        ...state.webcamLayout,
+        ...layout,
+      }
+    })
+    get()._ensureActivePresetIsWritable()
+  },
   setWebcamPosition: (position: WebcamPosition) => {
     set((state) => {
       state.webcamPosition = position
@@ -40,7 +58,11 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
   },
   updateWebcamStyle: (style: Partial<WebcamStyles>) => {
     set((state) => {
-      Object.assign(state.webcamStyles, style)
+      const nextStyle = { ...style }
+      if (style.crop) {
+        nextStyle.crop = normalizeWebcamCrop(style.crop, state.webcamStyles.crop)
+      }
+      Object.assign(state.webcamStyles, nextStyle)
     })
     get()._ensureActivePresetIsWritable()
   },

@@ -1,12 +1,14 @@
 import { APP, DEFAULTS } from '../../lib/constants'
 import type { PresetState, PresetActions, Slice } from '../../types'
-import type { Preset, FrameStyles, WebcamStyles, WebcamPosition } from '../../types'
+import type { Preset, FrameStyles, WebcamLayout, WebcamStyles, WebcamPosition } from '../../types'
 import { initialFrameState } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
+import { normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
 
 const DEFAULT_PRESET_ID = 'default-preset-v1'
 
 const DEFAULT_PRESET_STYLES: FrameStyles = initialFrameState.frameStyles
+const DEFAULT_WEBCAM_LAYOUT: WebcamLayout = initialWebcamState.webcamLayout
 const DEFAULT_WEBCAM_STYLES: WebcamStyles = initialWebcamState.webcamStyles
 const DEFAULT_WEBCAM_POSITION: WebcamPosition = initialWebcamState.webcamPosition
 
@@ -14,6 +16,7 @@ const DEFAULT_PRESET_TEMPLATE: Omit<Preset, 'id' | 'name'> = {
   styles: DEFAULT_PRESET_STYLES,
   aspectRatio: '16:9',
   isDefault: true,
+  webcamLayout: DEFAULT_WEBCAM_LAYOUT,
   webcamStyles: DEFAULT_WEBCAM_STYLES,
   webcamPosition: DEFAULT_WEBCAM_POSITION,
   isWebcamVisible: false,
@@ -67,6 +70,37 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
           p.webcamStyles.smartPosition = DEFAULTS.CAMERA.SMART_POSITION.ENABLED.defaultValue
           wasModified = true
         }
+        if (p.webcamStyles) {
+          const normalizedCrop = normalizeWebcamCrop(p.webcamStyles.crop, DEFAULT_WEBCAM_STYLES.crop)
+          if (
+            !p.webcamStyles.crop ||
+            normalizedCrop.top !== p.webcamStyles.crop.top ||
+            normalizedCrop.right !== p.webcamStyles.crop.right ||
+            normalizedCrop.bottom !== p.webcamStyles.crop.bottom ||
+            normalizedCrop.left !== p.webcamStyles.crop.left
+          ) {
+            p.webcamStyles.crop = normalizedCrop
+            wasModified = true
+          }
+        }
+        if (!p.webcamLayout) {
+          p.webcamLayout = JSON.parse(JSON.stringify(DEFAULT_WEBCAM_LAYOUT))
+          wasModified = true
+        } else {
+          const normalizedMode = normalizeWebcamLayoutMode(p.webcamLayout.mode)
+          if (p.webcamLayout.mode !== normalizedMode) {
+            p.webcamLayout.mode = normalizedMode
+            wasModified = true
+          }
+          if (p.webcamLayout.side === undefined) {
+            p.webcamLayout.side = DEFAULTS.CAMERA.LAYOUT.SIDE.defaultValue
+            wasModified = true
+          }
+          if (p.webcamLayout.webcamWidthPercent === undefined) {
+            p.webcamLayout.webcamWidthPercent = DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.defaultValue
+            wasModified = true
+          }
+        }
       })
 
       if (wasModified) {
@@ -93,6 +127,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
         state.frameStyles = JSON.parse(JSON.stringify(preset.styles))
         state.aspectRatio = preset.aspectRatio
         state.activePresetId = id
+        if (preset.webcamLayout) state.webcamLayout = JSON.parse(JSON.stringify(preset.webcamLayout))
         if (preset.webcamStyles) state.webcamStyles = JSON.parse(JSON.stringify(preset.webcamStyles))
         if (preset.webcamPosition) state.webcamPosition = JSON.parse(JSON.stringify(preset.webcamPosition))
         if (preset.isWebcamVisible !== undefined) state.isWebcamVisible = preset.isWebcamVisible
@@ -106,6 +141,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
       if (presetToReset?.isDefault) {
         presetToReset.styles = JSON.parse(JSON.stringify(DEFAULT_PRESET_TEMPLATE.styles))
         presetToReset.aspectRatio = DEFAULT_PRESET_TEMPLATE.aspectRatio
+        presetToReset.webcamLayout = JSON.parse(JSON.stringify(DEFAULT_PRESET_TEMPLATE.webcamLayout))
         presetToReset.webcamStyles = JSON.parse(JSON.stringify(DEFAULT_PRESET_TEMPLATE.webcamStyles))
         presetToReset.webcamPosition = JSON.parse(JSON.stringify(DEFAULT_PRESET_TEMPLATE.webcamPosition))
         presetToReset.isWebcamVisible = DEFAULT_PRESET_TEMPLATE.isWebcamVisible
@@ -168,13 +204,14 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
   },
   saveCurrentStyleAsPreset: (name) => {
     const id = `preset-${Date.now()}`
-    const { frameStyles, aspectRatio, webcamPosition, webcamStyles, isWebcamVisible } = get()
+    const { frameStyles, aspectRatio, webcamLayout, webcamPosition, webcamStyles, isWebcamVisible } = get()
     const newPreset: Preset = {
       id,
       name,
       styles: JSON.parse(JSON.stringify(frameStyles)),
       aspectRatio,
       isDefault: false,
+      webcamLayout: JSON.parse(JSON.stringify(webcamLayout)),
       webcamPosition: JSON.parse(JSON.stringify(webcamPosition)),
       webcamStyles: JSON.parse(JSON.stringify(webcamStyles)),
       isWebcamVisible,
@@ -187,12 +224,13 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   updateActivePreset: () => {
-    const { activePresetId, presets, frameStyles, aspectRatio, webcamPosition, webcamStyles, isWebcamVisible } = get()
+    const { activePresetId, presets, frameStyles, aspectRatio, webcamLayout, webcamPosition, webcamStyles, isWebcamVisible } = get()
     if (activePresetId && presets[activePresetId]) {
       set((state) => {
         const active = state.presets[activePresetId]
         active.styles = JSON.parse(JSON.stringify(frameStyles))
         active.aspectRatio = aspectRatio
+        active.webcamLayout = JSON.parse(JSON.stringify(webcamLayout))
         active.webcamPosition = JSON.parse(JSON.stringify(webcamPosition))
         active.webcamStyles = JSON.parse(JSON.stringify(webcamStyles))
         active.isWebcamVisible = isWebcamVisible

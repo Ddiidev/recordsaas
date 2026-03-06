@@ -1,4 +1,3 @@
-import { EditorState, RenderableState, WebcamPosition } from '../types'
 import { calculateZoomTransform, findLastMetadataIndex } from './transform'
 import { EASING_MAP } from './easing'
 import { DEFAULTS } from './constants'
@@ -8,8 +7,26 @@ import {
   isRegionActiveAtTime,
   sortRegionsByLanePrecedence,
 } from './timeline-lanes'
+import { getWebcamAspectRatio, getWebcamRadius } from './webcam'
+import type { EditorState, RenderableState, WebcamLayout, WebcamPosition, WebcamStyles } from '../types'
 
 type Rect = { x: number; y: number; width: number; height: number }
+type MediaRectConfig = Rect & {
+  radius: number
+  shadowBlur: number
+  shadowOffsetX: number
+  shadowOffsetY: number
+  shadowColor: string
+  borderWidth: number
+  borderColor: string
+  zIndex: number
+}
+type ResolvedLayout = {
+  mode: WebcamLayout['mode']
+  desktopConfig: MediaRectConfig
+  cameraConfig: MediaRectConfig | null
+  cameraFlip: boolean
+}
 type WindowWithScreenCache = Window & {
   __screenCacheCanvas?: HTMLCanvasElement
   __screenCacheCtx?: CanvasRenderingContext2D | null
@@ -178,6 +195,227 @@ function getWebcamRectForPosition(
 
 function lerp(start: number, end: number, t: number): number {
   return start * (1 - t) + end * t
+}
+
+const insetRect = (rect: Rect, insetX: number, insetY: number): Rect => ({
+  x: rect.x + insetX,
+  y: rect.y + insetY,
+  width: Math.max(1, rect.width - insetX * 2),
+  height: Math.max(1, rect.height - insetY * 2),
+})
+
+const fitRectWithinBounds = (bounds: Rect, aspectRatio: number): Rect => {
+  if (bounds.width <= 0 || bounds.height <= 0) return bounds
+
+  const safeAspectRatio = Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : 1
+  let width = bounds.width
+  let height = width / safeAspectRatio
+
+  if (height > bounds.height) {
+    height = bounds.height
+    width = height * safeAspectRatio
+  }
+
+  return {
+    x: bounds.x + (bounds.width - width) / 2,
+    y: bounds.y + (bounds.height - height) / 2,
+    width,
+    height,
+  }
+}
+
+const createFrameConfig = (rect: Rect, frameStyles: RenderableState['frameStyles'], zIndex: number): MediaRectConfig => ({
+  ...rect,
+  radius: frameStyles.borderRadius,
+  shadowBlur: frameStyles.shadowBlur,
+  shadowOffsetX: frameStyles.shadowOffsetX,
+  shadowOffsetY: frameStyles.shadowOffsetY,
+  shadowColor: frameStyles.shadowColor,
+  borderWidth: frameStyles.borderWidth,
+  borderColor: frameStyles.borderColor,
+  zIndex,
+})
+
+const createStyledCameraConfig = (rect: Rect, webcamStyles: WebcamStyles, zIndex: number): MediaRectConfig => ({
+  ...rect,
+  radius: getWebcamRadius(webcamStyles.shape, rect.width, rect.height, webcamStyles.borderRadius),
+  shadowBlur: webcamStyles.shadowBlur,
+  shadowOffsetX: webcamStyles.shadowOffsetX,
+  shadowOffsetY: webcamStyles.shadowOffsetY,
+  shadowColor: webcamStyles.shadowColor,
+  borderWidth: webcamStyles.border ? webcamStyles.borderWidth : 0,
+  borderColor: webcamStyles.borderColor || 'rgba(0,0,0,0)',
+  zIndex,
+})
+
+const buildOverlayCameraConfig = ({
+  webcamPosition,
+  webcamStyles,
+  activeZoomRegion,
+  currentTime,
+  outputWidth,
+  outputHeight,
+}: {
+  webcamPosition: WebcamPosition
+  webcamStyles: WebcamStyles
+  activeZoomRegion: RenderableState['zoomRegions'][string] | null
+  currentTime: number
+  outputWidth: number
+  outputHeight: number
+}): MediaRectConfig => {
+  let finalWebcamScale = 1
+
+  if (webcamStyles.scaleOnZoom && activeZoomRegion) {
+    const { startTime, duration, transitionDuration } = activeZoomRegion
+    const zoomInEndTime = startTime + transitionDuration
+    const zoomOutStartTime = startTime + duration - transitionDuration
+    const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+    if (currentTime < zoomInEndTime) {
+      finalWebcamScale = lerp(1, DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, easingFn((currentTime - startTime) / transitionDuration))
+    } else if (currentTime >= zoomOutStartTime) {
+      finalWebcamScale = lerp(DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, 1, easingFn((currentTime - zoomOutStartTime) / transitionDuration))
+    } else {
+      finalWebcamScale = DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT
+    }
+  }
+
+  const baseSize = Math.min(outputWidth, outputHeight)
+  const edgePadding = baseSize * 0.02
+  const aspectRatio = getWebcamAspectRatio(webcamStyles.shape)
+  let startSize = webcamStyles.size
+  let targetSize = webcamStyles.sizeOnZoom
+  let t = 0
+
+  if (webcamStyles.scaleOnZoom && activeZoomRegion) {
+    const { startTime, duration, transitionDuration } = activeZoomRegion
+    const zoomInEndTime = startTime + transitionDuration
+    const zoomOutStartTime = startTime + duration - transitionDuration
+    const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
+    if (currentTime < zoomInEndTime) {
+      t = easingFn((currentTime - startTime) / transitionDuration)
+    } else if (currentTime >= zoomOutStartTime) {
+      t = easingFn((currentTime - zoomOutStartTime) / transitionDuration)
+      ;[startSize, targetSize] = [targetSize, startSize]
+    } else {
+      startSize = targetSize
+      t = 1
+    }
+  }
+
+  const desiredWebcamWidth = baseSize * (lerp(startSize, targetSize, t) / 100)
+  const maxWebcamWidth = Math.min(outputWidth - edgePadding * 2, (outputHeight - edgePadding * 2) * aspectRatio)
+  const webcamWidth = Math.min(desiredWebcamWidth, maxWebcamWidth / finalWebcamScale)
+  const webcamHeight = webcamWidth / aspectRatio
+  const webcamRect = getWebcamRectForPosition(webcamPosition.pos, webcamWidth, webcamHeight, outputWidth, outputHeight)
+  const scaledWebcamWidth = webcamRect.width * finalWebcamScale
+  const scaledWebcamHeight = webcamRect.height * finalWebcamScale
+
+  return createStyledCameraConfig(
+    {
+      x: webcamStyles.isFlipped ? outputWidth - webcamRect.x - scaledWebcamWidth : webcamRect.x,
+      y: webcamRect.y,
+      width: scaledWebcamWidth,
+      height: scaledWebcamHeight,
+    },
+    webcamStyles,
+    1,
+  )
+}
+
+const resolveLayoutConfig = ({
+  state,
+  frameConfig,
+  activeZoomRegion,
+  currentTime,
+  outputWidth,
+  outputHeight,
+  availableWidth,
+  availableHeight,
+}: {
+  state: RenderableState
+  frameConfig: MediaRectConfig
+  activeZoomRegion: RenderableState['zoomRegions'][string] | null
+  currentTime: number
+  outputWidth: number
+  outputHeight: number
+  availableWidth: number
+  availableHeight: number
+}): ResolvedLayout => {
+  const { webcamLayout, webcamPosition, webcamStyles } = state
+  const baseInset = Math.min(outputWidth, outputHeight) * 0.02
+  const sidebarWidth = availableWidth * (webcamLayout.webcamWidthPercent / 100)
+  const gap = baseInset
+  const sidebarOnLeft = webcamLayout.side === 'left'
+  const availableArea: Rect = {
+    x: outputWidth * (state.frameStyles.padding / 100),
+    y: outputHeight * (state.frameStyles.padding / 100),
+    width: availableWidth,
+    height: availableHeight,
+  }
+
+  if (webcamLayout.mode === 'overlay') {
+    return {
+      mode: 'overlay',
+      desktopConfig: frameConfig,
+      cameraConfig: buildOverlayCameraConfig({
+        webcamPosition,
+        webcamStyles,
+        activeZoomRegion,
+        currentTime,
+        outputWidth,
+        outputHeight,
+      }),
+      cameraFlip: webcamStyles.isFlipped,
+    }
+  }
+
+  const desktopAreaWidth = Math.max(1, availableArea.width - sidebarWidth - gap)
+  const sidebarArea: Rect = sidebarOnLeft
+    ? {
+        x: availableArea.x,
+        y: availableArea.y,
+        width: sidebarWidth,
+        height: availableArea.height,
+      }
+    : {
+        x: availableArea.x + desktopAreaWidth + gap,
+        y: availableArea.y,
+        width: sidebarWidth,
+        height: availableArea.height,
+      }
+  const desktopArea: Rect = sidebarOnLeft
+    ? {
+        x: availableArea.x + sidebarWidth + gap,
+        y: availableArea.y,
+        width: desktopAreaWidth,
+        height: availableArea.height,
+      }
+    : {
+        x: availableArea.x,
+        y: availableArea.y,
+        width: desktopAreaWidth,
+        height: availableArea.height,
+      }
+
+  const desktopRect = fitRectWithinBounds(desktopArea, state.videoDimensions.width / state.videoDimensions.height)
+
+  if (webcamLayout.mode === 'side-by-side') {
+    const cameraBounds = insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75)
+    const cameraRect = fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+    return {
+      mode: 'side-by-side',
+      desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),
+      cameraConfig: createStyledCameraConfig(cameraRect, webcamStyles, 1),
+      cameraFlip: webcamStyles.isFlipped,
+    }
+  }
+
+  return {
+    mode: 'overlay',
+    desktopConfig: frameConfig,
+    cameraConfig: null,
+    cameraFlip: webcamStyles.isFlipped,
+  }
 }
 
 /**
@@ -357,8 +595,6 @@ export const drawScene = (
     }
   }
 
-  const showDesktopOverlay = activeSwapRegion ? activeSwapRegion.showDesktopOverlay : true
-
   // --- 4. Prepare Screen Canvas (Video + Clicks + Cursor + Zoom) ---
   const screenCache = getOrCreateCanvas('screen', frameContentWidth, frameContentHeight)
   if (screenCache) {
@@ -494,23 +730,19 @@ export const drawScene = (
     }
   }
 
-  // --- 5. Prepare Configs for Layout Swapping ---
-  const mainRectConfig = {
-    x: frameX,
-    y: frameY,
-    width: frameContentWidth,
-    height: frameContentHeight,
-    radius: frameStyles.borderRadius,
-    shadowBlur: frameStyles.shadowBlur,
-    shadowOffsetX: frameStyles.shadowOffsetX,
-    shadowOffsetY: frameStyles.shadowOffsetY,
-    shadowColor: frameStyles.shadowColor,
-    borderWidth: frameStyles.borderWidth,
-    borderColor: frameStyles.borderColor,
-    zIndex: 0,
-  }
+  // --- 5. Resolve Layouts and Swapping ---
+  const mainRectConfig = createFrameConfig(
+    {
+      x: frameX,
+      y: frameY,
+      width: frameContentWidth,
+      height: frameContentHeight,
+    },
+    frameStyles,
+    0,
+  )
 
-  const { webcamPosition, webcamStyles, isWebcamVisible } = state
+  const { isWebcamVisible } = state
   const activeZoomRegion = getTopActiveRegionAtTime(zoomRegions, currentTime, laneContext)
   const webcamDims = (() => {
     if (webcamDimensions) return webcamDimensions
@@ -528,78 +760,30 @@ export const drawScene = (
     return null
   })()
 
-  let finalWebcamScale = 1
-  let pipRectConfig: typeof mainRectConfig | null = null
-
-  if (isWebcamVisible && webcamVideoElement && webcamDims && webcamDims.width > 0 && state.recordingGeometry) {
-    if (webcamStyles.scaleOnZoom && activeZoomRegion) {
-      const { startTime, duration, transitionDuration } = activeZoomRegion
-      const zoomInEndTime = startTime + transitionDuration
-      const zoomOutStartTime = startTime + duration - transitionDuration
-      const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
-      if (currentTime < zoomInEndTime) {
-        finalWebcamScale = lerp(1, DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, easingFn((currentTime - startTime) / transitionDuration))
-      } else if (currentTime >= zoomOutStartTime) {
-        finalWebcamScale = lerp(DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, 1, easingFn((currentTime - zoomOutStartTime) / transitionDuration))
-      } else {
-        finalWebcamScale = DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT
+  const webcamIsRenderable = Boolean(isWebcamVisible && webcamVideoElement && webcamDims && webcamDims.width > 0)
+  const resolvedLayout = webcamIsRenderable
+    ? resolveLayoutConfig({
+        state,
+        frameConfig: mainRectConfig,
+        activeZoomRegion,
+        currentTime,
+        outputWidth,
+        outputHeight,
+        availableWidth,
+        availableHeight,
+      })
+    : {
+        mode: 'overlay' as const,
+        desktopConfig: mainRectConfig,
+        cameraConfig: null,
+        cameraFlip: false,
       }
-    }
 
-    const baseSize = Math.min(outputWidth, outputHeight)
-    let startSize = webcamStyles.size
-    let targetSize = webcamStyles.sizeOnZoom
-    let t = 0
-
-    if (webcamStyles.scaleOnZoom && activeZoomRegion) {
-      const { startTime, duration, transitionDuration } = activeZoomRegion
-      const zoomInEndTime = startTime + transitionDuration
-      const zoomOutStartTime = startTime + duration - transitionDuration
-      const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
-      if (currentTime < zoomInEndTime) {
-        t = easingFn((currentTime - startTime) / transitionDuration)
-      } else if (currentTime >= zoomOutStartTime) {
-        t = easingFn((currentTime - zoomOutStartTime) / transitionDuration)
-        ;[startSize, targetSize] = [targetSize, startSize]
-      } else {
-        startSize = targetSize; t = 1
-      }
-    }
-
-    let webcamWidth, webcamHeight
-    if (webcamStyles.shape === 'rectangle') {
-      webcamWidth = baseSize * (lerp(startSize, targetSize, t) / 100)
-      webcamHeight = webcamWidth * (9 / 16)
-    } else {
-      webcamWidth = baseSize * (lerp(startSize, targetSize, t) / 100)
-      webcamHeight = webcamWidth
-    }
-
-    const webcamRect = getWebcamRectForPosition(webcamPosition.pos, webcamWidth, webcamHeight, outputWidth, outputHeight)
-    const scaledWebcamWidth = webcamRect.width * finalWebcamScale
-    const scaledWebcamHeight = webcamRect.height * finalWebcamScale
-
-    const maxRadius = Math.min(scaledWebcamWidth, scaledWebcamHeight) / 2
-    const webcamRadius = webcamStyles.shape === 'circle' ? maxRadius : maxRadius * (webcamStyles.borderRadius / 50)
-
-    pipRectConfig = {
-      x: webcamStyles.isFlipped ? outputWidth - webcamRect.x - scaledWebcamWidth : webcamRect.x,
-      y: webcamRect.y,
-      width: scaledWebcamWidth,
-      height: scaledWebcamHeight,
-      radius: webcamRadius,
-      shadowBlur: webcamStyles.shadowBlur,
-      shadowOffsetX: webcamStyles.shadowOffsetX,
-      shadowOffsetY: webcamStyles.shadowOffsetY,
-      shadowColor: webcamStyles.shadowColor,
-      borderWidth: webcamStyles.border ? webcamStyles.borderWidth : 0,
-      borderColor: webcamStyles.borderColor || 'rgba(0,0,0,0)',
-      zIndex: 1,
-    }
-  }
+  const effectiveShowDesktopOverlay =
+    activeSwapRegion && resolvedLayout.mode === 'overlay' ? activeSwapRegion.showDesktopOverlay : false
 
   // --- 6. Draw Media Helper and Transitions ---
-  const lerpConfig = (a: typeof mainRectConfig, b: typeof mainRectConfig, p: number) => ({
+  const lerpConfig = (a: MediaRectConfig, b: MediaRectConfig, p: number): MediaRectConfig => ({
     x: lerp(a.x, b.x, p),
     y: lerp(a.y, b.y, p),
     width: lerp(a.width, b.width, p),
@@ -615,12 +799,13 @@ export const drawScene = (
   })
 
   const drawMediaToConfig = (
-    config: typeof mainRectConfig,
+    config: MediaRectConfig,
     source: CanvasImageSource,
     sW: number,
     sH: number,
     isFlipped: boolean = false,
-    globalAlpha: number = 1
+    globalAlpha: number = 1,
+    crop: RenderableState['webcamStyles']['crop'] | null = null,
   ) => {
     if (config.width <= 0 || config.height <= 0 || sW <= 0 || sH <= 0 || globalAlpha <= 0) return
     ctx.save()
@@ -646,15 +831,25 @@ export const drawScene = (
     ctx.clip(clipPath)
 
     const targetAR = config.width / config.height
-    const sourceAR = sW / sH
-    let sx = 0, sy = 0, drawW = sW, drawH = sH
+    const sourceX = crop ? sW * crop.left : 0
+    const sourceY = crop ? sH * crop.top : 0
+    const sourceWidth = crop ? sW * (1 - crop.left - crop.right) : sW
+    const sourceHeight = crop ? sH * (1 - crop.top - crop.bottom) : sH
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+      ctx.restore()
+      ctx.restore()
+      return
+    }
+
+    const sourceAR = sourceWidth / sourceHeight
+    let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
 
     if (sourceAR > targetAR) {
-      drawW = sH * targetAR
-      sx = (sW - drawW) / 2
+      drawW = sourceHeight * targetAR
+      sx = sourceX + (sourceWidth - drawW) / 2
     } else {
-      drawH = sW / targetAR
-      sy = (sH - drawH) / 2
+      drawH = sourceWidth / targetAR
+      sy = sourceY + (sourceHeight - drawH) / 2
     }
 
     if (isFlipped) {
@@ -687,72 +882,192 @@ export const drawScene = (
 
   const cameraSource = webcamVideoElement
   const cameraDims = webcamDims
-
-  // We can only slide/scale if PIP config exists
-  const hasPipConfig = pipRectConfig !== null
+  const cameraCrop = webcamIsRenderable ? state.webcamStyles.crop : null
+  const normalDesktopConfig = resolvedLayout.desktopConfig
+  const normalCameraConfig = resolvedLayout.cameraConfig
+  const canSwapCamera = Boolean(cameraSource && cameraDims && normalCameraConfig)
   const transitionType = activeSwapRegion?.transition || 'none'
-  const isAnimatedTransition = swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
+  const isAnimatedTransition = canSwapCamera && swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
   const progressAnim = transitionType === 'slide' ? EASING_MAP.Balanced(swapProgress) :
                        transitionType === 'scale' ? EASING_MAP.Balanced(swapProgress) : swapProgress
 
-  if (!isSwapped && !isAnimatedTransition) {
-     // Normal setup
-     if (desktopSource) {
-       draws.push({ zIndex: mainRectConfig.zIndex, draw: () => drawMediaToConfig(mainRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped) })
-     }
-     if (pipRectConfig && cameraSource && cameraDims) {
-       draws.push({ zIndex: pipRectConfig.zIndex, draw: () => drawMediaToConfig(pipRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
-     }
-  } else if (isSwapped && !isAnimatedTransition) {
-     // Fully Swapped Setup
-     if (desktopSource && showDesktopOverlay && pipRectConfig) {
-        draws.push({ zIndex: pipRectConfig.zIndex, draw: () => drawMediaToConfig(pipRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped) })
-     }
-     if (cameraSource && cameraDims) {
-        draws.push({ zIndex: mainRectConfig.zIndex, draw: () => drawMediaToConfig(mainRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
-     }
-  } else if (hasPipConfig) {
-     // Transitions Between States
-     if (transitionType === 'fade') {
-         // Crossfade opacity
-         const tSwapped = progressAnim
-         const tNormal = 1 - progressAnim
+  if (!isSwapped || !canSwapCamera) {
+    if (desktopSource) {
+      draws.push({
+        zIndex: normalDesktopConfig.zIndex,
+        draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
+      })
+    }
+    if (normalCameraConfig && cameraSource && cameraDims) {
+      draws.push({
+        zIndex: normalCameraConfig.zIndex,
+        draw: () =>
+          drawMediaToConfig(
+            normalCameraConfig,
+            cameraSource,
+            cameraDims.width,
+            cameraDims.height,
+            resolvedLayout.cameraFlip,
+            1,
+            cameraCrop,
+          ),
+      })
+    }
+  } else if (!isAnimatedTransition) {
+    if (desktopSource && effectiveShowDesktopOverlay && normalCameraConfig) {
+      draws.push({
+        zIndex: normalCameraConfig.zIndex,
+        draw: () => drawMediaToConfig(normalCameraConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
+      })
+    }
+    if (cameraSource && cameraDims) {
+      draws.push({
+        zIndex: mainRectConfig.zIndex,
+        draw: () =>
+          drawMediaToConfig(
+            mainRectConfig,
+            cameraSource,
+            cameraDims.width,
+            cameraDims.height,
+            resolvedLayout.cameraFlip,
+            1,
+            cameraCrop,
+          ),
+      })
+    }
+  } else if (normalCameraConfig && cameraSource && cameraDims) {
+    if (resolvedLayout.mode !== 'overlay') {
+      if (transitionType === 'fade') {
+        const tSwapped = progressAnim
+        const tNormal = 1 - progressAnim
 
-         // Normal Layout components
-         if (desktopSource) {
-            draws.push({ zIndex: mainRectConfig.zIndex - 0.1, draw: () => drawMediaToConfig(mainRectConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal) })
-         }
-         if (cameraSource && cameraDims) {
-            draws.push({ zIndex: pipRectConfig!.zIndex - 0.1, draw: () => drawMediaToConfig(pipRectConfig!, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped, tNormal) })
-         }
+        if (desktopSource) {
+          draws.push({
+            zIndex: normalDesktopConfig.zIndex - 0.1,
+            draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal),
+          })
+        }
+        draws.push({
+          zIndex: normalCameraConfig.zIndex - 0.1,
+          draw: () =>
+            drawMediaToConfig(
+              normalCameraConfig,
+              cameraSource,
+              cameraDims.width,
+              cameraDims.height,
+              resolvedLayout.cameraFlip,
+              tNormal,
+              cameraCrop,
+            ),
+        })
+        draws.push({
+          zIndex: mainRectConfig.zIndex + 0.1,
+          draw: () =>
+            drawMediaToConfig(
+              mainRectConfig,
+              cameraSource,
+              cameraDims.width,
+              cameraDims.height,
+              resolvedLayout.cameraFlip,
+              tSwapped,
+              cameraCrop,
+            ),
+        })
+      } else {
+        const currentCameraConfig = lerpConfig(normalCameraConfig, mainRectConfig, progressAnim)
+        if (desktopSource) {
+          draws.push({
+            zIndex: normalDesktopConfig.zIndex,
+            draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, 1 - progressAnim),
+          })
+        }
+        draws.push({
+          zIndex: currentCameraConfig.zIndex,
+          draw: () =>
+            drawMediaToConfig(
+              currentCameraConfig,
+              cameraSource,
+              cameraDims.width,
+              cameraDims.height,
+              resolvedLayout.cameraFlip,
+              1,
+              cameraCrop,
+            ),
+        })
+      }
+    } else if (transitionType === 'fade') {
+      const tSwapped = progressAnim
+      const tNormal = 1 - progressAnim
 
-         // Swapped Layout components
-         if (desktopSource && showDesktopOverlay) {
-            draws.push({ zIndex: pipRectConfig!.zIndex + 0.1, draw: () => drawMediaToConfig(pipRectConfig!, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tSwapped) })
-         }
-         if (cameraSource && cameraDims) {
-            draws.push({ zIndex: mainRectConfig.zIndex + 0.1, draw: () => drawMediaToConfig(mainRectConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped, tSwapped) })
-         }
-     } else {
-         // Slide / Scale (Spatial interpolation)
-         let currentDesktopConfig = mainRectConfig
-         let currentCameraConfig = pipRectConfig!
+      if (desktopSource) {
+        draws.push({
+          zIndex: normalDesktopConfig.zIndex - 0.1,
+          draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal),
+        })
+      }
+      draws.push({
+        zIndex: normalCameraConfig.zIndex - 0.1,
+        draw: () =>
+          drawMediaToConfig(
+            normalCameraConfig,
+            cameraSource,
+            cameraDims.width,
+            cameraDims.height,
+            resolvedLayout.cameraFlip,
+            tNormal,
+            cameraCrop,
+          ),
+      })
 
-         if (swapProgress > 0) {
-             currentDesktopConfig = lerpConfig(mainRectConfig, pipRectConfig!, progressAnim)
-             currentCameraConfig = lerpConfig(pipRectConfig!, mainRectConfig, progressAnim)
-         }
+      if (desktopSource && effectiveShowDesktopOverlay) {
+        draws.push({
+          zIndex: normalCameraConfig.zIndex + 0.1,
+          draw: () => drawMediaToConfig(normalCameraConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tSwapped),
+        })
+      }
+      draws.push({
+        zIndex: mainRectConfig.zIndex + 0.1,
+        draw: () =>
+          drawMediaToConfig(
+            mainRectConfig,
+            cameraSource,
+            cameraDims.width,
+            cameraDims.height,
+            resolvedLayout.cameraFlip,
+            tSwapped,
+            cameraCrop,
+          ),
+      })
+    } else {
+      let currentDesktopConfig = normalDesktopConfig
+      let currentCameraConfig = normalCameraConfig
 
-         if (desktopSource && (showDesktopOverlay || progressAnim < 1)) {
-            // Fade out the overlay at the end if it's supposed to be hidden
-            // If scale/slide and showDesktopOverlay=false, it should shrink to PIP and fade out
-            const alpha = (!showDesktopOverlay) ? (1 - progressAnim) : 1
-            draws.push({ zIndex: currentDesktopConfig.zIndex, draw: () => drawMediaToConfig(currentDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, alpha) })
-         }
-         if (cameraSource && cameraDims) {
-            draws.push({ zIndex: currentCameraConfig.zIndex, draw: () => drawMediaToConfig(currentCameraConfig, cameraSource, cameraDims.width, cameraDims.height, webcamStyles.isFlipped) })
-         }
-     }
+      if (swapProgress > 0) {
+        currentDesktopConfig = lerpConfig(normalDesktopConfig, normalCameraConfig, progressAnim)
+        currentCameraConfig = lerpConfig(normalCameraConfig, mainRectConfig, progressAnim)
+      }
+
+      if (desktopSource && (effectiveShowDesktopOverlay || progressAnim < 1)) {
+        const alpha = !effectiveShowDesktopOverlay ? 1 - progressAnim : 1
+        draws.push({
+          zIndex: currentDesktopConfig.zIndex,
+          draw: () => drawMediaToConfig(currentDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, alpha),
+        })
+      }
+      draws.push({
+        zIndex: currentCameraConfig.zIndex,
+        draw: () =>
+          drawMediaToConfig(
+            currentCameraConfig,
+            cameraSource,
+            cameraDims.width,
+            cameraDims.height,
+            resolvedLayout.cameraFlip,
+            1,
+            cameraCrop,
+          ),
+      })
+    }
   }
 
   // Draw layers sorted by zIndex

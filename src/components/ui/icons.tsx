@@ -157,6 +157,28 @@ const PhotoIcon = (props: IconProps) => (
   </BaseCustomIcon>
 )
 
+const PhoneIcon = (props: IconProps) => (
+  <BaseCustomIcon {...props}>
+    <rect x="7.5" y="2.5" width="9" height="19" rx="2.8" />
+    <path d="M10.5 5.5h3" />
+    <path d="M11.8 18.5h.4" />
+  </BaseCustomIcon>
+)
+
+const OverlayLayoutIcon = (props: IconProps) => (
+  <BaseCustomIcon {...props}>
+    <rect x="3" y="5" width="18" height="12" rx="2.5" />
+    <rect x="14" y="12.5" width="5.5" height="5.5" rx="1.5" />
+  </BaseCustomIcon>
+)
+
+const SplitViewIcon = (props: IconProps) => (
+  <BaseCustomIcon {...props}>
+    <rect x="3" y="5" width="8" height="14" rx="2" />
+    <rect x="13" y="5" width="8" height="14" rx="2" />
+  </BaseCustomIcon>
+)
+
 const GripVerticalIcon = (props: IconProps) => (
   <BaseCustomIcon {...props}>
     <circle cx="9" cy="7.5" r="0.8" fill="currentColor" />
@@ -291,6 +313,8 @@ export const ChevronUp = withIconMotion(NavArrowUpIcon, 'ChevronUp')
 export const Microphone = withIconMotion(MicrophoneIcon, 'Microphone')
 export const DeviceComputerCamera = withIconMotion(CameraIcon, 'DeviceComputerCamera')
 export const LayoutBoard = withIconMotion(ViewGridIcon, 'LayoutBoard')
+export const OverlayLayout = withIconMotion(OverlayLayoutIcon, 'OverlayLayout')
+export const SplitView = withIconMotion(SplitViewIcon, 'SplitView')
 export const Route = withIconMotion(PathArrowIcon, 'Route')
 export const Pointer = withIconMotion(CursorPointerIcon, 'Pointer')
 export const FileImport = withIconMotion(UploadIcon, 'FileImport')
@@ -304,6 +328,7 @@ export const Music = withIconMotion(MusicNoteIcon, 'Music')
 export const AdjustmentsHorizontal = withIconMotion(ControlSliderIcon, 'AdjustmentsHorizontal')
 export const Wand = withIconMotion(MagicWandIcon, 'Wand')
 export const Photo = withIconMotion(PhotoIcon, 'Photo')
+export const Phone = withIconMotion(PhoneIcon, 'Phone')
 export const BrandGithub = withIconMotion(GithubCircleIcon, 'BrandGithub')
 export const Login = withIconMotion(LogInIcon, 'Login')
 export const Logout = withIconMotion(LogOutIcon, 'Logout')

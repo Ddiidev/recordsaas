@@ -2,6 +2,10 @@ import type {
   ProjectState,
   ProjectActions,
   Slice,
+  CameraSwapRegion,
+  WebcamLayout,
+  WebcamPosition,
+  WebcamStyles,
   RecordingGeometry,
   VideoDimensions,
   CursorTheme,
@@ -11,10 +15,12 @@ import type {
   ChangeSoundRegion,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
-import { ZOOM } from '../../lib/constants'
+import { DEFAULTS, ZOOM } from '../../lib/constants'
 import { initialFrameState, recalculateCanvasDimensions } from './frameSlice'
+import { initialWebcamState } from './webcamSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
 import { createDefaultTimelineLane, getFallbackLaneId } from '../../lib/timeline-lanes'
+import { isWebcamShape, normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
 
 export const initialProjectState: ProjectState = {
   videoPath: null,
@@ -224,6 +230,148 @@ const parseChangeSoundRegions = (value: unknown, fallbackLaneId: string): Record
   )
 }
 
+const VALID_WEBCAM_POSITIONS: WebcamPosition['pos'][] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'left-center',
+  'right-center',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+]
+
+const parseWebcamLayout = (value: unknown): WebcamLayout => {
+  const layout = value && typeof value === 'object' ? (value as Partial<WebcamLayout>) : {}
+  const mode = normalizeWebcamLayoutMode(layout.mode)
+  const side = DEFAULTS.CAMERA.LAYOUT.SIDE.values.includes(layout.side as WebcamLayout['side'])
+    ? (layout.side as WebcamLayout['side'])
+    : DEFAULTS.CAMERA.LAYOUT.SIDE.defaultValue
+  const webcamWidthPercent =
+    typeof layout.webcamWidthPercent === 'number' && Number.isFinite(layout.webcamWidthPercent)
+      ? Math.max(
+          DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.min,
+          Math.min(DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.max, layout.webcamWidthPercent),
+        )
+      : DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.defaultValue
+
+  return {
+    mode,
+    side,
+    webcamWidthPercent,
+  }
+}
+
+const parseWebcamPosition = (value: unknown): WebcamPosition => {
+  const pos = value && typeof value === 'object' ? (value as Partial<WebcamPosition>).pos : undefined
+  return {
+    pos: VALID_WEBCAM_POSITIONS.includes(pos as WebcamPosition['pos'])
+      ? (pos as WebcamPosition['pos'])
+      : initialWebcamState.webcamPosition.pos,
+  }
+}
+
+const parseWebcamStyles = (value: unknown): WebcamStyles => {
+  const styles = value && typeof value === 'object' ? (value as Partial<WebcamStyles>) : {}
+  const nextStyles: WebcamStyles = JSON.parse(JSON.stringify(initialWebcamState.webcamStyles))
+
+  if (isWebcamShape(styles.shape)) {
+    nextStyles.shape = styles.shape
+  }
+  if (typeof styles.borderRadius === 'number' && Number.isFinite(styles.borderRadius)) {
+    nextStyles.borderRadius = Math.max(0, Math.min(50, styles.borderRadius))
+  }
+  if (typeof styles.size === 'number' && Number.isFinite(styles.size)) {
+    nextStyles.size = Math.max(DEFAULTS.CAMERA.PLACEMENT.SIZE.min, Math.min(DEFAULTS.CAMERA.PLACEMENT.SIZE.max, styles.size))
+  }
+  if (typeof styles.sizeOnZoom === 'number' && Number.isFinite(styles.sizeOnZoom)) {
+    nextStyles.sizeOnZoom = Math.max(
+      DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.min,
+      Math.min(DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.max, styles.sizeOnZoom),
+    )
+  }
+  if (typeof styles.shadowBlur === 'number' && Number.isFinite(styles.shadowBlur)) {
+    nextStyles.shadowBlur = styles.shadowBlur
+  }
+  if (typeof styles.shadowOffsetX === 'number' && Number.isFinite(styles.shadowOffsetX)) {
+    nextStyles.shadowOffsetX = styles.shadowOffsetX
+  }
+  if (typeof styles.shadowOffsetY === 'number' && Number.isFinite(styles.shadowOffsetY)) {
+    nextStyles.shadowOffsetY = styles.shadowOffsetY
+  }
+  if (typeof styles.shadowColor === 'string' && styles.shadowColor.length > 0) {
+    nextStyles.shadowColor = styles.shadowColor
+  }
+  if (typeof styles.isFlipped === 'boolean') {
+    nextStyles.isFlipped = styles.isFlipped
+  }
+  if (typeof styles.scaleOnZoom === 'boolean') {
+    nextStyles.scaleOnZoom = styles.scaleOnZoom
+  }
+  if (typeof styles.smartPosition === 'boolean') {
+    nextStyles.smartPosition = styles.smartPosition
+  }
+  if (typeof styles.border === 'boolean') {
+    nextStyles.border = styles.border
+  }
+  if (typeof styles.borderWidth === 'number' && Number.isFinite(styles.borderWidth)) {
+    nextStyles.borderWidth = Math.max(DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.min, Math.min(DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.max, styles.borderWidth))
+  }
+  if (typeof styles.borderColor === 'string' && styles.borderColor.length > 0) {
+    nextStyles.borderColor = styles.borderColor
+  }
+  nextStyles.crop = normalizeWebcamCrop(styles.crop, nextStyles.crop)
+
+  return nextStyles
+}
+
+const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegion | null => {
+  if (!value || typeof value !== 'object') return null
+  const region = value as Partial<CameraSwapRegion>
+
+  const startTime =
+    typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
+  const duration =
+    typeof region.duration === 'number' && Number.isFinite(region.duration)
+      ? Math.max(0.1, clampToNonNegative(region.duration))
+      : 15
+  const transition =
+    region.transition === 'none' || region.transition === 'fade' || region.transition === 'slide' || region.transition === 'scale'
+      ? region.transition
+      : 'fade'
+  const transitionDuration =
+    typeof region.transitionDuration === 'number' && Number.isFinite(region.transitionDuration)
+      ? Math.max(0.1, Math.min(2, region.transitionDuration))
+      : 0.3
+
+  return {
+    id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `swap-${Date.now()}`,
+    type: 'swap',
+    laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
+    startTime,
+    duration,
+    showDesktopOverlay: region.showDesktopOverlay !== false,
+    transition,
+    transitionDuration,
+    zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
+  }
+}
+
+const parseSwapRegions = (value: unknown, fallbackLaneId: string): Record<string, CameraSwapRegion> => {
+  if (!value || typeof value !== 'object') return {}
+
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (acc, [regionId, rawValue]) => {
+      const parsedRegion = parseSwapRegion(rawValue, fallbackLaneId)
+      if (!parsedRegion) return acc
+      parsedRegion.id = regionId || parsedRegion.id
+      acc[parsedRegion.id] = parsedRegion
+      return acc
+    },
+    {} as Record<string, CameraSwapRegion>,
+  )
+}
+
 const extractProjectEvents = (parsedData: Record<string, unknown>): MetaDataItem[] => {
   const events = parsedData.events
   if (Array.isArray(events)) {
@@ -420,6 +568,13 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       } else {
         state.frameStyles = initialFrameState.frameStyles
       }
+      state.webcamLayout = JSON.parse(JSON.stringify(initialWebcamState.webcamLayout))
+      state.webcamPosition = presetToApply?.webcamPosition
+        ? JSON.parse(JSON.stringify(presetToApply.webcamPosition))
+        : JSON.parse(JSON.stringify(initialWebcamState.webcamPosition))
+      state.webcamStyles = presetToApply?.webcamStyles
+        ? JSON.parse(JSON.stringify(presetToApply.webcamStyles))
+        : JSON.parse(JSON.stringify(initialWebcamState.webcamStyles))
       state.videoPath = videoPath
       state.metadataPath = metadataPath
       state.videoUrl = videoUrl
@@ -475,10 +630,35 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.speedRegions = (parsedData.speedRegions as typeof state.speedRegions) || {}
         state.blurRegions = (parsedData.blurRegions as typeof state.blurRegions) || {}
         state.timelineLanes = (parsedData.timelineLanes as typeof state.timelineLanes) || [createDefaultTimelineLane()]
+        const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
+        state.swapRegions = parseSwapRegions(parsedData.swapRegions, fallbackTimelineLaneId)
         state.mediaAudioClip = parsedMediaAudioClip
-        const fallbackMediaLaneId = getFallbackLaneId(state.timelineLanes)
+        const fallbackMediaLaneId = fallbackTimelineLaneId
         state.mediaAudioRegions = parseMediaAudioRegions(parsedData.mediaAudioRegions, fallbackMediaLaneId, parsedMediaAudioClip)
         state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
+        if ('webcamLayout' in parsedData) {
+          state.webcamLayout = parseWebcamLayout(parsedData.webcamLayout)
+        }
+        if ('webcamPosition' in parsedData) {
+          state.webcamPosition = parseWebcamPosition(parsedData.webcamPosition)
+        }
+        if ('webcamStyles' in parsedData) {
+          state.webcamStyles = parseWebcamStyles(parsedData.webcamStyles)
+        }
+        const hasWebcamAsset = !!state.webcamVideoUrl
+        if (hasWebcamAsset) {
+          state.isWebcamVisible =
+            typeof parsedData.isWebcamVisible === 'boolean' ? parsedData.isWebcamVisible : true
+        } else {
+          state.isWebcamVisible = false
+        }
+        Object.values(state.swapRegions).forEach((region) => {
+          if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {
+            region.laneId = fallbackTimelineLaneId
+          }
+          region.startTime = clampStartTime(region.startTime, state.duration)
+          region.transitionDuration = Math.max(0.1, Math.min(2, region.transitionDuration ?? 0.3))
+        })
         Object.values(state.mediaAudioRegions).forEach((region) => {
           if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {
             region.laneId = fallbackMediaLaneId

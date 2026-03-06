@@ -51,6 +51,7 @@ export interface Preset {
   isDefault?: boolean
   webcamStyles?: WebcamStyles
   webcamPosition?: WebcamPosition
+  webcamLayout?: WebcamLayout
   isWebcamVisible?: boolean
 }
 
@@ -211,7 +212,22 @@ export interface WebcamPosition {
     | 'right-center'
 }
 
-export type WebcamShape = 'circle' | 'square' | 'rectangle'
+export interface WebcamCrop {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export type WebcamShape = 'circle' | 'square' | 'rectangle' | 'phone'
+export type WebcamLayoutMode = 'overlay' | 'side-by-side'
+export type WebcamLayoutSide = 'left' | 'right'
+
+export interface WebcamLayout {
+  mode: WebcamLayoutMode
+  side: WebcamLayoutSide
+  webcamWidthPercent: number
+}
 
 export interface WebcamStyles {
   shape: WebcamShape
@@ -228,6 +244,7 @@ export interface WebcamStyles {
   border: boolean
   borderWidth: number
   borderColor: string
+  crop: WebcamCrop
 }
 
 export type Dimensions = { width: number; height: number }
@@ -375,10 +392,12 @@ export interface WebcamState {
   webcamVideoPath: string | null
   webcamVideoUrl: string | null
   isWebcamVisible: boolean
+  webcamLayout: WebcamLayout
   webcamPosition: WebcamPosition
   webcamStyles: WebcamStyles
 }
 export interface WebcamActions {
+  updateWebcamLayout: (layout: Partial<WebcamLayout>) => void
   setWebcamPosition: (position: WebcamPosition) => void
   setWebcamVisibility: (isVisible: boolean) => void
   updateWebcamStyle: (style: Partial<WebcamStyles>) => void
@@ -417,6 +436,7 @@ export type RenderableState = Pick<
   | 'frameStyles'
   | 'videoDimensions'
   | 'aspectRatio'
+  | 'webcamLayout'
   | 'webcamPosition'
   | 'webcamStyles'
   | 'isWebcamVisible'

@@ -271,7 +271,9 @@ function SpeedSettings({ region }: { region: SpeedRegion }) {
 
 function SwapSettings({ region }: { region: CameraSwapRegion }) {
   const { updateRegion, deleteRegion } = useEditorStore.getState()
+  const webcamLayoutMode = useEditorStore((state) => state.webcamLayout.mode)
   const [durationText, setDurationText] = useState((region.transitionDuration ?? 0.3).toFixed(1))
+  const supportsDesktopOverlay = webcamLayoutMode === 'overlay'
 
   useEffect(() => {
     setDurationText((region.transitionDuration ?? 0.3).toFixed(1))
@@ -279,18 +281,27 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-0.5">
-          <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Keep the screen visible in a smaller window
+      {supportsDesktopOverlay ? (
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Keep the screen visible in a smaller window
+            </p>
+          </div>
+          <Switch
+            checked={region.showDesktopOverlay}
+            onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
+          />
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
+          <span className="text-sm font-medium text-sidebar-foreground block">Desktop overlay locked off</span>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            In side-by-side, swap expands the webcam and hides the screen.
           </p>
         </div>
-        <Switch
-          checked={region.showDesktopOverlay}
-          onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
-        />
-      </div>
+      )}
 
       <div className="space-y-2.5">
         <span className="text-sm font-medium text-sidebar-foreground">Transition Animation</span>

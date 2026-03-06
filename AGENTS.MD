@@ -16,6 +16,7 @@ Current scope baseline:
 - Record full screen, window, or selected area.
 - Edit capture in timeline with lane-based regions and visual effects.
 - Support camera overlay and cursor/animation effects.
+- Support camera layouts in `overlay` and `side-by-side` modes.
 - Export final output (video and related formats).
 - Persist and reload projects through `.rsproj`.
 - Support media audio asset import and lane-based control (v2.4.2 baseline).
@@ -127,10 +128,23 @@ IPC contract baseline (media import):
 
 `.rsproj` compatibility baseline:
 - Serialized fields of interest include `mediaAudioClip`, `mediaAudioRegions`, `changeSoundRegions`.
+- Serialized camera/layout fields of interest include `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `swapRegions`.
 - Backward compatibility defaults if fields are absent:
 - `mediaAudioClip = null`
 - `mediaAudioRegions = {}`
 - `changeSoundRegions = {}`
+- `webcamLayout = { mode: 'overlay', side: 'right', webcamWidthPercent: 30 }`
+- `swapRegions = {}`
+
+Webcam layout contract baseline:
+- `webcamLayout.mode`: `overlay | side-by-side`
+- `webcamLayout.side`: `left | right`
+- `webcamLayout.webcamWidthPercent`: integer split for webcam share, default `30`
+- `webcamStyles.shape`: `circle | square | rectangle | phone`
+- `webcamStyles.crop`: normalized `{ top, right, bottom, left }` source crop, default all `0`
+- `overlay` keeps current PiP camera behavior, honors position/size/zoom controls, and now supports the vertical `phone` shape.
+- `side-by-side` reserves a side column using the split control, keeps webcam shape/border/shadow/flip/crop styling active, and ignores overlay size/position/smart-position controls.
+- `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
 
 ## 5. UI and Styling Baseline (Tokens and Consistency)
 
