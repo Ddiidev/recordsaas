@@ -7,12 +7,26 @@ import { appState } from '../state'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT } from '../lib/constants'
 import { cleanupAndDiscard } from '../features/recording-manager'
 import { resetCursorScale } from '../features/cursor-manager'
+import { RECORDER_WINDOW_SIZES } from '../../../src/lib/recorder-window'
+
+function applyRecorderIgnoreMouse(win: BrowserWindow, ignore: boolean) {
+  if (process.platform === 'linux') {
+    win.setIgnoreMouseEvents(false)
+    return
+  }
+
+  if (ignore) {
+    win.setIgnoreMouseEvents(true, { forward: true })
+    return
+  }
+
+  win.setIgnoreMouseEvents(false)
+}
 
 export function createRecorderWindow() {
   const primaryDisplay = screen.getPrimaryDisplay()
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
-  const windowWidth = 980
-  const windowHeight = 180
+  const { width: windowWidth, height: windowHeight } = RECORDER_WINDOW_SIZES.toolbar
   const x = Math.round((screenWidth - windowWidth) / 2)
   const y = Math.max(0, Math.round((screenHeight - windowHeight) / 2))
 
@@ -68,20 +82,25 @@ export function createRecorderWindow() {
   // This simple IPC handler can stay here as it's tightly coupled to this window.
   ipcMain.on('recorder:set-size', (_event, { width, height }: { width: number; height: number }) => {
     if (appState.recorderWin) {
+      const currentBounds = appState.recorderWin.getBounds()
+      const display = screen.getDisplayMatching(currentBounds)
+      const { workArea } = display
+      const x = Math.round(workArea.x + (workArea.width - width) / 2)
+      const y = Math.max(workArea.y, Math.round(workArea.y + (workArea.height - height) / 2))
+
       log.info(`Resizing recorder window to ${width}x${height}`)
       appState.recorderWin.setContentSize(width, height)
-      appState.recorderWin.setSize(width, height, true)
+      appState.recorderWin.setPosition(x, y, true)
     }
   })
 
   ipcMain.on('recorder:click-through', () => {
     const win = appState.recorderWin
     if (win && !win.isDestroyed()) {
-      // Use Electron's built-in solution for Windows & macOS
-      win.setIgnoreMouseEvents(true, { forward: true })
+      applyRecorderIgnoreMouse(win, true)
       setTimeout(() => {
         if (win && !win.isDestroyed()) {
-          win.setIgnoreMouseEvents(false)
+          applyRecorderIgnoreMouse(win, false)
         }
       }, 100)
     }
@@ -90,7 +109,7 @@ export function createRecorderWindow() {
   ipcMain.on('recorder:set-ignore', (_event, ignore: boolean) => {
     const win = appState.recorderWin
     if (win && !win.isDestroyed()) {
-      win.setIgnoreMouseEvents(!!ignore, { forward: true })
+      applyRecorderIgnoreMouse(win, !!ignore)
     }
   })
 }

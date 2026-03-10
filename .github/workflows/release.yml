@@ -41,9 +41,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --- JOB 2: Build and Upload Artifacts ---
+  # --- JOB 2: Build and Publish Public Release Assets ---
   build:
-    name: Build & Upload Artifacts
+    name: Build & Publish Release Assets
     needs: release
     if: needs.release.outputs.new_release_published == 'true'
     permissions:
@@ -127,17 +127,43 @@ jobs:
         run: ls -R
         shell: bash
 
-      - name: Upload Build Artifacts (Private Download)
-        uses: actions/upload-artifact@v4
-        with:
-          name: RecordSaaS-Binaries-${{ matrix.os }}
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/*.zip
-            dist/*.dmg
-            dist/*.exe
-            dist/*.nsis
-          retention-days: 15
-          if-no-files-found: error
+      - name: Prepare public release asset
+        id: public_asset
+        run: |
+          version="${{ needs.release.outputs.new_release_version }}"
+
+          case "${{ runner.os }}" in
+            Linux)
+              source_file="$(find dist -maxdepth 1 -type f -name '*.zip' ! -name 'RecordSaaSSetup-*.zip' | head -n 1)"
+              target_file="dist/RecordSaaSSetup-linux-v${version}.zip"
+              ;;
+            macOS)
+              source_file="$(find dist -maxdepth 1 -type f -name '*.zip' ! -name 'RecordSaaSSetup-*.zip' | head -n 1)"
+              target_file="dist/RecordSaaSSetup-mac-v${version}.zip"
+              ;;
+            Windows)
+              source_file="$(find dist -maxdepth 1 -type f -name '*.exe' ! -name 'RecordSaaSSetup-*.exe' | head -n 1)"
+              target_file="dist/RecordSaaSSetup-windows-v${version}.exe"
+              ;;
+            *)
+              echo "Unsupported runner OS: ${{ runner.os }}"
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$source_file" ]; then
+            echo "No public asset candidate found in dist for ${{ runner.os }}"
+            exit 1
+          fi
+
+          mv "$source_file" "$target_file"
+
+          echo "Prepared public asset: $target_file"
+          echo "asset_path=$target_file" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Publish asset to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ needs.release.outputs.new_release_tag }} "${{ steps.public_asset.outputs.asset_path }}" --clobber
+        shell: bash

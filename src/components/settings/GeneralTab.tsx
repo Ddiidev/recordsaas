@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import type { AppearanceMode } from '../../types'
+import { LINUX_CURSOR_SCALE_OPTIONS, isLinuxCursorScaleOption } from '../../lib/recorder-window'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
 import { useShallow } from 'zustand/react/shallow'
@@ -21,6 +22,8 @@ export function GeneralTab() {
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
   )
+  const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
+  const [linuxCursorScale, setLinuxCursorScale] = useState<number>(1)
   const [forceGPU, setForceGPU] = useState(false)
   const [playExportCompletionSound, setPlayExportCompletionSound] = useState(true)
 
@@ -29,15 +32,29 @@ export function GeneralTab() {
 
     const loadSettings = async () => {
       try {
-        const savedCountdown = await window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds')
+        const [savedCountdown, savedForceGPU, savedPlayExportCompletionSound, currentPlatform, savedCursorScale] =
+          await Promise.all([
+            window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
+            window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
+            window.electronAPI.getSetting<boolean>('general.playExportCompletionSound'),
+            window.electronAPI.getPlatform(),
+            window.electronAPI.getSetting<number>('recorder.cursorScale'),
+          ])
+
         if (typeof savedCountdown === 'number' && isPreparationCountdownOption(savedCountdown) && isMounted) {
           setPreparationCountdownSeconds(savedCountdown)
         }
 
-        const [savedForceGPU, savedPlayExportCompletionSound] = await Promise.all([
-          window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
-          window.electronAPI.getSetting<boolean>('general.playExportCompletionSound'),
-        ])
+        if (isMounted) {
+          setPlatform(currentPlatform)
+        }
+
+        if (currentPlatform === 'linux' && isMounted) {
+          setLinuxCursorScale(
+            typeof savedCursorScale === 'number' && isLinuxCursorScaleOption(savedCursorScale) ? savedCursorScale : 1,
+          )
+        }
+
         if (typeof savedForceGPU === 'boolean' && isMounted) {
           setForceGPU(savedForceGPU)
         }
@@ -65,6 +82,15 @@ export function GeneralTab() {
 
     setPreparationCountdownSeconds(parsedValue)
     window.electronAPI.setSetting('recorder.preparationCountdownSeconds', parsedValue)
+  }
+
+  const handleLinuxCursorScaleChange = (value: string) => {
+    const parsedValue = Number(value)
+    if (!isLinuxCursorScaleOption(parsedValue)) return
+
+    setLinuxCursorScale(parsedValue)
+    window.electronAPI.setCursorScale(parsedValue)
+    window.electronAPI.setSetting('recorder.cursorScale', parsedValue)
   }
 
   const handleForceGPUChange = (checked: boolean) => {
@@ -118,15 +144,35 @@ export function GeneralTab() {
           </Select>
         </div>
 
+        {platform === 'linux' && (
+          <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">
+            <div>
+              <h3 className="font-medium text-foreground">Cursor Size</h3>
+              <p className="text-sm text-muted-foreground">Apply the Linux cursor scale used while recording.</p>
+            </div>
+            <Select value={String(linuxCursorScale)} onValueChange={handleLinuxCursorScaleChange}>
+              <SelectTrigger className="w-24 h-10 bg-background/50">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LINUX_CURSOR_SCALE_OPTIONS.map((scale) => (
+                  <SelectItem key={scale.value} value={String(scale.value)}>
+                    {scale.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">
           <div>
             <h3 className="font-medium text-foreground">Hardware Acceleration</h3>
-            <p className="text-sm text-muted-foreground">Force high-performance GPU for faster rendering (requires app restart).</p>
+            <p className="text-sm text-muted-foreground">
+              Force high-performance GPU for faster rendering (requires app restart).
+            </p>
           </div>
-          <Switch 
-            checked={forceGPU} 
-            onCheckedChange={handleForceGPUChange} 
-          />
+          <Switch checked={forceGPU} onCheckedChange={handleForceGPUChange} />
         </div>
 
         <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">

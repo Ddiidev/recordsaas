@@ -10,7 +10,6 @@ import {
   Video,
   X,
   Marquee2,
-  Pointer,
   FileImport,
   Folder,
   IconShell,
@@ -25,27 +24,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
+import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder-window'
 import { cn } from '../lib/utils'
 import type { AuthSession } from '../types/auth'
 import '../index.css'
 
 // --- Constants ---
-const LINUX_SCALES = [
-  { value: 2, label: '2x' },
-  { value: 1.5, label: '1.5x' },
-  { value: 1, label: '1x' },
-]
-const WINDOWS_SCALES = [
-  { value: 3, label: '3x' },
-  { value: 2, label: '2x' },
-  { value: 1, label: '1x' },
-]
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
-const RECORDER_WINDOW_COMPACT_SIZE = { width: 980, height: 360 }
-// Preview no longer controls window size; keep content scrollable instead
-// const RECORDER_WINDOW_PREVIEW_SIZE = { width: 900, height: 360 }
-const RECORDER_WINDOW_SETTINGS_SIZE = { width: 980, height: 700 }
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -75,7 +61,6 @@ export function RecorderPage() {
   const [selectedDisplayId, setSelectedDisplayId] = useState<string>('')
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
-  const [cursorScale, setCursorScale] = useState<number>(1)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
@@ -89,8 +74,9 @@ export function RecorderPage() {
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
 
-  const cursorScales = useMemo(() => (platform === 'win32' ? WINDOWS_SCALES : LINUX_SCALES), [platform])
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
+  const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+  const isWindowClickThroughSupported = platform === 'win32' || platform === 'darwin'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -130,11 +116,12 @@ export function RecorderPage() {
   const handleSettingsClose = () => {
     setSettingsModalOpen(false)
     setSettingsDefaultTab('general')
-    window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
   }
 
   // Effect for initializing settings and devices from storage/system
   useEffect(() => {
+    if (!platform) return
+
     const initialize = async () => {
       try {
         const [savedWebcamId, savedMicId, savedCursorScale, savedPreparationCountdown, fetchedDisplays] =
@@ -155,10 +142,9 @@ export function RecorderPage() {
           setPreparationCountdownSeconds(DEFAULT_PREPARATION_COUNTDOWN_SECONDS)
         }
 
-        // Only set cursor scale from settings for Linux
         if (platform === 'linux') {
-          const scale = savedCursorScale ?? 1
-          setCursorScale(scale)
+          const scale =
+            typeof savedCursorScale === 'number' && isLinuxCursorScaleOption(savedCursorScale) ? savedCursorScale : 1
           window.electronAPI.setCursorScale(scale)
         }
 
@@ -182,11 +168,7 @@ export function RecorderPage() {
     if (mics.length > 0 && !mics.some((m) => m.id === selectedMicId)) {
       setSelectedMicId('none')
     }
-    if (platform === 'linux' && !cursorScales.some((s) => s.value === cursorScale)) {
-      setCursorScale(1)
-      window.electronAPI.setCursorScale(1)
-    }
-  }, [isInitializing, webcams, mics, platform, cursorScales, selectedWebcamId, selectedMicId, cursorScale])
+  }, [isInitializing, webcams, mics, selectedWebcamId, selectedMicId])
 
   // Effect to manage IPC listeners for recording completion
   useEffect(() => {
@@ -249,8 +231,24 @@ export function RecorderPage() {
     const startStream = async () => {
       stopStream()
       try {
-        const constraints = { video: platform === 'win32' ? true : { deviceId: { exact: selectedWebcamId } } }
-        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        const browserDevices = await navigator.mediaDevices.enumerateDevices()
+        const selectedWebcam = webcams.find((device) => device.id === selectedWebcamId)
+        const matchedBrowserDevice = browserDevices.find((device) => {
+          if (device.kind !== 'videoinput') return false
+          if (device.deviceId === selectedWebcamId) return true
+          if (!selectedWebcam) return false
+          return device.label === selectedWebcam.name
+        })
+
+        let stream = permissionStream
+        if (matchedBrowserDevice?.deviceId && matchedBrowserDevice.deviceId !== permissionStream.getVideoTracks()[0]?.getSettings().deviceId) {
+          permissionStream.getTracks().forEach((track) => track.stop())
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { exact: matchedBrowserDevice.deviceId } },
+          })
+        }
+
         webcamStreamRef.current = stream
         if (videoEl) videoEl.srcObject = stream
       } catch (error) {
@@ -260,7 +258,7 @@ export function RecorderPage() {
 
     startStream()
     return stopStream
-  }, [selectedWebcamId, platform, recordingState])
+  }, [selectedWebcamId, platform, recordingState, webcams])
 
   useEffect(() => {
     return () => {
@@ -271,20 +269,18 @@ export function RecorderPage() {
   }, [])
 
   useEffect(() => {
-    if (isSettingsModalOpen) {
-      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_SETTINGS_SIZE)
-    } else {
-      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
-    }
+    window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_SIZES[recorderWindowPreset])
+  }, [recorderWindowPreset])
 
+  useEffect(() => {
     return () => {
-      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_COMPACT_SIZE)
+      window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_SIZES.toolbar)
     }
-  }, [isSettingsModalOpen])
+  }, [])
 
   // Enable click-through only when Settings is closed
   useEffect(() => {
-    if (isSettingsModalOpen) {
+    if (isSettingsModalOpen || !isWindowClickThroughSupported) {
       window.electronAPI.setRecorderIgnoreMouse(false)
       return
     }
@@ -307,7 +303,7 @@ export function RecorderPage() {
       window.removeEventListener('mouseleave', onMouseLeave)
       window.electronAPI.setRecorderIgnoreMouse(false)
     }
-  }, [isSettingsModalOpen])
+  }, [isSettingsModalOpen, isWindowClickThroughSupported])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {
@@ -470,41 +466,19 @@ export function RecorderPage() {
     window.electronAPI.setSetting(key, id)
   }
 
-  const handleCursorScaleChange = (value: string) => {
-    const newScale = Number(value)
-    setCursorScale(newScale)
-    window.electronAPI.setCursorScale(newScale)
-    window.electronAPI.setSetting('recorder.cursorScale', newScale)
-  }
-
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="relative h-screen w-screen bg-transparent select-none">
+      <div className="relative h-full w-full overflow-hidden bg-transparent select-none">
         <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
-          <div data-interactive="true" className="relative">
-          {/* Main Control Bar */}
-          <div
-            className={cn(
-              "relative flex items-center gap-3 px-4 py-3 rounded-lg bg-card border shadow-2xl",
-              "border-primary"
-            )}
-            style={{ WebkitAppRegion: 'drag' }}
-          >
-            {/* Close Button - macOS/Linux (Left) */}
-            {platform !== 'win32' && (
-              <button
-                onClick={() => window.electronAPI.closeWindow()}
-                style={{ WebkitAppRegion: 'no-drag' }}
-                className="icon-hover absolute -left-2.5 -top-2.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-destructive/30 bg-destructive/90 text-white shadow-lg transition-all hover:scale-110 hover:bg-destructive"
-                aria-label="Close Recorder"
-                disabled={isRecording || actionInProgress !== 'none'}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {/* Close Button - Windows (Right) */}
-            {platform === 'win32' && (
+          <div data-interactive="true" className="relative max-w-[calc(100vw-24px)]">
+            {/* Main Control Bar */}
+            <div
+              className={cn(
+                'relative flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-2xl',
+                'border-primary',
+              )}
+              style={{ WebkitAppRegion: 'drag' }}
+            >
               <button
                 onClick={() => window.electronAPI.closeWindow()}
                 style={{ WebkitAppRegion: 'no-drag' }}
@@ -514,298 +488,301 @@ export function RecorderPage() {
               >
                 <X className="w-3.5 h-3.5" />
               </button>
-            )}
 
-            {/* Source Toggle */}
-            <div
-              className="flex items-center rounded-lg border border-border/50 bg-muted/45 p-1"
-              style={{ WebkitAppRegion: 'no-drag' }}
-            >
-              <SourceButton
-                icon={<IconSwitch regular={DeviceDesktop} active={source === 'fullscreen'} className="h-4 w-4" />}
-                isActive={source === 'fullscreen'}
-                onClick={() => setSource('fullscreen')}
-                tooltip="Full Screen"
-                disabled={isRecording || actionInProgress !== 'none'}
-              />
-              <SourceButton
-                icon={<IconSwitch regular={Marquee2} active={source === 'area'} className="h-4 w-4" />}
-                isActive={source === 'area'}
-                onClick={() => setSource('area')}
-                tooltip="Area"
-                disabled={isRecording || actionInProgress !== 'none'}
-              />
-            </div>
-
-            <div className="w-px h-8 bg-border/50"></div>
-
-            {/* Device Selectors */}
-            <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
-              <Select
-                value={selectedDisplayId}
-                onValueChange={setSelectedDisplayId}
-                disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
+              {/* Source Toggle */}
+              <div
+                className="flex items-center rounded-lg border border-border/50 bg-muted/45 p-1"
+                style={{ WebkitAppRegion: 'no-drag' }}
               >
-                <SelectTrigger
-                  variant="minimal"
-                  className="w-auto min-w-[120px] max-w-[150px] h-9"
-                  aria-label="Select display"
-                >
-                  <SelectValue asChild>
-                    <div className="flex items-center gap-2 text-xs">
-                      <IconShell active className="h-6 w-6 shrink-0">
-                        <DeviceDesktop size={14} />
-                      </IconShell>
-                      <span className="truncate">
-                        {displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...'}
-                      </span>
-                    </div>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {displays.map((d) => (
-                    <SelectItem key={d.id} value={String(d.id)}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select
-                value={selectedWebcamId}
-                onValueChange={handleSelectionChange(setSelectedWebcamId, 'recorder.selectedWebcamId')}
-                disabled={isRecording || actionInProgress !== 'none'}
-              >
-                <SelectTrigger
-                  variant="minimal"
-                  className="w-auto min-w-[120px] max-w-[150px] h-9"
-                  aria-label="Select webcam"
-                >
-                  <SelectValue asChild>
-                    <div className="flex items-center gap-2 text-xs">
-                      <IconShell active={selectedWebcamId !== 'none'} disabled={selectedWebcamId === 'none'} className="h-6 w-6 shrink-0">
-                        {selectedWebcamId !== 'none' ? (
-                          <IconSwitch regular={DeviceComputerCamera} solid={CameraSolid} active className="h-3.5 w-3.5" />
-                        ) : (
-                          <DeviceComputerCameraOff size={14} className="text-muted-foreground/70" />
-                        )}
-                      </IconShell>
-                      <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
-                        {webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam'}
-                      </span>
-                    </div>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No webcam</SelectItem>
-                  {webcams.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select
-                value={selectedMicId}
-                onValueChange={handleSelectionChange(setSelectedMicId, 'recorder.selectedMicId')}
-                disabled={isRecording || actionInProgress !== 'none'}
-              >
-                <SelectTrigger
-                  variant="minimal"
-                  className="w-auto min-w-[120px] max-w-[150px] h-9"
-                  aria-label="Select microphone"
-                >
-                  <SelectValue asChild>
-                    <div className="flex items-center gap-2 text-xs">
-                      <IconShell active={selectedMicId !== 'none'} disabled={selectedMicId === 'none'} className="h-6 w-6 shrink-0">
-                        {selectedMicId !== 'none' ? (
-                          <IconSwitch regular={Microphone} solid={MicrophoneSolid} active className="h-3.5 w-3.5" />
-                        ) : (
-                          <MicrophoneOff size={14} className="text-muted-foreground/70" />
-                        )}
-                      </IconShell>
-                      <span className={cn('truncate', selectedMicId === 'none' && 'text-muted-foreground')}>
-                        {mics.find((m) => m.id === selectedMicId)?.name || 'No microphone'}
-                      </span>
-                    </div>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No microphone</SelectItem>
-                  {mics.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="w-px h-8 bg-border/50"></div>
-
-            {/* Cursor Scale (Linux Only) */}
-            {platform === 'linux' && (
-              <>
-                <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
-                  <IconShell className="h-6 w-6">
-                    <Pointer size={14} />
-                  </IconShell>
-                  <Select
-                    value={String(cursorScale)}
-                    onValueChange={handleCursorScaleChange}
-                    disabled={isRecording || actionInProgress !== 'none'}
-                  >
-                    <SelectTrigger variant="minimal" className="w-[56px] h-9 text-xs" aria-label="Select cursor scale">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      {cursorScales.map((s) => (
-                        <SelectItem key={s.value} value={String(s.value)}>
-                          {s.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="w-px h-8 bg-border/50"></div>
-              </>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' }}>
-              <div className="flex items-center gap-2">
-                {isRecording ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleStop}
-                        variant="destructive"
-                        size="icon"
-                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                      >
-                        <Square size={16} fill="currentColor" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                      Stop Recording
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleStart}
-                        disabled={isInitializing || actionInProgress !== 'none'}
-                        size="icon"
-                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                      >
-                        <Video size={18} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                      Record Screen
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handleLoadVideo}
-                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                      variant="secondary"
-                      size="icon"
-                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                    >
-                      <Folder size={18} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                    Load Local Video
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handleImportProject}
-                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                      variant="secondary"
-                      size="icon"
-                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                    >
-                      <FileImport size={18} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                    Import Project
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handleOpenSettings}
-                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                      variant="secondary"
-                      size="icon"
-                      className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                    >
-                      <Settings size={18} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                    Settings
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={() => {
-                        void handleOpenAccount()
-                      }}
-                      disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                      variant="secondary"
-                      size="icon"
-                      className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-xl border-2 border-emerald-500 bg-background p-0 shadow-lg hover:bg-background"
-                    >
-                      {authSession.user?.picture ? (
-                        <img
-                          src={authSession.user.picture}
-                          alt={accountTooltip}
-                          referrerPolicy="no-referrer"
-                          className="h-full w-full rounded-[inherit] object-cover"
-                        />
-                      ) : (
-                        <UserCircle size={20} className="text-muted-foreground" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
-                    {accountTooltip}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <div className="w-8 h-10 flex items-center justify-center">
-                <Loader2
-                  size={20}
-                  className={cn(
-                    'animate-spin text-primary transition-opacity duration-300',
-                    actionInProgress !== 'none' || isInitializing ? 'opacity-100' : 'opacity-0',
-                  )}
+                <SourceButton
+                  icon={<IconSwitch regular={DeviceDesktop} active={source === 'fullscreen'} className="h-4 w-4" />}
+                  isActive={source === 'fullscreen'}
+                  onClick={() => setSource('fullscreen')}
+                  tooltip="Full Screen"
+                  disabled={isRecording || actionInProgress !== 'none'}
+                />
+                <SourceButton
+                  icon={<IconSwitch regular={Marquee2} active={source === 'area'} className="h-4 w-4" />}
+                  isActive={source === 'area'}
+                  onClick={() => setSource('area')}
+                  tooltip="Area"
+                  disabled={isRecording || actionInProgress !== 'none'}
                 />
               </div>
-            </div>
-          </div>
 
-          {/* Webcam Preview */}
-          <div
-            className={cn(
-              'mx-auto mt-4 aspect-square w-48 overflow-hidden rounded-lg bg-black shadow-xl transition-all duration-300',
-              isWebcamPreviewVisible
-                ? 'opacity-100 scale-100'
-                : 'opacity-0 scale-95 pointer-events-none',
+              <div className="w-px h-8 bg-border/50"></div>
+
+              {/* Device Selectors */}
+              <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
+                <Select
+                  value={selectedDisplayId}
+                  onValueChange={setSelectedDisplayId}
+                  disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    aria-label="Select display"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-2 text-xs">
+                        <IconShell active className="h-6 w-6 shrink-0">
+                          <DeviceDesktop size={14} />
+                        </IconShell>
+                        <span className="truncate">
+                          {displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...'}
+                        </span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {displays.map((d) => (
+                      <SelectItem key={d.id} value={String(d.id)}>
+                        {d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={selectedWebcamId}
+                  onValueChange={handleSelectionChange(setSelectedWebcamId, 'recorder.selectedWebcamId')}
+                  disabled={isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    aria-label="Select webcam"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-2 text-xs">
+                        <IconShell
+                          active={selectedWebcamId !== 'none'}
+                          disabled={selectedWebcamId === 'none'}
+                          className="h-6 w-6 shrink-0"
+                        >
+                          {selectedWebcamId !== 'none' ? (
+                            <IconSwitch
+                              regular={DeviceComputerCamera}
+                              solid={CameraSolid}
+                              active
+                              className="h-3.5 w-3.5"
+                            />
+                          ) : (
+                            <DeviceComputerCameraOff size={14} className="text-muted-foreground/70" />
+                          )}
+                        </IconShell>
+                        <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
+                          {webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam'}
+                        </span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No webcam</SelectItem>
+                    {webcams.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={selectedMicId}
+                  onValueChange={handleSelectionChange(setSelectedMicId, 'recorder.selectedMicId')}
+                  disabled={isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    aria-label="Select microphone"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-2 text-xs">
+                        <IconShell
+                          active={selectedMicId !== 'none'}
+                          disabled={selectedMicId === 'none'}
+                          className="h-6 w-6 shrink-0"
+                        >
+                          {selectedMicId !== 'none' ? (
+                            <IconSwitch regular={Microphone} solid={MicrophoneSolid} active className="h-3.5 w-3.5" />
+                          ) : (
+                            <MicrophoneOff size={14} className="text-muted-foreground/70" />
+                          )}
+                        </IconShell>
+                        <span className={cn('truncate', selectedMicId === 'none' && 'text-muted-foreground')}>
+                          {mics.find((m) => m.id === selectedMicId)?.name || 'No microphone'}
+                        </span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No microphone</SelectItem>
+                    {mics.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="w-px h-8 bg-border/50"></div>
+              {/* Action Buttons */}
+              <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' }}>
+                <div className="flex items-center gap-2">
+                  {isRecording ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={handleStop}
+                          variant="destructive"
+                          size="icon"
+                          className="icon-hover h-10 w-10 rounded-md shadow-lg"
+                        >
+                          <Square size={16} fill="currentColor" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={12}
+                        className="px-3 py-1.5 text-xs font-medium rounded-md"
+                      >
+                        Stop Recording
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={handleStart}
+                          disabled={isInitializing || actionInProgress !== 'none'}
+                          size="icon"
+                          className="icon-hover h-10 w-10 rounded-md shadow-lg"
+                        >
+                          <Video size={18} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={12}
+                        className="px-3 py-1.5 text-xs font-medium rounded-md"
+                      >
+                        Record Screen
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleLoadVideo}
+                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                        variant="secondary"
+                        size="icon"
+                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
+                      >
+                        <Folder size={18} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      sideOffset={12}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md"
+                    >
+                      Load Local Video
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleImportProject}
+                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                        variant="secondary"
+                        size="icon"
+                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
+                      >
+                        <FileImport size={18} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      sideOffset={12}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md"
+                    >
+                      Import Project
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleOpenSettings}
+                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                        variant="secondary"
+                        size="icon"
+                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
+                      >
+                        <Settings size={18} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      sideOffset={12}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md"
+                    >
+                      Settings
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={() => {
+                          void handleOpenAccount()
+                        }}
+                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                        variant="secondary"
+                        size="icon"
+                        className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-xl border-2 border-emerald-500 bg-background p-0 shadow-lg hover:bg-background"
+                      >
+                        {authSession.user?.picture ? (
+                          <img
+                            src={authSession.user.picture}
+                            alt={accountTooltip}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full rounded-[inherit] object-cover"
+                          />
+                        ) : (
+                          <UserCircle size={20} className="text-muted-foreground" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="bottom"
+                      sideOffset={12}
+                      className="px-3 py-1.5 text-xs font-medium rounded-md"
+                    >
+                      {accountTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <div className="w-8 h-10 flex items-center justify-center">
+                  <Loader2
+                    size={20}
+                    className={cn(
+                      'animate-spin text-primary transition-opacity duration-300',
+                      actionInProgress !== 'none' || isInitializing ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Webcam Preview */}
+            {isWebcamPreviewVisible && (
+              <div className="mx-auto mt-4 aspect-square w-48 overflow-hidden rounded-lg bg-black shadow-xl">
+                <video ref={webcamPreviewRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+              </div>
             )}
-          >
-            <video ref={webcamPreviewRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           </div>
         </div>
       </div>
@@ -828,7 +805,6 @@ export function RecorderPage() {
         isTransparent
         defaultTab={settingsDefaultTab}
       />
-      </div>
     </TooltipProvider>
   )
 }
@@ -849,8 +825,6 @@ const SourceButton = ({
     title={tooltip}
     {...props}
   >
-    <span className="flex h-8 w-8 items-center justify-center">
-      {icon}
-    </span>
+    <span className="flex h-8 w-8 items-center justify-center">{icon}</span>
   </button>
 )

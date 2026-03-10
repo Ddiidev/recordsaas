@@ -55,6 +55,7 @@ Project/runtime flow:
 ### 3.1 Entry and app flow
 - `src/App.tsx`
 - `src/pages/RecorderPage.tsx`
+- `src/lib/recorder-window.ts`
 - `src/pages/EditorPage.tsx`
 - `src/pages/RendererPage.tsx`
 
@@ -94,6 +95,10 @@ Project/runtime flow:
 
 ### 3.6 Types and contracts
 - Canonical app types: `src/types/index.ts`
+
+### 3.7 Release automation
+- Release workflow: `.github/workflows/release.yml`
+- Semantic-release config: `.releaserc.json`
 
 ## 4. State and Contract Baseline (Store, Regions, Serialization)
 
@@ -257,6 +262,7 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Timeline lane controls use a reserved start gutter in the temporal axis; regions/ticks/playhead must not render into this protected area.
 - Viewport buffer `+14px` to avoid unintended vertical scroll for 2 lanes.
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
+- Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
 - Playhead interaction baseline: dragging can start from the full playhead control line (not only the triangle), with `ew-resize` cursor semantics.
 
 Toolbar and preview control sizing:
@@ -266,6 +272,9 @@ Toolbar and preview control sizing:
 - Timeline zoom slider wrapper width: `w-24`.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
+- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 980x120`, `preview 980x360`, `settings 980x700`.
+- Recorder toolbar parity rule: Linux and macOS must match the Windows control order and close-button position; Linux-only cursor scale controls belong in `Settings > General`, not in the main recorder toolbar.
+- Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive.
 
 ### 5.4 Menus, cards, and motion baseline
 
@@ -324,6 +333,12 @@ When backend/API changes can affect desktop:
 Desktop-safe integration rule:
 - Treat `recordsaas-api` as an external dependency boundary.
 - For desktop tasks, only pull API details necessary to preserve desktop behavior and contracts.
+
+Release CI baseline:
+- `.github/workflows/release.yml` is the source of truth for desktop release automation.
+- Semantic-release creates the GitHub Release/tag first; the build matrix then compiles per OS and uploads public release assets to that existing GitHub Release.
+- Public desktop assets are limited to `RecordSaaSSetup-mac-v<version>.zip`, `RecordSaaSSetup-linux-v<version>.zip`, and `RecordSaaSSetup-windows-v<version>.exe`.
+- Other packaged outputs (`dmg`, `AppImage`, `deb`, `rpm`) may still be generated during build, but they are not the canonical public release artifacts unless the workflow is intentionally changed.
 
 ## 8. LLM Heatmap + Workflow (Balanced Rigor)
 
@@ -409,6 +424,7 @@ Escalation path:
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
+| Release CI / artifact publishing change | `.github/workflows/release.yml`, `.releaserc.json`, `package.json` | High | Confirm release tag/version handoff, public asset names, and GitHub Release upload behavior |
 
 Workflow simulation checkpoints:
 - Prompt A (UI tweak): must route to H2/H3 files first, not H5 export/serialization files.
