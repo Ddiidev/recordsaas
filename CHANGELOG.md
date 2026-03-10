@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/Ddiidev/recordsaas/compare/v2.4.2...v2.5.0) (2026-03-10)
+
+
+### Features
+
+* refactor recorder page and fix cut region drag behavior ([525acc9](https://github.com/Ddiidev/recordsaas/commit/525acc937e59a64e5ba77d698e76d9371abb7468))
+
 ## [2.4.2](https://github.com/Ddiidev/recordsaas/compare/v2.4.1...v2.4.2) (2026-03-06)
 
 
