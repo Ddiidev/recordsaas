@@ -1,3 +1,10 @@
+## [2.5.1](https://github.com/Ddiidev/recordsaas/compare/v2.5.0...v2.5.1) (2026-03-10)
+
+
+### Bug Fixes
+
+* **release:** add @semantic-release/github plugin to create GitHub Releases ([#15](https://github.com/Ddiidev/recordsaas/issues/15)) ([d67c87e](https://github.com/Ddiidev/recordsaas/commit/d67c87e5db6553e6282b17bacbd1bdda329ae099))
+
 # [2.5.0](https://github.com/Ddiidev/recordsaas/compare/v2.4.2...v2.5.0) (2026-03-10)
 
 
