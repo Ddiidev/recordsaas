@@ -9,7 +9,7 @@ import fsPromises from 'node:fs/promises'
 import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
 import { appState } from '../state'
-import { getFFmpegPath, calculateExportDimensions } from '../lib/utils'
+import { getFFmpegPath, calculateExportDimensions, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { spawnSync } from 'node:child_process'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
 import { createExportProgressWindow } from '../windows/temporary-windows'
@@ -549,8 +549,8 @@ const renderProcessedAudioFile = (sourcePath: string, segments: ExportAudioSegme
     )
 
     const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-    if (result.status !== 0) {
-      log.error('[ExportManager] Failed to render audio segment:', result.stdout, result.stderr)
+    if (result.error || result.status !== 0) {
+      log.error('[ExportManager] Failed to render audio segment:', result.error ?? result.stdout, result.stderr)
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true })
       } catch {
@@ -579,8 +579,12 @@ const renderProcessedAudioFile = (sourcePath: string, segments: ExportAudioSegme
     { encoding: 'utf-8' },
   )
 
-  if (concatResult.status !== 0) {
-    log.error('[ExportManager] Failed to concatenate processed audio:', concatResult.stdout, concatResult.stderr)
+  if (concatResult.error || concatResult.status !== 0) {
+    log.error(
+      '[ExportManager] Failed to concatenate processed audio:',
+      concatResult.error ?? concatResult.stdout,
+      concatResult.stderr,
+    )
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     } catch {
@@ -611,8 +615,8 @@ const mixAudioTracks = (recordingTrackPath: string, mediaTrackPath: string): str
   ]
 
   const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-  if (result.status !== 0) {
-    log.error('[ExportManager] Failed to mix recording/media tracks:', result.stdout, result.stderr)
+  if (result.error || result.status !== 0) {
+    log.error('[ExportManager] Failed to mix recording/media tracks:', result.error ?? result.stdout, result.stderr)
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     } catch {
@@ -1102,6 +1106,29 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     ipcMain.removeListener('export:render-error', renderErrorListener)
   }
 
+  const failExportStartup = (errorMessage: string) => {
+    if (exportCompleted) return
+
+    exportCompleted = true
+
+    if (ffmpeg && !ffmpeg.killed) {
+      ffmpeg.kill('SIGKILL')
+    }
+    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
+      appState.renderWorker.close()
+    }
+    appState.renderWorker = null
+
+    sendExportComplete({ success: false, error: errorMessage, duration: getElapsedDurationSeconds() }, 'error')
+    cleanupExportUi()
+    cleanupProcessedAudio()
+    cleanupListeners()
+
+    if (fs.existsSync(outputPath)) {
+      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete failed export file:', err))
+    }
+  }
+
   cancellationHandler = () => {
     if (exportCompleted) return
 
@@ -1150,6 +1177,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   ipcMain.on('export:render-finished', finishListener)
   ipcMain.on('export:render-error', renderErrorListener)
   ipcMain.once('export:cancel', cancellationHandler) // Use once to avoid multiple calls
+
+  ffmpeg.on('error', (error) => {
+    ffmpegClosed = true
+    log.error('[ExportManager] Failed to start FFmpeg process:', error)
+    failExportStartup(getFFmpegSpawnErrorMessage(error))
+  })
 
   ffmpeg.on('close', (code) => {
     ffmpegClosed = true

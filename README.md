@@ -21,6 +21,19 @@ npm install
 npm run dev
 ```
 
+Na primeira execucao, `npm run dev` garante que o binario do FFmpeg da plataforma atual exista em `binaries/`.
+Se precisar baixar ou corrigir permissoes manualmente, rode:
+
+```bash
+npm run setup:binaries
+```
+
+No Linux, se o microfone padrao do ALSA nao funcionar, voce pode forcar uma entrada especifica:
+
+```bash
+RECORDSAAS_LINUX_MIC_INPUT=hw:0,0 npm run dev
+```
+
 ## Build
 
 ```bash

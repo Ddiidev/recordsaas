@@ -2,8 +2,9 @@
 
 import log from 'electron-log/main'
 import { app } from 'electron'
+import fs from 'node:fs'
+import fsPromises from 'node:fs/promises'
 import path from 'node:path'
-import fs from 'node:fs/promises'
 import { ResolutionKey, RESOLUTIONS } from './constants'
 
 export function getBinaryPath(name: string): string {
@@ -20,27 +21,84 @@ export function getBinaryPath(name: string): string {
   }
 }
 
-export function getFFmpegPath(): string {
-  const name = 'ffmpeg'
+function isExecutableAccessible(targetPath: string): boolean {
+  try {
+    fs.accessSync(targetPath, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
+function findExecutableOnPath(candidateNames: string[]): string | null {
+  const pathValue = process.env.PATH
+  if (!pathValue) {
+    return null
+  }
+
+  const searchDirectories = pathValue.split(path.delimiter).filter(Boolean)
+  for (const directory of searchDirectories) {
+    for (const candidateName of candidateNames) {
+      const candidatePath = path.join(directory, candidateName)
+      if (isExecutableAccessible(candidatePath)) {
+        return candidatePath
+      }
+    }
+  }
+
+  return null
+}
+
+function getBundledFFmpegBinaryName(): string {
   if (process.platform === 'darwin') {
-    const arch = process.arch // Will be 'arm64' for Apple Silicon or 'x64' for Intel
-    const archSpecificName = arch === 'arm64' ? `${name}-arm64` : `${name}-x64`
-    log.info(`[FFmpeg] Selecting macOS binary for ${arch} architecture: ${archSpecificName}`)
-    return getBinaryPath(archSpecificName)
+    return process.arch === 'arm64' ? 'ffmpeg-arm64' : 'ffmpeg-x64'
   }
 
   if (process.platform === 'win32') {
-    return getBinaryPath(`${name}.exe`)
+    return 'ffmpeg.exe'
   }
 
-  // Default for Linux
-  return getBinaryPath(name)
+  return 'ffmpeg'
+}
+
+export function getBundledFFmpegPath(): string {
+  const binaryName = getBundledFFmpegBinaryName()
+
+  if (process.platform === 'darwin') {
+    log.info(`[FFmpeg] Selecting macOS binary for ${process.arch} architecture: ${binaryName}`)
+  }
+
+  return getBinaryPath(binaryName)
+}
+
+export function getFFmpegPath(): string {
+  const bundledPath = getBundledFFmpegPath()
+  if (isExecutableAccessible(bundledPath)) {
+    return bundledPath
+  }
+
+  const systemFallback = findExecutableOnPath(process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'])
+  if (systemFallback) {
+    log.warn(`[FFmpeg] Bundled binary unavailable at ${bundledPath}. Falling back to PATH binary at: ${systemFallback}`)
+    return systemFallback
+  }
+
+  log.error(`[FFmpeg] No executable binary found at ${bundledPath} and no PATH fallback is available.`)
+  return bundledPath
+}
+
+export function getFFmpegSetupHint(): string {
+  return `Expected FFmpeg at:\n${getBundledFFmpegPath()}\n\nRun "npm run setup:binaries" or install "ffmpeg" on your PATH.`
+}
+
+export function getFFmpegSpawnErrorMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `RecordSaaS could not start FFmpeg.\n\n${detail}\n\n${getFFmpegSetupHint()}`
 }
 
 export async function ensureDirectoryExists(dirPath: string) {
   try {
-    await fs.mkdir(dirPath, { recursive: true })
+    await fsPromises.mkdir(dirPath, { recursive: true })
   } catch (error) {
     log.error('Error creating directory:', error)
     throw error

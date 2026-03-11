@@ -169,7 +169,9 @@ export const electronAPI = {
   onReleaseWebcamRequest: (callback: () => void) => {
     const listener = () => callback()
     ipcRenderer.on('recorder:release-webcam', listener)
-    return () => ipcRenderer.removeListener('recorder:release-webcam', listener)
+    return () => {
+      ipcRenderer.removeListener('recorder:release-webcam', listener)
+    }
   },
   sendWebcamReleasedConfirmation: () => ipcRenderer.send('recorder:webcam-released'),
 
@@ -193,13 +195,17 @@ export const electronAPI = {
   onExportProgress: (callback: (payload: ProgressPayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: ProgressPayload) => callback(payload)
     ipcRenderer.on('export:progress', listener)
-    return () => ipcRenderer.removeListener('export:progress', listener)
+    return () => {
+      ipcRenderer.removeListener('export:progress', listener)
+    }
   },
 
   onExportComplete: (callback: (payload: CompletePayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: CompletePayload) => callback(payload)
     ipcRenderer.on('export:complete', listener)
-    return () => ipcRenderer.removeListener('export:complete', listener)
+    return () => {
+      ipcRenderer.removeListener('export:complete', listener)
+    }
   },
 
   showSaveDialog: (options: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> => {
@@ -246,7 +252,9 @@ export const electronAPI = {
   onRenderStart: (callback: (payload: RenderStartPayload) => void) => {
     const listener = (_event: IpcRendererEvent, payload: RenderStartPayload) => callback(payload)
     ipcRenderer.on('render:start', listener)
-    return () => ipcRenderer.removeListener('render:start', listener)
+    return () => {
+      ipcRenderer.removeListener('render:start', listener)
+    }
   },
   rendererReady: () => {
     ipcRenderer.send('render:ready')

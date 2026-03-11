@@ -32,6 +32,7 @@ import '../index.css'
 // --- Constants ---
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
+const WEBCAM_RELEASE_DELAY_MS = 1000
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -72,6 +73,7 @@ export function RecorderPage() {
   const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
   const webcamStreamRef = useRef<MediaStream | null>(null)
+  const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
 
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
@@ -93,6 +95,30 @@ export function RecorderPage() {
       setAuthSession(EMPTY_AUTH_SESSION)
     }
   }, [])
+
+  const stopPreviewStream = useCallback((stream?: MediaStream | null) => {
+    stream?.getTracks().forEach((track) => track.stop())
+  }, [])
+
+  const clearPreviewElement = useCallback(() => {
+    const videoEl = webcamPreviewRef.current
+    if (!videoEl) return
+
+    videoEl.pause()
+    videoEl.srcObject = null
+  }, [])
+
+  const teardownWebcamPreview = useCallback(() => {
+    stopPreviewStream(webcamStreamRef.current)
+    webcamStreamRef.current = null
+    clearPreviewElement()
+  }, [clearPreviewElement, stopPreviewStream])
+
+  const releaseWebcamPreview = useCallback(async () => {
+    webcamPreviewRequestIdRef.current += 1
+    teardownWebcamPreview()
+    await new Promise((resolve) => setTimeout(resolve, WEBCAM_RELEASE_DELAY_MS))
+  }, [teardownWebcamPreview])
 
   const handleOpenSettings = () => {
     setSettingsDefaultTab('general')
@@ -215,23 +241,29 @@ export function RecorderPage() {
   // Effect to manage the webcam preview stream
   useEffect(() => {
     const videoEl = webcamPreviewRef.current
-    const stopStream = () => {
-      if (webcamStreamRef.current) {
-        webcamStreamRef.current.getTracks().forEach((track) => track.stop())
-        webcamStreamRef.current = null
-      }
-      if (videoEl) videoEl.srcObject = null
-    }
 
     if (recordingState !== 'idle' || selectedWebcamId === 'none' || !videoEl) {
-      stopStream()
+      webcamPreviewRequestIdRef.current += 1
+      teardownWebcamPreview()
       return
     }
 
+    const requestId = webcamPreviewRequestIdRef.current + 1
+    webcamPreviewRequestIdRef.current = requestId
+    const isCurrentRequest = () => webcamPreviewRequestIdRef.current === requestId
+
     const startStream = async () => {
-      stopStream()
+      teardownWebcamPreview()
+      let permissionStream: MediaStream | null = null
+      let stream: MediaStream | null = null
+
       try {
-        const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        permissionStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        if (!isCurrentRequest()) {
+          stopPreviewStream(permissionStream)
+          return
+        }
+
         const browserDevices = await navigator.mediaDevices.enumerateDevices()
         const selectedWebcam = webcams.find((device) => device.id === selectedWebcamId)
         const matchedBrowserDevice = browserDevices.find((device) => {
@@ -241,24 +273,53 @@ export function RecorderPage() {
           return device.label === selectedWebcam.name
         })
 
-        let stream = permissionStream
-        if (matchedBrowserDevice?.deviceId && matchedBrowserDevice.deviceId !== permissionStream.getVideoTracks()[0]?.getSettings().deviceId) {
-          permissionStream.getTracks().forEach((track) => track.stop())
+        stream = permissionStream
+        permissionStream = null
+        if (
+          matchedBrowserDevice?.deviceId &&
+          matchedBrowserDevice.deviceId !== stream.getVideoTracks()[0]?.getSettings().deviceId
+        ) {
+          stopPreviewStream(stream)
+          stream = null
           stream = await navigator.mediaDevices.getUserMedia({
             video: { deviceId: { exact: matchedBrowserDevice.deviceId } },
           })
         }
 
+        if (!isCurrentRequest()) {
+          stopPreviewStream(stream)
+          return
+        }
+
         webcamStreamRef.current = stream
-        if (videoEl) videoEl.srcObject = stream
+        videoEl.srcObject = stream
       } catch (error) {
         console.error('Failed to start webcam preview stream:', error)
+        if (stream) {
+          stopPreviewStream(stream)
+        }
+      } finally {
+        if (permissionStream) {
+          stopPreviewStream(permissionStream)
+        }
+
+        if (!isCurrentRequest() && stream) {
+          stopPreviewStream(stream)
+          if (webcamStreamRef.current === stream) {
+            webcamStreamRef.current = null
+          }
+        }
       }
     }
 
-    startStream()
-    return stopStream
-  }, [selectedWebcamId, platform, recordingState, webcams])
+    void startStream()
+    return () => {
+      if (webcamPreviewRequestIdRef.current === requestId) {
+        webcamPreviewRequestIdRef.current += 1
+      }
+      teardownWebcamPreview()
+    }
+  }, [selectedWebcamId, platform, recordingState, webcams, stopPreviewStream, teardownWebcamPreview])
 
   useEffect(() => {
     return () => {
@@ -267,6 +328,16 @@ export function RecorderPage() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const cleanupReleaseRequest = window.electronAPI.onReleaseWebcamRequest(() => {
+      void releaseWebcamPreview().finally(() => {
+        window.electronAPI.sendWebcamReleasedConfirmation()
+      })
+    })
+
+    return cleanupReleaseRequest
+  }, [releaseWebcamPreview])
 
   useEffect(() => {
     window.electronAPI.setRecorderWindowSize(RECORDER_WINDOW_SIZES[recorderWindowPreset])
@@ -364,12 +435,7 @@ export function RecorderPage() {
     width: number
     height: number
   }) => {
-    if (webcamStreamRef.current) {
-      webcamStreamRef.current.getTracks().forEach((track) => track.stop())
-      webcamStreamRef.current = null
-      if (webcamPreviewRef.current) webcamPreviewRef.current.srcObject = null
-      await new Promise((resolve) => setTimeout(resolve, 200))
-    }
+    await releaseWebcamPreview()
 
     try {
       const webcam = selectedWebcamId !== 'none' ? webcams.find((d) => d.id === selectedWebcamId) : undefined
