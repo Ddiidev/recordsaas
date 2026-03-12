@@ -33,6 +33,7 @@ import '../index.css'
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
 const WEBCAM_RELEASE_DELAY_MS = 1000
+const RECORDER_DEVICE_LABEL_MAX_LENGTH = 50
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -47,10 +48,14 @@ const EMPTY_AUTH_SESSION: AuthSession = {
 const isPreparationCountdownOption = (value: number): value is (typeof PREPARATION_COUNTDOWN_OPTIONS)[number] =>
   PREPARATION_COUNTDOWN_OPTIONS.includes(value as (typeof PREPARATION_COUNTDOWN_OPTIONS)[number])
 
+const truncateRecorderLabel = (value: string, maxLength = RECORDER_DEVICE_LABEL_MAX_LENGTH) =>
+  value.length > maxLength ? `${value.slice(0, maxLength)}...` : value
+
 // --- Types ---
 type RecordingState = 'idle' | 'preparing' | 'recording'
 type ActionInProgress = 'none' | 'recording' | 'loading'
 type RecordingSource = 'area' | 'fullscreen' | 'window'
+type ToolbarSelectKey = 'display' | 'webcam' | 'mic'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
 
 export function RecorderPage() {
@@ -63,6 +68,11 @@ export function RecorderPage() {
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
+    display: false,
+    webcam: false,
+    mic: false,
+  })
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
     DEFAULT_PREPARATION_COUNTDOWN_SECONDS,
@@ -75,7 +85,9 @@ export function RecorderPage() {
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
+  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null)
 
+  const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
   const isWindowClickThroughSupported = platform === 'win32' || platform === 'darwin'
@@ -143,6 +155,19 @@ export function RecorderPage() {
     setSettingsModalOpen(false)
     setSettingsDefaultTab('general')
   }
+
+  const handleToolbarSelectOpenChange = useCallback(
+    (selectKey: ToolbarSelectKey) => (open: boolean) => {
+      setToolbarSelectOpenStates((current) => {
+        if (current[selectKey] === open) {
+          return current
+        }
+
+        return { ...current, [selectKey]: open }
+      })
+    },
+    [],
+  )
 
   // Effect for initializing settings and devices from storage/system
   useEffect(() => {
@@ -351,30 +376,44 @@ export function RecorderPage() {
 
   // Enable click-through only when Settings is closed
   useEffect(() => {
-    if (isSettingsModalOpen || !isWindowClickThroughSupported) {
+    if (isSettingsModalOpen || isAnyToolbarSelectOpen || !isWindowClickThroughSupported) {
       window.electronAPI.setRecorderIgnoreMouse(false)
       return
     }
+
     const isInteractiveElement = (target: HTMLElement | null) =>
       !!target?.closest('[data-interactive="true"], [data-radix-popper-content-wrapper], [role="listbox"]')
 
-    const onMouseMove = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null
+    const syncIgnoreMouseState = (target: HTMLElement | null) => {
       const interactive = isInteractiveElement(target)
       window.electronAPI.setRecorderIgnoreMouse(!interactive)
     }
+
+    const onMouseMove = (e: MouseEvent) => {
+      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY }
+      syncIgnoreMouseState(e.target as HTMLElement | null)
+    }
+
     const onMouseLeave = () => {
       window.electronAPI.setRecorderIgnoreMouse(true)
     }
+
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseleave', onMouseLeave)
-    window.electronAPI.setRecorderIgnoreMouse(true)
+
+    const lastPointerPosition = lastPointerPositionRef.current
+    if (lastPointerPosition) {
+      syncIgnoreMouseState(document.elementFromPoint(lastPointerPosition.x, lastPointerPosition.y) as HTMLElement | null)
+    } else {
+      window.electronAPI.setRecorderIgnoreMouse(true)
+    }
+
     return () => {
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseleave', onMouseLeave)
       window.electronAPI.setRecorderIgnoreMouse(false)
     }
-  }, [isSettingsModalOpen, isWindowClickThroughSupported])
+  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, isWindowClickThroughSupported])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {
@@ -583,6 +622,7 @@ export function RecorderPage() {
                 <Select
                   value={selectedDisplayId}
                   onValueChange={setSelectedDisplayId}
+                  onOpenChange={handleToolbarSelectOpenChange('display')}
                   disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
                 >
                   <SelectTrigger
@@ -596,15 +636,15 @@ export function RecorderPage() {
                           <DeviceDesktop size={14} />
                         </IconShell>
                         <span className="truncate">
-                          {displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...'}
+                          {truncateRecorderLabel(displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...')}
                         </span>
                       </div>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent side="bottom" avoidCollisions={false}>
                     {displays.map((d) => (
                       <SelectItem key={d.id} value={String(d.id)}>
-                        {d.name}
+                        {truncateRecorderLabel(d.name)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -613,6 +653,7 @@ export function RecorderPage() {
                 <Select
                   value={selectedWebcamId}
                   onValueChange={handleSelectionChange(setSelectedWebcamId, 'recorder.selectedWebcamId')}
+                  onOpenChange={handleToolbarSelectOpenChange('webcam')}
                   disabled={isRecording || actionInProgress !== 'none'}
                 >
                   <SelectTrigger
@@ -639,16 +680,16 @@ export function RecorderPage() {
                           )}
                         </IconShell>
                         <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
-                          {webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam'}
+                          {truncateRecorderLabel(webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam')}
                         </span>
                       </div>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent side="bottom" avoidCollisions={false}>
                     <SelectItem value="none">No webcam</SelectItem>
                     {webcams.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name}
+                        {truncateRecorderLabel(c.name)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -657,6 +698,7 @@ export function RecorderPage() {
                 <Select
                   value={selectedMicId}
                   onValueChange={handleSelectionChange(setSelectedMicId, 'recorder.selectedMicId')}
+                  onOpenChange={handleToolbarSelectOpenChange('mic')}
                   disabled={isRecording || actionInProgress !== 'none'}
                 >
                   <SelectTrigger
@@ -678,16 +720,16 @@ export function RecorderPage() {
                           )}
                         </IconShell>
                         <span className={cn('truncate', selectedMicId === 'none' && 'text-muted-foreground')}>
-                          {mics.find((m) => m.id === selectedMicId)?.name || 'No microphone'}
+                          {truncateRecorderLabel(mics.find((m) => m.id === selectedMicId)?.name || 'No microphone')}
                         </span>
                       </div>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent side="bottom" avoidCollisions={false}>
                     <SelectItem value="none">No microphone</SelectItem>
                     {mics.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
-                        {m.name}
+                        {truncateRecorderLabel(m.name)}
                       </SelectItem>
                     ))}
                   </SelectContent>

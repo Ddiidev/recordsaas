@@ -272,9 +272,10 @@ Toolbar and preview control sizing:
 - Timeline zoom slider wrapper width: `w-24`.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
-- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 980x120`, `preview 980x360`, `settings 980x700`.
+- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 980x200`, `preview 980x420`, `settings 980x700`.
 - Recorder toolbar parity rule: Linux and macOS must match the Windows control order and close-button position; Linux-only cursor scale controls belong in `Settings > General`, not in the main recorder toolbar.
-- Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive.
+- Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive. Opening any recorder toolbar dropdown temporarily disables click-through until the menu closes.
+- Recorder interactive-surface invariant: on `win32`/`darwin`, controls, select triggers, and open recorder dropdowns must never leave the recorder in click-through mode while the pointer is still over the toolbar. Switching directly between recorder dropdowns, or clicking the toolbar after a menu closes, must not focus the background window.
 
 ### 5.4 Menus, cards, and motion baseline
 
@@ -400,6 +401,7 @@ Release CI baseline:
 - Run targeted checks for edited domain.
 - Verify compatibility defaults and regression-sensitive flows.
 - Confirm no contract drift between renderer types and preload/main IPC.
+- For recorder toolbar/window edits, explicitly validate dropdown direction, long-label truncation, switching between dropdowns without extra mouse movement, toolbar clicks outside an open menu, and hover click-through recovery only after the pointer leaves interactive surfaces.
 
 ### 8.3 Token-efficiency retrieval protocol
 
@@ -423,6 +425,7 @@ Escalation path:
 | Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | Export output has expected mix and region effects |
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
+| Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
 | Release CI / artifact publishing change | `.github/workflows/release.yml`, `.releaserc.json`, `package.json` | High | Confirm release tag/version handoff, public asset names, and GitHub Release upload behavior |
 
