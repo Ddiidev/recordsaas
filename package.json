@@ -2,6 +2,15 @@
   "name": "recordsaas",
   "description": "Screen recording and editing app",
   "author": "André Luiz",
+  "license": "GPL-3.0-only",
+  "homepage": "https://github.com/Ddiidev/recordsaas",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ddiidev/recordsaas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ddiidev/recordsaas/issues"
+  },
   "private": true,
   "version": "2.0.1",
   "type": "module",
