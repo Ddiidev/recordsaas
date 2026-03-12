@@ -1,3 +1,10 @@
+## [2.5.5](https://github.com/Ddiidev/recordsaas/compare/v2.5.4...v2.5.5) (2026-03-12)
+
+
+### Bug Fixes
+
+* **ci:** avoid GitHub API rate limits for binary setup ([#20](https://github.com/Ddiidev/recordsaas/issues/20)) ([3df2300](https://github.com/Ddiidev/recordsaas/commit/3df23008575fdb907615a5578ee0f5794e7aec03))
+
 ## [2.5.4](https://github.com/Ddiidev/recordsaas/compare/v2.5.3...v2.5.4) (2026-03-12)
 
 
