@@ -1,3 +1,10 @@
+## [2.5.4](https://github.com/Ddiidev/recordsaas/compare/v2.5.3...v2.5.4) (2026-03-12)
+
+
+### Bug Fixes
+
+* stabilize recorder toolbar dropdown interactions ([#19](https://github.com/Ddiidev/recordsaas/issues/19)) ([1baa47b](https://github.com/Ddiidev/recordsaas/commit/1baa47b94cd695ceb552c4f3f8ae3a84a87d1d61))
+
 ## [2.5.3](https://github.com/Ddiidev/recordsaas/compare/v2.5.2...v2.5.3) (2026-03-12)
 
 
