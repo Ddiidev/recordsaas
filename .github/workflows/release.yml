@@ -22,14 +22,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: 'npm'
 
       - name: Install dependencies
@@ -37,7 +37,7 @@ jobs:
 
       - name: Run Semantic Release
         id: semantic
-        uses: cycjimmy/semantic-release-action@v5
+        uses: cycjimmy/semantic-release-action@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -55,15 +55,15 @@ jobs:
 
     steps:
       - name: Checkout code at release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.release.outputs.new_release_tag }}
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: 'npm'
 
       - name: Install Linux packaging dependencies
@@ -115,7 +115,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ runner.os }}" == "Linux" ]; then
-            npm run dist:linux
+            max_attempts=3
+            attempt=1
+
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if npm run dist:linux; then
+                break
+              fi
+
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "Linux build failed after ${max_attempts} attempts."
+                exit 1
+              fi
+
+              echo "Linux build attempt ${attempt}/${max_attempts} failed. Retrying in 15 seconds..."
+              attempt=$((attempt + 1))
+              rm -rf dist dist-electron
+              sleep 15
+            done
           elif [ "${{ runner.os }}" == "Windows" ]; then
             npm run dist:win
           elif [ "${{ runner.os }}" == "macOS" ]; then
