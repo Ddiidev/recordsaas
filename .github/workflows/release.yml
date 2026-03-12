@@ -95,6 +95,8 @@ jobs:
         run: npm ci
 
       - name: Download and validate FFmpeg bundle
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run setup:binaries
 
       - name: Set package.json version
