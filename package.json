@@ -27,13 +27,15 @@
     "dist:zip": "npm run setup:binaries && tsc && npm run build && electron-builder build -l zip --publish never",
     "dist:linux": "npm run setup:binaries && tsc && npm run build && electron-builder --linux --publish never",
     "dist:win": "npm run setup:binaries && tsc && npm run build && electron-builder --win --publish never",
-    "dist:mac": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --universal --publish never",
+    "dist:mac": "npm run dist:mac-x64",
+    "dist:mac-x64": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --x64 --publish never",
     "dist:mac-arm64": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --arm64 --publish never",
     "publish-linux-app": "npm run setup:binaries && tsc && npm run build && electron-builder -l --publish always",
     "publish-win-app": "npm run setup:binaries && tsc && npm run build && electron-builder -w --publish always",
-    "publish-mac-universal-app": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --universal --publish always",
-    "publish-mac-app": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --x64 --publish always",
-    "publish-mac-arm-app": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --arm64 --publish always",
+    "publish-mac-app": "npm run publish-mac-x64-app",
+    "publish-mac-x64-app": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --x64 --publish always",
+    "publish-mac-arm-app": "npm run publish-mac-arm64-app",
+    "publish-mac-arm64-app": "npm run setup:binaries && tsc && npm run build && electron-builder --mac --arm64 --publish always",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext ts,tsx --fix",
     "format": "prettier --write .",
@@ -132,24 +134,12 @@
     "mac": {
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "mergeASARs": false,
-      "x64ArchFiles": "*",
       "minimumSystemVersion": "12.0.0",
       "category": "public.app-category.video",
       "type": null,
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "universal"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "universal"
-          ]
-        }
+        "dmg",
+        "zip"
       ],
       "icon": "build/screenarc-appicon.icns"
     },

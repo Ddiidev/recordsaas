@@ -49,8 +49,19 @@ jobs:
     permissions:
       contents: write
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-22.04
+            build_command: npm run dist:linux
+          - os: windows-latest
+            build_command: npm run dist:win
+          - os: macos-latest
+            build_command: npm run dist:mac-x64
+            mac_arch: x64
+          - os: macos-latest
+            build_command: npm run dist:mac-arm64
+            mac_arch: arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -76,42 +87,22 @@ jobs:
           Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      - name: Download and setup FFmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p binaries/linux
-          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg -o binaries/linux/ffmpeg
-          chmod +x binaries/linux/ffmpeg
-        shell: bash
-
-      - name: Download and setup FFmpeg (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          mkdir -p binaries/windows
-          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg.exe -o binaries/windows/ffmpeg.exe
-        shell: bash
-
       - name: Install node-gyp globally (Windows)
         if: runner.os == 'Windows'
         run: npm install -g node-gyp
 
-      - name: Download and setup FFmpeg (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p binaries/darwin
-          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg-darwin-arm64 -o binaries/darwin/ffmpeg-arm64
-          curl -L https://github.com/Ddiidev/recordsaas-assets/releases/download/v0.0.1/ffmpeg-darwin-x64 -o binaries/darwin/ffmpeg-x64
-          chmod +x binaries/darwin/ffmpeg-*
-        shell: bash
-
       - name: Install all dependencies
         run: npm ci
+
+      - name: Download and validate FFmpeg bundle
+        run: npm run setup:binaries
 
       - name: Set package.json version
         run: npm version ${{ needs.release.outputs.new_release_version }} --no-git-tag-version
 
       - name: Build Application
         env:
+          BUILD_COMMAND: ${{ matrix.build_command }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ runner.os }}" == "Linux" ]; then
@@ -119,7 +110,7 @@ jobs:
             attempt=1
 
             while [ "$attempt" -le "$max_attempts" ]; do
-              if npm run dist:linux; then
+              if eval "$BUILD_COMMAND"; then
                 break
               fi
 
@@ -133,11 +124,74 @@ jobs:
               rm -rf dist dist-electron
               sleep 15
             done
-          elif [ "${{ runner.os }}" == "Windows" ]; then
-            npm run dist:win
-          elif [ "${{ runner.os }}" == "macOS" ]; then
-            npm run dist:mac
+          else
+            eval "$BUILD_COMMAND"
           fi
+        shell: bash
+
+      - name: Verify macOS packaged entrypoint
+        if: runner.os == 'macOS'
+        run: |
+          app_path="$(find dist -maxdepth 2 -type d -name 'RecordSaaS.app' | head -n 1)"
+          if [ -z "$app_path" ]; then
+            echo "No macOS app bundle found under dist"
+            exit 1
+          fi
+
+          app_asar="$app_path/Contents/Resources/app.asar"
+          if [ ! -f "$app_asar" ]; then
+            echo "Missing app.asar at $app_asar"
+            exit 1
+          fi
+
+          node -e "const asar=require('@electron/asar'); const files=new Set(asar.listPackage(process.argv[1])); const unexpected=['/index.js','/app-x64.asar','/app-arm64.asar'].filter((file)=>files.has(file)); if (!files.has('/dist-electron/index.js')) { console.error('dist-electron/index.js is missing from app.asar'); process.exit(1); } if (unexpected.length > 0) { console.error('Unexpected universal wrapper files found in app.asar: ' + unexpected.join(', ')); process.exit(1); } const pkg=JSON.parse(asar.extractFile(process.argv[1],'package.json').toString('utf8')); if (pkg.main !== 'dist-electron/index.js') { console.error('Unexpected app.asar main entry: ' + pkg.main); process.exit(1); }" "$app_asar"
+        shell: bash
+
+      - name: Smoke test macOS app startup
+        if: runner.os == 'macOS'
+        run: |
+          runner_arch="$(uname -m)"
+          expected_arch=""
+
+          case "${{ matrix.mac_arch }}" in
+            x64)
+              expected_arch="x86_64"
+              ;;
+            arm64)
+              expected_arch="arm64"
+              ;;
+          esac
+
+          if [ "$runner_arch" != "$expected_arch" ]; then
+            echo "Skipping smoke test for ${{ matrix.mac_arch }} build on $runner_arch runner."
+            exit 0
+          fi
+
+          app_path="$(find dist -maxdepth 2 -type d -name 'RecordSaaS.app' | head -n 1)"
+          if [ -z "$app_path" ]; then
+            echo "No macOS app bundle found under dist"
+            exit 1
+          fi
+
+          executable="$app_path/Contents/MacOS/RecordSaaS"
+          if [ ! -x "$executable" ]; then
+            echo "App executable not found at $executable"
+            exit 1
+          fi
+
+          smoke_log="$(mktemp)"
+          "$executable" > "$smoke_log" 2>&1 &
+          app_pid=$!
+          sleep 15
+
+          if ! ps -p "$app_pid" > /dev/null; then
+            echo "RecordSaaS exited during smoke test"
+            cat "$smoke_log"
+            exit 1
+          fi
+
+          kill "$app_pid" || true
+          wait "$app_pid" || true
         shell: bash
 
       - name: Verify built files
@@ -194,7 +248,7 @@ jobs:
               ;;
             macOS)
               source_file="$(pick_one 'macOS zip' dist/*.zip)"
-              target_file="dist/RecordSaaSSetup-mac-v${version}.zip"
+              target_file="dist/RecordSaaSSetup-mac-${{ matrix.mac_arch }}-v${version}.zip"
               mv "$source_file" "$target_file"
               asset_paths=("$target_file")
               ;;

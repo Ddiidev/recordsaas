@@ -2,6 +2,7 @@
 
 import log from 'electron-log/main'
 import { app } from 'electron'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import path from 'node:path'
@@ -28,6 +29,30 @@ function isExecutableAccessible(targetPath: string): boolean {
   } catch {
     return false
   }
+}
+
+function isWorkingFFmpegBinary(targetPath: string): boolean {
+  if (!isExecutableAccessible(targetPath)) {
+    return false
+  }
+
+  const probeResult = spawnSync(targetPath, ['-hide_banner', '-version'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+
+  if (probeResult.error) {
+    log.warn(`[FFmpeg] Binary probe failed for ${targetPath}:`, probeResult.error)
+    return false
+  }
+
+  if (probeResult.status !== 0) {
+    const detail = (probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`).trim()
+    log.warn(`[FFmpeg] Binary probe returned a non-zero status for ${targetPath}: ${detail}`)
+    return false
+  }
+
+  return true
 }
 
 function findExecutableOnPath(candidateNames: string[]): string | null {
@@ -73,17 +98,17 @@ export function getBundledFFmpegPath(): string {
 
 export function getFFmpegPath(): string {
   const bundledPath = getBundledFFmpegPath()
-  if (isExecutableAccessible(bundledPath)) {
+  if (isWorkingFFmpegBinary(bundledPath)) {
     return bundledPath
   }
 
   const systemFallback = findExecutableOnPath(process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'])
-  if (systemFallback) {
-    log.warn(`[FFmpeg] Bundled binary unavailable at ${bundledPath}. Falling back to PATH binary at: ${systemFallback}`)
+  if (systemFallback && isWorkingFFmpegBinary(systemFallback)) {
+    log.warn(`[FFmpeg] Bundled binary unavailable or invalid at ${bundledPath}. Falling back to PATH binary at: ${systemFallback}`)
     return systemFallback
   }
 
-  log.error(`[FFmpeg] No executable binary found at ${bundledPath} and no PATH fallback is available.`)
+  log.error(`[FFmpeg] No usable FFmpeg binary found at ${bundledPath} and no PATH fallback is available.`)
   return bundledPath
 }
 
