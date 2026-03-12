@@ -1,3 +1,10 @@
+## [2.5.3](https://github.com/Ddiidev/recordsaas/compare/v2.5.2...v2.5.3) (2026-03-12)
+
+
+### Bug Fixes
+
+* **ci:** retry linux release build and upgrade actions runtime ([#17](https://github.com/Ddiidev/recordsaas/issues/17)) ([2071e6b](https://github.com/Ddiidev/recordsaas/commit/2071e6b82d1737942d5f9a6c2615c4408c5ba103))
+
 ## [2.5.2](https://github.com/Ddiidev/recordsaas/compare/v2.5.1...v2.5.2) (2026-03-12)
 
 
