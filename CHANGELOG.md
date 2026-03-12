@@ -1,3 +1,10 @@
+## [2.5.2](https://github.com/Ddiidev/recordsaas/compare/v2.5.1...v2.5.2) (2026-03-12)
+
+
+### Bug Fixes
+
+* **release:** publish public Linux installers and portable assets ([1064cec](https://github.com/Ddiidev/recordsaas/commit/1064cec68e131cbf1f48b8d34a52752fb17815ec))
+
 ## [2.5.1](https://github.com/Ddiidev/recordsaas/compare/v2.5.0...v2.5.1) (2026-03-10)
 
 
