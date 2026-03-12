@@ -5,8 +5,8 @@ export const LINUX_CURSOR_SCALE_OPTIONS = [
 ] as const
 
 export const RECORDER_WINDOW_SIZES = {
-  toolbar: { width: 980, height: 120 },
-  preview: { width: 980, height: 360 },
+  toolbar: { width: 980, height: 200 },
+  preview: { width: 980, height: 420 },
   settings: { width: 980, height: 700 },
 } as const
 
