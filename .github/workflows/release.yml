@@ -66,9 +66,9 @@ jobs:
           node-version: 22
           cache: 'npm'
 
-      - name: Install Linux dependencies (Xvfb)
+      - name: Install Linux packaging dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb rpm elfutils
+        run: sudo apt-get update && sudo apt-get install -y xvfb rpm elfutils libopenjp2-tools
 
       - name: Start Xvfb
         if: runner.os == 'Linux'
@@ -127,23 +127,65 @@ jobs:
         run: ls -R
         shell: bash
 
-      - name: Prepare public release asset
-        id: public_asset
+      - name: Prepare public release assets
+        id: public_assets
         run: |
           version="${{ needs.release.outputs.new_release_version }}"
+          shopt -s nullglob
+
+          fail_missing() {
+            echo "$1" >&2
+            exit 1
+          }
+
+          pick_one() {
+            local label="$1"
+            shift
+            local matches=("$@")
+
+            if [ ${#matches[@]} -eq 0 ]; then
+              fail_missing "No ${label} asset candidate found in dist"
+            fi
+
+            if [ ${#matches[@]} -gt 1 ]; then
+              printf 'Multiple %s asset candidates found:\n' "$label" >&2
+              printf ' - %s\n' "${matches[@]}" >&2
+              exit 1
+            fi
+
+            printf '%s\n' "${matches[0]}"
+          }
 
           case "${{ runner.os }}" in
             Linux)
-              source_file="$(find dist -maxdepth 1 -type f -name '*.zip' ! -name 'RecordSaaSSetup-*.zip' | head -n 1)"
-              target_file="dist/RecordSaaSSetup-linux-v${version}.zip"
+              appimage_source="$(pick_one 'Linux AppImage' dist/*.AppImage)"
+              deb_source="$(pick_one 'Linux deb' dist/*.deb)"
+              rpm_source="$(pick_one 'Linux rpm' dist/*.rpm)"
+              zip_source="$(pick_one 'Linux zip' dist/*.zip)"
+
+              appimage_target="dist/RecordSaaS-linux-v${version}.AppImage"
+              deb_target="dist/RecordSaaS-linux-v${version}.deb"
+              rpm_target="dist/RecordSaaS-linux-v${version}.rpm"
+              zip_target="dist/RecordSaaS-linux-v${version}.zip"
+
+              mv "$appimage_source" "$appimage_target"
+              mv "$deb_source" "$deb_target"
+              mv "$rpm_source" "$rpm_target"
+              mv "$zip_source" "$zip_target"
+
+              asset_paths=("$appimage_target" "$deb_target" "$rpm_target" "$zip_target")
               ;;
             macOS)
-              source_file="$(find dist -maxdepth 1 -type f -name '*.zip' ! -name 'RecordSaaSSetup-*.zip' | head -n 1)"
+              source_file="$(pick_one 'macOS zip' dist/*.zip)"
               target_file="dist/RecordSaaSSetup-mac-v${version}.zip"
+              mv "$source_file" "$target_file"
+              asset_paths=("$target_file")
               ;;
             Windows)
-              source_file="$(find dist -maxdepth 1 -type f -name '*.exe' ! -name 'RecordSaaSSetup-*.exe' | head -n 1)"
+              source_file="$(pick_one 'Windows installer' dist/*.exe)"
               target_file="dist/RecordSaaSSetup-windows-v${version}.exe"
+              mv "$source_file" "$target_file"
+              asset_paths=("$target_file")
               ;;
             *)
               echo "Unsupported runner OS: ${{ runner.os }}"
@@ -151,19 +193,22 @@ jobs:
               ;;
           esac
 
-          if [ -z "$source_file" ]; then
-            echo "No public asset candidate found in dist for ${{ runner.os }}"
-            exit 1
-          fi
+          printf 'Prepared public assets:\n'
+          printf ' - %s\n' "${asset_paths[@]}"
 
-          mv "$source_file" "$target_file"
-
-          echo "Prepared public asset: $target_file"
-          echo "asset_path=$target_file" >> "$GITHUB_OUTPUT"
+          {
+            echo "asset_paths<<EOF"
+            printf '%s\n' "${asset_paths[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         shell: bash
 
-      - name: Publish asset to GitHub Release
+      - name: Publish assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ needs.release.outputs.new_release_tag }} "${{ steps.public_asset.outputs.asset_path }}" --clobber
+        run: |
+          while IFS= read -r asset_path; do
+            [ -n "$asset_path" ] || continue
+            gh release upload ${{ needs.release.outputs.new_release_tag }} "$asset_path" --clobber
+          done <<< "${{ steps.public_assets.outputs.asset_paths }}"
         shell: bash

@@ -261,7 +261,6 @@ export function EditorPage() {
   }
 
   const renderHeaderActions = () => {
-    const isWindows = platform === 'win32'
     const actions = [
       <ExportProjectButton key="export-project" isImportedProject={isImportedProject} isExporting={isExportingProject} onClick={handleExportProject} disabled={duration <= 0} />,
       <ExportButton key="export" isExporting={isExporting} onClick={openExportModal} disabled={duration <= 0} />,
@@ -305,13 +304,10 @@ export function EditorPage() {
       updateInfo && <UpdateNotification key="update" info={updateInfo} />,
     ].filter(Boolean)
 
-    if (isWindows) {
-      // For Windows, reverse the order
-      return actions
-    }
-    // For macOS/Linux, keep original order but reverse for flex-row-reverse
-    return actions.reverse()
+    return actions
   }
+
+  const showCustomWindowControls = platform === 'linux' || platform === 'darwin'
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -328,21 +324,8 @@ export function EditorPage() {
           )}
           style={{ WebkitAppRegion: 'drag' }}
         >
-          {/* Left side controls */}
-          <div className="flex items-center gap-4 h-full">
-            {platform === 'linux' && (
-              <div className="h-full flex items-center">
-                <WindowControls />
-              </div>
-            )}
-            {platform === 'win32' && (
-              <div
-                className="flex items-center gap-2 flex-row-reverse" // Use flex-row-reverse to get desired order
-                style={{ WebkitAppRegion: 'no-drag' }}
-              >
-                {renderHeaderActions()}
-              </div>
-            )}
+          <div className="flex min-w-0 flex-1 items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
+            {renderHeaderActions()}
           </div>
 
           {/* Centered Title */}
@@ -350,15 +333,9 @@ export function EditorPage() {
             Record<span className="text-primary">SaaS</span>
           </h1>
 
-          {/* Right side controls (for non-Windows) */}
-          {platform !== 'win32' && (
-            <div
-              className="flex items-center gap-2" // Use flex-row-reverse to get desired order
-              style={{ WebkitAppRegion: 'no-drag' }}
-            >
-              {renderHeaderActions()}
-            </div>
-          )}
+          <div className="flex flex-1 items-center justify-end">
+            {showCustomWindowControls ? <WindowControls /> : platform === 'win32' ? <div className="w-[112px]" aria-hidden="true" /> : null}
+          </div>
         </header>
 
         <div className={cn('flex flex-row-reverse flex-1 overflow-hidden', isPreviewFullScreen && 'h-full w-full')}>

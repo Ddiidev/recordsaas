@@ -2,12 +2,12 @@
 // Contains core business logic for recording, stopping, and cleanup.
 
 import log from 'electron-log/main'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences } from 'electron'
 import { appState } from '../state'
-import { getFFmpegPath, ensureDirectoryExists } from '../lib/utils'
+import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
@@ -92,6 +92,230 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
 
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
+const LINUX_MIC_PROBE_DURATION_SECONDS = '0.15'
+const LINUX_WEBCAM_PROBE_DURATION_SECONDS = '0.15'
+const LINUX_WEBCAM_RELEASE_PROBE_TIMEOUT_MS = 5000
+const LINUX_WEBCAM_RELEASE_PROBE_INTERVAL_MS = 150
+const FFMPEG_STOP_GRACE_PERIOD_MS = 2000
+const FFMPEG_STOP_FORCE_PERIOD_MS = 4500
+const FFMPEG_STOP_RESOLVE_PERIOD_MS = 5500
+const FFMPEG_STARTUP_TIMEOUT_MS = 10000
+const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function shouldApplyLinuxDisplayScale(scaleFactor: number): boolean {
+  return process.platform === 'linux' && Number.isFinite(scaleFactor) && scaleFactor > 0 && Math.abs(scaleFactor - 1) > 0.001
+}
+
+function getLinuxScaledDimension(value: number, scaleFactor: number): number {
+  if (!shouldApplyLinuxDisplayScale(scaleFactor)) {
+    return Math.floor(value / 2) * 2
+  }
+
+  return Math.max(2, Math.floor((value * scaleFactor) / 2) * 2)
+}
+
+function getLinuxScaledOffset(value: number, scaleFactor: number): number {
+  if (!shouldApplyLinuxDisplayScale(scaleFactor)) {
+    return value
+  }
+
+  return Math.floor(value * scaleFactor)
+}
+
+function isFFmpegRecordingReadyMessage(message: string): boolean {
+  return (
+    message.includes('Press [q] to stop') ||
+    message.includes('Output #0,') ||
+    message.includes('frame=')
+  )
+}
+
+async function requestRecorderWebcamRelease(): Promise<void> {
+  const recorderWindow = appState.recorderWin
+  if (!recorderWindow || recorderWindow.isDestroyed()) {
+    return
+  }
+
+  return new Promise((resolve) => {
+    let settled = false
+
+    const cleanup = () => {
+      ipcMain.removeListener('recorder:webcam-released', handleReleased)
+      clearTimeout(timeoutId)
+    }
+
+    const resolveOnce = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+
+    const handleReleased = () => {
+      log.info('[RecordingManager] Recorder window confirmed webcam release.')
+      resolveOnce()
+    }
+
+    const timeoutId = setTimeout(() => {
+      log.warn('[RecordingManager] Timed out waiting for recorder window to release webcam preview.')
+      resolveOnce()
+    }, WEBCAM_RELEASE_REQUEST_TIMEOUT_MS)
+
+    ipcMain.once('recorder:webcam-released', handleReleased)
+    log.info('[RecordingManager] Requesting recorder window to release webcam preview before recording.')
+    recorderWindow.webContents.send('recorder:release-webcam')
+  })
+}
+
+async function listLinuxAlsaCaptureInputs(): Promise<string[]> {
+  const candidates = new Set<string>()
+  const overrideInput = process.env.RECORDSAAS_LINUX_MIC_INPUT?.trim()
+
+  if (overrideInput) {
+    candidates.add(overrideInput)
+  }
+
+  try {
+    const pcmEntries = await fsPromises.readFile('/proc/asound/pcm', 'utf-8')
+    for (const line of pcmEntries.split('\n')) {
+      if (!line.includes('capture')) continue
+
+      const match = line.match(/^(\d+)-(\d+):/)
+      if (!match) continue
+
+      const [, cardIndex, deviceIndex] = match
+      candidates.add(`hw:${cardIndex},${deviceIndex}`)
+      candidates.add(`plughw:${cardIndex},${deviceIndex}`)
+    }
+  } catch (error) {
+    log.warn('[LinuxMic] Failed to read /proc/asound/pcm for capture devices:', error)
+  }
+
+  ;['default', 'pipewire', 'hw:0,0', 'plughw:0,0'].forEach((candidate) => candidates.add(candidate))
+
+  return Array.from(candidates)
+}
+
+function probeLinuxAlsaInput(inputName: string): boolean {
+  const probeArgs = [
+    '-hide_banner',
+    '-nostdin',
+    '-loglevel',
+    'error',
+    '-f',
+    'alsa',
+    '-t',
+    LINUX_MIC_PROBE_DURATION_SECONDS,
+    '-i',
+    inputName,
+    '-f',
+    'null',
+    '-',
+  ]
+
+  const probeResult = spawnSync(FFMPEG_PATH, probeArgs, {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+
+  if (probeResult.error) {
+    log.warn(`[LinuxMic] Probe failed for ALSA input "${inputName}":`, probeResult.error)
+    return false
+  }
+
+  if (probeResult.status === 0) {
+    log.info(`[LinuxMic] Using ALSA input "${inputName}" for microphone capture.`)
+    return true
+  }
+
+  const probeError = probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`
+  log.warn(`[LinuxMic] ALSA input "${inputName}" is unavailable: ${probeError}`)
+  return false
+}
+
+async function resolveLinuxMicrophoneInput(): Promise<string | null> {
+  const candidates = await listLinuxAlsaCaptureInputs()
+
+  for (const candidate of candidates) {
+    if (probeLinuxAlsaInput(candidate)) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function probeLinuxWebcamInput(devicePath: string): { available: boolean; busy: boolean; detail: string } {
+  const probeArgs = [
+    '-hide_banner',
+    '-nostdin',
+    '-loglevel',
+    'error',
+    '-f',
+    'v4l2',
+    '-t',
+    LINUX_WEBCAM_PROBE_DURATION_SECONDS,
+    '-i',
+    devicePath,
+    '-f',
+    'null',
+    '-',
+  ]
+
+  const probeResult = spawnSync(FFMPEG_PATH, probeArgs, {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+
+  if (probeResult.error) {
+    const detail = probeResult.error.message || String(probeResult.error)
+    return { available: false, busy: false, detail }
+  }
+
+  if (probeResult.status === 0) {
+    return { available: true, busy: false, detail: '' }
+  }
+
+  const detail = (probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`).trim()
+  return {
+    available: false,
+    busy: /Device or resource busy/i.test(detail),
+    detail,
+  }
+}
+
+async function waitForLinuxWebcamRelease(devicePath: string): Promise<{ available: boolean; detail?: string }> {
+  const startedAt = Date.now()
+  let attempts = 0
+
+  while (Date.now() - startedAt < LINUX_WEBCAM_RELEASE_PROBE_TIMEOUT_MS) {
+    attempts += 1
+    const probe = probeLinuxWebcamInput(devicePath)
+
+    if (probe.available) {
+      log.info(
+        `[LinuxWebcam] ${devicePath} became available after ${attempts} attempt(s) in ${Date.now() - startedAt}ms.`,
+      )
+      return { available: true }
+    }
+
+    if (!probe.busy) {
+      log.error(`[LinuxWebcam] ${devicePath} probe failed with a non-busy error: ${probe.detail}`)
+      return { available: false, detail: probe.detail || `Failed to probe ${devicePath}.` }
+    }
+
+    log.warn(`[LinuxWebcam] ${devicePath} is still busy (attempt ${attempts}).`)
+    await wait(LINUX_WEBCAM_RELEASE_PROBE_INTERVAL_MS)
+  }
+
+  const finalProbe = probeLinuxWebcamInput(devicePath)
+  const detail =
+    finalProbe.detail || `${devicePath} remained busy after ${LINUX_WEBCAM_RELEASE_PROBE_TIMEOUT_MS}ms.`
+  log.error(`[LinuxWebcam] Timed out waiting for ${devicePath} to become available: ${detail}`)
+  return { available: false, detail }
+}
 
 function hasOwnField<K extends keyof ImportedProjectPayload>(payload: ImportedProjectPayload, key: K): boolean {
   return Object.prototype.hasOwnProperty.call(payload, key)
@@ -313,6 +537,9 @@ async function startActualRecording(
       if (process.platform === 'win32') {
         normalizedX = data.x / scaleFactor
         normalizedY = data.y / scaleFactor
+      } else if (shouldApplyLinuxDisplayScale(scaleFactor)) {
+        normalizedX = data.x / scaleFactor
+        normalizedY = data.y / scaleFactor
       }
       
       // Check if the mouse event is within the recording geometry bounds
@@ -343,36 +570,133 @@ async function startActualRecording(
 
   const finalArgs = buildFfmpegArgs(inputArgs, hasWebcam, hasMic, screenVideoPath, webcamVideoPath, audioPath)
   log.info(`[FFMPEG] Starting FFmpeg with args: ${finalArgs.join(' ')}`)
-  appState.ffmpegProcess = spawn(FFMPEG_PATH, finalArgs)
+  const ffmpeg = spawn(FFMPEG_PATH, finalArgs)
+  appState.ffmpegProcess = ffmpeg
 
-  // Monitor FFmpeg's stderr for progress, errors, and sync timing
-  appState.ffmpegProcess.stderr.on('data', (data: any) => {
-    const message = data.toString()
-    log.warn(`[FFMPEG stderr]: ${message}`)
-
-    // Early detection of fatal errors to provide immediate feedback
-    const fatalErrorKeywords = [
-      'Cannot open display',
-      'Invalid argument',
-      'Device not found',
-      'Unknown input format',
-      'error opening device',
-    ]
-    if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
-      log.error(`[FFMPEG] Fatal error detected: ${message}`)
+  return new Promise((resolve) => {
+    let startResolved = false
+    let fatalStartupHandled = false
+    let recordingReady = false
+    let startupErrorText = ''
+    let startupTimeout: NodeJS.Timeout | null = setTimeout(() => {
+      if (recordingReady || fatalStartupHandled) return
+      log.error('[FFMPEG] Startup timed out before recording became ready.')
       dialog.showErrorBox(
         'Recording Failed',
-        `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
+        'FFmpeg did not finish initializing the recording in time. Please try again.',
       )
-      setTimeout(() => cleanupAndDiscard(), 100)
+      cleanupFailedRecordingStart()
+      resolveOnce({ canceled: true })
+    }, FFMPEG_STARTUP_TIMEOUT_MS)
+
+    const resolveOnce = (value: { canceled: boolean } & Partial<RecordingSession>) => {
+      if (startResolved) return
+      startResolved = true
+      if (startupTimeout) {
+        clearTimeout(startupTimeout)
+        startupTimeout = null
+      }
+      resolve(value)
     }
+
+    const markRecordingReady = () => {
+      if (recordingReady) return
+      recordingReady = true
+      const session = appState.currentRecordingSession
+      if (!session) {
+        resolveOnce({ canceled: true })
+        return
+      }
+
+      log.info('[FFMPEG] Recording pipeline is ready.')
+      appState.recorderWin?.webContents.send('recording-started')
+      createTray()
+      resolveOnce({ canceled: false, ...session })
+    }
+
+    const cleanupFailedRecordingStart = () => {
+      if (fatalStartupHandled) return
+      fatalStartupHandled = true
+      if (startupTimeout) {
+        clearTimeout(startupTimeout)
+        startupTimeout = null
+      }
+      setTimeout(() => {
+        cleanupAndDiscard()
+          .then(() => {
+            appState.recorderWin?.webContents.send('recording-finished', { canceled: true })
+            appState.recorderWin?.show()
+          })
+          .catch((cleanupError) => {
+            log.error('[FFMPEG] Failed to cleanup after fatal startup error:', cleanupError)
+          })
+      }, 100)
+    }
+
+    ffmpeg.once('spawn', () => {
+      log.info('[FFMPEG] Process spawned, waiting for recording pipeline to become ready...')
+    })
+
+    ffmpeg.once('error', (error: NodeJS.ErrnoException) => {
+      appState.ffmpegProcess = null
+      log.error('[FFMPEG] Failed to start FFmpeg process:', error)
+      dialog.showErrorBox('Recording Failed', getFFmpegSpawnErrorMessage(error))
+      setTimeout(() => {
+        cleanupAndDiscard().catch((cleanupError) => {
+          log.error('[FFMPEG] Failed to cleanup after spawn error:', cleanupError)
+        })
+      }, 0)
+      resolveOnce({ canceled: true })
+    })
+
+    ffmpeg.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      if (recordingReady || fatalStartupHandled) {
+        return
+      }
+
+      log.error(`[FFMPEG] Process exited before recording became ready. code=${code} signal=${signal}`)
+      const startupDetail = startupErrorText.trim()
+      const errorMessage = startupDetail.includes('Device or resource busy')
+        ? `The selected recording device is busy.\n\n${startupDetail}\n\nClose any app that is using the webcam or microphone and try again.`
+        : startupDetail.length > 0
+          ? `FFmpeg exited before the recording could start.\n\n${startupDetail}`
+          : `FFmpeg exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
+      dialog.showErrorBox(
+        'Recording Failed',
+        errorMessage,
+      )
+      cleanupFailedRecordingStart()
+      resolveOnce({ canceled: true })
+    })
+
+    // Monitor FFmpeg's stderr for progress, errors, and sync timing
+    ffmpeg.stderr.on('data', (data: any) => {
+      const message = data.toString()
+      startupErrorText = message
+      log.warn(`[FFMPEG stderr]: ${message}`)
+
+      if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
+        markRecordingReady()
+      }
+
+      // Early detection of fatal errors to provide immediate feedback
+      const fatalErrorKeywords = [
+        'Cannot open display',
+        'Invalid argument',
+        'Device not found',
+        'Unknown input format',
+        'error opening device',
+      ]
+      if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
+        log.error(`[FFMPEG] Fatal error detected: ${message}`)
+        dialog.showErrorBox(
+          'Recording Failed',
+          `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
+        )
+        cleanupFailedRecordingStart()
+      }
+    })
   })
-
-  // Notify the recorder window that recording has started
-  appState.recorderWin?.webContents.send('recording-started')
-
-  createTray()
-  return { canceled: false, ...appState.currentRecordingSession }
 }
 
 /**
@@ -473,6 +797,10 @@ export async function startRecording(options: any) {
   const { source, displayId, mic, webcam } = options
   log.info('[RecordingManager] Received start recording request with options:', options)
 
+  if (webcam) {
+    await requestRecorderWebcamRelease()
+  }
+
   // macOS Permissions Check
   if (process.platform === 'darwin') {
     // 1. Check Screen Recording Permissions
@@ -520,7 +848,17 @@ export async function startRecording(options: any) {
   if (mic) {
     switch (process.platform) {
       case 'linux':
-        baseFfmpegArgs.push('-f', 'alsa', '-i', 'default')
+        {
+          const linuxMicInput = await resolveLinuxMicrophoneInput()
+          if (!linuxMicInput) {
+            dialog.showErrorBox(
+              'Microphone Unavailable',
+              'RecordSaaS could not find a Linux microphone input that FFmpeg can open.\n\nTry selecting "No microphone", or set RECORDSAAS_LINUX_MIC_INPUT to a working ALSA device such as hw:0,0.',
+            )
+            return { canceled: true }
+          }
+          baseFfmpegArgs.push('-f', 'alsa', '-i', linuxMicInput)
+        }
         break
       case 'win32':
         baseFfmpegArgs.push('-f', 'dshow', '-i', `audio=${mic.deviceLabel}`)
@@ -553,10 +891,22 @@ export async function startRecording(options: any) {
     recordingScaleFactor = scaleFactor  // Store for metadata processing
     
     // For Windows, we need to use physical pixels for gdigrab
-    const physicalWidth = process.platform === 'win32' ? Math.floor((width * scaleFactor) / 2) * 2 : Math.floor(width / 2) * 2
-    const physicalHeight = process.platform === 'win32' ? Math.floor((height * scaleFactor) / 2) * 2 : Math.floor(height / 2) * 2
-    const physicalX = process.platform === 'win32' ? Math.floor(x * scaleFactor) : x
-    const physicalY = process.platform === 'win32' ? Math.floor(y * scaleFactor) : y
+    const physicalWidth =
+      process.platform === 'win32'
+        ? Math.floor((width * scaleFactor) / 2) * 2
+        : process.platform === 'linux'
+          ? getLinuxScaledDimension(width, scaleFactor)
+          : Math.floor(width / 2) * 2
+    const physicalHeight =
+      process.platform === 'win32'
+        ? Math.floor((height * scaleFactor) / 2) * 2
+        : process.platform === 'linux'
+          ? getLinuxScaledDimension(height, scaleFactor)
+          : Math.floor(height / 2) * 2
+    const physicalX =
+      process.platform === 'win32' ? Math.floor(x * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(x, scaleFactor) : x
+    const physicalY =
+      process.platform === 'win32' ? Math.floor(y * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(y, scaleFactor) : y
     
     // Store the logical dimensions for mouse tracking
     const safeWidth = Math.floor(width / 2) * 2
@@ -572,9 +922,9 @@ export async function startRecording(options: any) {
           '-draw_mouse',
           '0',
           '-video_size',
-          `${safeWidth}x${safeHeight}`,
+          `${physicalWidth}x${physicalHeight}`,
           '-i',
-          `${display}+${x},${y}`,
+          `${display}+${physicalX},${physicalY}`,
         )
         break
       case 'win32':
@@ -624,10 +974,30 @@ export async function startRecording(options: any) {
     recordingScaleFactor = scaleFactor  // Store for metadata processing
 
     // For Windows, convert to physical pixels
-    const physicalWidth = process.platform === 'win32' ? Math.floor((safeWidth * scaleFactor) / 2) * 2 : safeWidth
-    const physicalHeight = process.platform === 'win32' ? Math.floor((safeHeight * scaleFactor) / 2) * 2 : safeHeight
-    const physicalX = process.platform === 'win32' ? Math.floor(selectedGeometry.x * scaleFactor) : selectedGeometry.x
-    const physicalY = process.platform === 'win32' ? Math.floor(selectedGeometry.y * scaleFactor) : selectedGeometry.y
+    const physicalWidth =
+      process.platform === 'win32'
+        ? Math.floor((safeWidth * scaleFactor) / 2) * 2
+        : process.platform === 'linux'
+          ? getLinuxScaledDimension(safeWidth, scaleFactor)
+          : safeWidth
+    const physicalHeight =
+      process.platform === 'win32'
+        ? Math.floor((safeHeight * scaleFactor) / 2) * 2
+        : process.platform === 'linux'
+          ? getLinuxScaledDimension(safeHeight, scaleFactor)
+          : safeHeight
+    const physicalX =
+      process.platform === 'win32'
+        ? Math.floor(selectedGeometry.x * scaleFactor)
+        : process.platform === 'linux'
+          ? getLinuxScaledOffset(selectedGeometry.x, scaleFactor)
+          : selectedGeometry.x
+    const physicalY =
+      process.platform === 'win32'
+        ? Math.floor(selectedGeometry.y * scaleFactor)
+        : process.platform === 'linux'
+          ? getLinuxScaledOffset(selectedGeometry.y, scaleFactor)
+          : selectedGeometry.y
 
     switch (process.platform) {
       case 'linux':
@@ -638,9 +1008,9 @@ export async function startRecording(options: any) {
           '-draw_mouse',
           '0',
           '-video_size',
-          `${safeWidth}x${safeHeight}`,
+          `${physicalWidth}x${physicalHeight}`,
           '-i',
-          `${display}+${selectedGeometry.x},${selectedGeometry.y}`,
+          `${display}+${physicalX},${physicalY}`,
         )
         break
       case 'win32':
@@ -675,6 +1045,19 @@ export async function startRecording(options: any) {
   if (process.platform === 'linux') {
     appState.originalCursorScale = await getCursorScale()
   }
+
+  if (process.platform === 'linux' && webcam) {
+    const webcamDevicePath = `/dev/video${webcam.index}`
+    const webcamReleaseResult = await waitForLinuxWebcamRelease(webcamDevicePath)
+    if (!webcamReleaseResult.available) {
+      dialog.showErrorBox(
+        'Webcam Unavailable',
+        `RecordSaaS released the webcam preview but ${webcamDevicePath} did not become available for FFmpeg.\n\n${webcamReleaseResult.detail || 'The device is still busy.'}\n\nClose any app using the camera and try again.`,
+      )
+      return { canceled: true }
+    }
+  }
+
   log.info('[RecordingManager] Starting actual recording with args:', baseFfmpegArgs)
   return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor)
 }
@@ -794,17 +1177,85 @@ async function cleanupAndSave(): Promise<void> {
     if (appState.ffmpegProcess) {
       const ffmpeg = appState.ffmpegProcess
       appState.ffmpegProcess = null
-      ffmpeg.on('close', (code: any) => {
-        log.info(`FFmpeg process exited with code ${code}`)
+      let resolved = false
+      let gracefulKillTimer: NodeJS.Timeout | null = null
+      let forceKillTimer: NodeJS.Timeout | null = null
+      let forceResolveTimer: NodeJS.Timeout | null = null
+
+      const resolveOnce = () => {
+        if (resolved) return
+        resolved = true
+        if (gracefulKillTimer) clearTimeout(gracefulKillTimer)
+        if (forceKillTimer) clearTimeout(forceKillTimer)
+        if (forceResolveTimer) clearTimeout(forceResolveTimer)
         resolve()
-      })
-      // Send 'q' for graceful shutdown on Windows, SIGINT on others
-      if (process.platform === 'win32') {
-        ffmpeg.stdin?.write('q')
-        ffmpeg.stdin?.end()
-      } else {
-        ffmpeg.kill('SIGINT')
       }
+
+      if (ffmpeg.exitCode !== null || ffmpeg.signalCode !== null) {
+        log.info(`[StopRecord] FFmpeg had already exited. exitCode=${ffmpeg.exitCode} signal=${ffmpeg.signalCode}`)
+        resolveOnce()
+        return
+      }
+
+      ffmpeg.once('close', (code: any, signal: any) => {
+        log.info(`[StopRecord] FFmpeg process exited with code ${code} signal ${signal ?? 'none'}`)
+        resolveOnce()
+      })
+
+      ffmpeg.once('error', (error: any) => {
+        log.error('[StopRecord] FFmpeg process emitted an error during shutdown:', error)
+        resolveOnce()
+      })
+
+      if (ffmpeg.stdin) {
+        ffmpeg.stdin.once('error', (error: any) => {
+          log.warn('[StopRecord] FFmpeg stdin error during shutdown:', error)
+        })
+      }
+
+      try {
+        if (ffmpeg.stdin && !ffmpeg.stdin.destroyed && ffmpeg.stdin.writable) {
+          log.info('[StopRecord] Requesting graceful FFmpeg shutdown via stdin.')
+          ffmpeg.stdin.write('q')
+          ffmpeg.stdin.end()
+        } else {
+          log.warn('[StopRecord] FFmpeg stdin is not writable; falling back to signals.')
+          ffmpeg.kill('SIGINT')
+        }
+      } catch (error) {
+        log.warn('[StopRecord] Failed to request graceful FFmpeg shutdown, sending SIGINT instead:', error)
+        try {
+          ffmpeg.kill('SIGINT')
+        } catch (killError) {
+          log.error('[StopRecord] Failed to send SIGINT to FFmpeg:', killError)
+        }
+      }
+
+      gracefulKillTimer = setTimeout(() => {
+        if (resolved) return
+        log.warn('[StopRecord] FFmpeg did not exit after graceful request; sending SIGINT.')
+        try {
+          ffmpeg.kill('SIGINT')
+        } catch (error) {
+          log.error('[StopRecord] Failed to send SIGINT to FFmpeg after grace period:', error)
+        }
+      }, FFMPEG_STOP_GRACE_PERIOD_MS)
+
+      forceKillTimer = setTimeout(() => {
+        if (resolved) return
+        log.error('[StopRecord] FFmpeg is still running; sending SIGKILL.')
+        try {
+          ffmpeg.kill('SIGKILL')
+        } catch (error) {
+          log.error('[StopRecord] Failed to send SIGKILL to FFmpeg:', error)
+        }
+      }, FFMPEG_STOP_FORCE_PERIOD_MS)
+
+      forceResolveTimer = setTimeout(() => {
+        if (resolved) return
+        log.error('[StopRecord] FFmpeg shutdown timed out. Continuing cleanup to avoid blocking the UI.')
+        resolveOnce()
+      }, FFMPEG_STOP_RESOLVE_PERIOD_MS)
     } else {
       resolve()
     }
@@ -817,10 +1268,12 @@ async function cleanupAndSave(): Promise<void> {
  * @returns A promise that resolves to true on success, false on failure.
  */
 /**
- * Helper function to scale recording geometry for Windows high-DPI displays
+ * Helper function to scale recording geometry for display backends that capture in physical pixels
  */
 function getScaledGeometry(geometry: RecordingGeometry, scaleFactor: number): RecordingGeometry {
-  if (process.platform !== 'win32' || scaleFactor === 1) {
+  const shouldScaleForMetadata =
+    (process.platform === 'win32' && scaleFactor !== 1) || shouldApplyLinuxDisplayScale(scaleFactor)
+  if (!shouldScaleForMetadata) {
     return geometry
   }
   return {
@@ -844,8 +1297,9 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
     // On Windows, scale mouse coordinates to match physical video dimensions
     const scaleFactor = session.scaleFactor || 1
     const finalEvents = appState.recordedMouseEvents.map((event) => {
-      const scaledX = process.platform === 'win32' ? event.x * scaleFactor : event.x
-      const scaledY = process.platform === 'win32' ? event.y * scaleFactor : event.y
+      const shouldScaleLinuxEvent = shouldApplyLinuxDisplayScale(scaleFactor)
+      const scaledX = process.platform === 'win32' || shouldScaleLinuxEvent ? event.x * scaleFactor : event.x
+      const scaledY = process.platform === 'win32' || shouldScaleLinuxEvent ? event.y * scaleFactor : event.y
       return {
         ...event,
         x: scaledX,
