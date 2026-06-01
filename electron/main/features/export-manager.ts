@@ -8,7 +8,6 @@ import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
-import * as MP4BoxModule from 'mp4box'
 import { appState } from '../state'
 import { getFFmpegPath, calculateExportDimensions, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
@@ -112,42 +111,41 @@ const readSourceVideoInfo = async (videoPath: string | null | undefined): Promis
   const normalizedPath = normalizeMediaPath(videoPath)
   if (!normalizedPath) return null
 
-  try {
-    const buffer = await fsPromises.readFile(normalizedPath)
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-    ;(arrayBuffer as ArrayBuffer & { fileStart?: number }).fileStart = 0
+  return await new Promise<SourceVideoInfo | null>((resolve) => {
+    const probe = spawn(FFMPEG_PATH, ['-hide_banner', '-i', normalizedPath])
+    let stderr = ''
 
-    return await new Promise<SourceVideoInfo | null>((resolve, reject) => {
-      const mp4boxfile = (MP4BoxModule as { createFile?: () => any }).createFile?.()
-      if (!mp4boxfile) {
-        reject(new Error('MP4Box.createFile is unavailable.'))
+    probe.stderr.on('data', (data) => {
+      stderr += data.toString()
+    })
+    probe.on('error', (error) => {
+      log.warn('[ExportManager] Failed to probe adaptive source video info. Falling back to manual export settings.', error)
+      resolve(null)
+    })
+    probe.on('close', () => {
+      const videoLine = stderr.split(/\r?\n/).find((line) => line.includes('Video:'))
+      if (!videoLine) {
+        log.warn('[ExportManager] Adaptive source probe did not return a video stream line.')
+        resolve(null)
         return
       }
 
-      mp4boxfile.onReady = (info: any) => {
-        const track = info.videoTracks?.[0]
-        if (!track) {
-          resolve(null)
-          return
-        }
+      const dimensionsMatch = videoLine.match(/,\s*(\d{2,5})x(\d{2,5})(?:\s|,)/)
+      const fpsMatch = videoLine.match(/,\s*([0-9]+(?:\.[0-9]+)?)\s*fps(?:\s|,)/)
+      const tbrMatch = videoLine.match(/,\s*([0-9]+(?:\.[0-9]+)?)\s*tbr(?:\s|,)/)
+      const width = dimensionsMatch ? Number(dimensionsMatch[1]) : 0
+      const height = dimensionsMatch ? Number(dimensionsMatch[2]) : 0
+      const fps = sanitizeFrameRate(fpsMatch ? Number(fpsMatch[1]) : tbrMatch ? Number(tbrMatch[1]) : null)
 
-        const durationSeconds = track.duration && track.timescale ? track.duration / track.timescale : 0
-        const sampleCount = typeof track.nb_samples === 'number' ? track.nb_samples : 0
-        const fps = sanitizeFrameRate(durationSeconds > 0 && sampleCount > 0 ? sampleCount / durationSeconds : null)
-        resolve({
-          width: track.video?.width || 0,
-          height: track.video?.height || 0,
-          fps,
-        })
+      if (!width || !height) {
+        log.warn(`[ExportManager] Adaptive source probe could not parse dimensions from: ${videoLine}`)
+        resolve(null)
+        return
       }
-      mp4boxfile.onError = (error: unknown) => reject(error)
-      mp4boxfile.appendBuffer(arrayBuffer)
-      mp4boxfile.flush()
+
+      resolve({ width, height, fps })
     })
-  } catch (error) {
-    log.warn('[ExportManager] Failed to read adaptive source video info. Falling back to manual export settings.', error)
-    return null
-  }
+  })
 }
 
 const sortLanesForPrecedence = (lanes: LaneLike[] | undefined): LaneLike[] => {

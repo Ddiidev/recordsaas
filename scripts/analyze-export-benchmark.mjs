@@ -112,7 +112,7 @@ const summarizeExport = (exportRun, label) => {
 
   return {
     label,
-    status: exportRun.completed ? 'completed' : exportRun.renderFinished ? 'render-finished' : 'incomplete',
+    status: exportRun.cancelled ? 'cancelled' : exportRun.completed ? 'completed' : exportRun.renderFinished ? 'render-finished' : 'incomplete',
     total: formatSeconds(totalSeconds),
     activeElapsed: formatSeconds(activeTotalSeconds),
     startupUi: formatSeconds(startupSeconds),
@@ -121,6 +121,8 @@ const summarizeExport = (exportRun, label) => {
     activeRenderLoop: formatSeconds(activeRenderSeconds),
     finalizing: formatSeconds(finalizingSeconds),
     encoder: exportRun.encoder || 'n/a',
+    adaptiveSource: exportRun.adaptiveSource || 'n/a',
+    effectiveSettings: exportRun.effectiveSettings || 'n/a',
     outputPath: exportRun.outputPath || 'n/a',
     ffmpegFpsAverage: average(exportRun.ffmpegFps),
     ffmpegFpsLast: exportRun.ffmpegFps.at(-1) ?? null,
@@ -163,6 +165,9 @@ for (let i = 0; i < lines.length; i += 1) {
       perf: [],
       encoder: null,
       outputPath: null,
+      adaptiveSource: null,
+      effectiveSettings: null,
+      cancelled: false,
     }
     exports.push(current)
   }
@@ -172,9 +177,16 @@ for (let i = 0; i < lines.length; i += 1) {
 
   if (line.includes('Export startup UI initialized')) current.startupReady = timestamp
   if (line.includes('Configured encoder:')) current.encoder = line.replace(/^.*Configured encoder:\s*/, '').trim()
+  if (line.includes('Adaptive export source info:')) {
+    current.adaptiveSource = line.replace(/^.*Adaptive export source info:\s*/, '').trim()
+  }
+  if (line.includes('Effective export settings:')) {
+    current.effectiveSettings = line.replace(/^.*Effective export settings:\s*/, '').trim()
+  }
   if (line.includes('Worker ready. Sending project state.')) current.workerReady = timestamp
   if (line.includes('Render finished. Closing FFmpeg stdin.')) current.renderFinished = timestamp
   if (line.includes('FFmpeg process exited with code 0.')) current.ffmpegClosed = timestamp
+  if (line.includes('Received "export:cancel"') || line.includes('Export cancelled.')) current.cancelled = true
   if (line.includes('Export completed successfully')) {
     current.completed = timestamp
     current.totalSeconds = extractNumber(line, /in\s+([0-9.]+)\s+seconds/)
@@ -187,7 +199,7 @@ for (let i = 0; i < lines.length; i += 1) {
     const fps = extractNumber(line, /fps=\s*([0-9.]+)/)
     if (fps !== null) current.ffmpegFps.push(fps)
   }
-  if (line.includes('[RendererPage][Perf] Render loop metrics.')) {
+  if (line.includes('[RendererPage][Perf] Render loop metrics')) {
     const perf = parsePerfBlock(lines, i)
     if (perf) current.perf.push(perf)
   }

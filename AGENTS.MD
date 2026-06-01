@@ -141,13 +141,14 @@ Export startup invariant:
 - Render progress must be emitted from the renderer loop through `export:render-progress`; do not rely only on encoded frame/chunk delivery because `VideoEncoder` can batch output and hide 0-100% progress.
 - Renderer-loop progress IPC and diagnostics must stay throttled/bucketed; never log or send redundant progress for every frame on long exports.
 - Render performance diagnostics should be aggregate periodic metrics (decode, draw, encoder backpressure, encode), not per-frame logs.
-- Long-export benchmark reviews should use `npm run analyze:export-benchmark -- [logPath]` after the run to summarize startup, render loop, finalization, encoder config, and renderer perf samples.
+- Long-export benchmark reviews should use `npm run analyze:export-benchmark -- [logPath]` after the run to summarize startup, adaptive/effective export settings, render loop, finalization, encoder config, and renderer perf samples.
 - Export benchmark analysis must report both the latest started export and the last completed export so interrupted/stalled runs are not hidden by older successful runs.
 - Renderer performance metric logs must serialize payloads inline as JSON strings; Electron console forwarding may collapse object arguments to `[object Object]`.
 - WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
 - WebCodecs H.264 export should prefer Baseline Profile for throughput on current benchmark hardware; High Profile may be tried only as a fallback or with benchmark evidence that it improves completion time.
 - Adaptive export mode is the default user-facing export mode: it must preserve the recorded screen video's source dimensions and measured average source FPS while keeping quality configurable. Manual resolution/FPS controls are available only when adaptive mode is disabled.
 - Adaptive export authorization must map the measured source height/FPS to the nearest supported billing tier without changing the renderer payload contract used for manual exports.
+- Adaptive source probing in the main process should use FFmpeg metadata probing, not full-file MP4 parsing, so long recordings do not add a new pre-render I/O stall.
 - The hidden export renderer canvas should request a non-alpha, desynchronized 2D context to reduce compositor synchronization overhead during long renders.
 - Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
 - Renderer export helpers may cache `Object.values` for region maps by object identity to avoid per-frame allocations; never mutate cached region arrays in place.
