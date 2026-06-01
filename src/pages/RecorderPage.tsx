@@ -662,7 +662,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select display"
                   >
                     <SelectValue asChild>
@@ -693,7 +693,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select webcam"
                   >
                     <SelectValue asChild>
@@ -738,7 +738,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select microphone"
                   >
                     <SelectValue asChild>
@@ -778,7 +778,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[190px] max-w-[240px] h-9"
+                    className="w-auto min-w-[210px] max-w-[260px] h-9"
                     aria-label="Select recording profile"
                   >
                     <SelectValue asChild>

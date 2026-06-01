@@ -114,6 +114,10 @@ type RecordingProfileRuntime = {
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
 }
+type WebcamInputContext = {
+  screenWidth?: number
+  screenHeight?: number
+}
 
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
@@ -184,9 +188,11 @@ const resolveWebcamFps = (profile: RecordingProfileRuntime): 30 | 60 => {
   return profile.webcamFps
 }
 
-const appendWebcamInputOptions = (args: string[], profile: RecordingProfileRuntime) => {
+const appendWebcamInputOptions = (args: string[], profile: RecordingProfileRuntime, context: WebcamInputContext = {}) => {
   const webcamFps = resolveWebcamFps(profile)
-  const webcamSize = resolveScaledDimensions(16, 9, profile.webcamResolution)
+  const webcamSize = profile.isNative && context.screenWidth && context.screenHeight
+    ? { width: context.screenWidth, height: context.screenHeight }
+    : resolveScaledDimensions(16, 9, profile.webcamResolution)
   args.push('-framerate', String(webcamFps))
   if (webcamSize) {
     args.push('-video_size', `${webcamSize.width}x${webcamSize.height}`)
@@ -941,6 +947,57 @@ export async function startRecording(options: any) {
   const baseFfmpegArgs: string[] = []
   let recordingGeometry: RecordingGeometry
   let recordingScaleFactor = 1  // Default to 1 for non-Windows or 100% scaling
+  let webcamInputContext: WebcamInputContext = {}
+
+  if (source === 'fullscreen') {
+    const allDisplays = screen.getAllDisplays()
+    const targetDisplay = allDisplays.find((d) => d.id === displayId) || screen.getPrimaryDisplay()
+    const { width, height } = targetDisplay.bounds
+    const scaleFactor = targetDisplay.scaleFactor || 1
+    webcamInputContext = {
+      screenWidth:
+        process.platform === 'win32'
+          ? Math.floor((width * scaleFactor) / 2) * 2
+          : process.platform === 'linux'
+            ? getLinuxScaledDimension(width, scaleFactor)
+            : Math.floor(width / 2) * 2,
+      screenHeight:
+        process.platform === 'win32'
+          ? Math.floor((height * scaleFactor) / 2) * 2
+          : process.platform === 'linux'
+            ? getLinuxScaledDimension(height, scaleFactor)
+            : Math.floor(height / 2) * 2,
+    }
+  } else if (source === 'area' && options.geometry) {
+    const selectedGeometry = options.geometry
+    const safeWidth = Math.floor(selectedGeometry.width / 2) * 2
+    const safeHeight = Math.floor(selectedGeometry.height / 2) * 2
+    const containingDisplay =
+      screen.getAllDisplays().find((d) => {
+        const b = d.bounds
+        return (
+          selectedGeometry.x >= b.x &&
+          selectedGeometry.y >= b.y &&
+          selectedGeometry.x + selectedGeometry.width <= b.x + b.width &&
+          selectedGeometry.y + selectedGeometry.height <= b.y + b.height
+        )
+      }) || screen.getPrimaryDisplay()
+    const scaleFactor = containingDisplay.scaleFactor || 1
+    webcamInputContext = {
+      screenWidth:
+        process.platform === 'win32'
+          ? Math.floor((safeWidth * scaleFactor) / 2) * 2
+          : process.platform === 'linux'
+            ? getLinuxScaledDimension(safeWidth, scaleFactor)
+            : safeWidth,
+      screenHeight:
+        process.platform === 'win32'
+          ? Math.floor((safeHeight * scaleFactor) / 2) * 2
+          : process.platform === 'linux'
+            ? getLinuxScaledDimension(safeHeight, scaleFactor)
+            : safeHeight,
+    }
+  }
 
   // --- Add Microphone and Webcam inputs first ---
   if (mic) {
@@ -970,17 +1027,17 @@ export async function startRecording(options: any) {
     switch (process.platform) {
       case 'linux':
         baseFfmpegArgs.push('-f', 'v4l2')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
         baseFfmpegArgs.push('-i', `/dev/video${webcam.index}`)
         break
       case 'win32':
         baseFfmpegArgs.push('-f', 'dshow')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
         baseFfmpegArgs.push('-i', `video=${webcam.deviceLabel}`)
         break
       case 'darwin':
         baseFfmpegArgs.push('-f', 'avfoundation')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
         baseFfmpegArgs.push('-i', `${webcam.index}:none`)
         break
     }

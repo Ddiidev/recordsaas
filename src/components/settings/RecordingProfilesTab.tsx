@@ -118,7 +118,7 @@ export function RecordingProfilesTab() {
         persistProfiles(next)
         return next
       })
-      if (!isNativeProfile && isEditing) {
+      if (!isNativeProfile) {
         updateSelectedProfile({ screenFps: result.recommendedFps })
       }
     } catch (error) {
@@ -148,7 +148,7 @@ export function RecordingProfilesTab() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-[16rem_1fr] gap-5">
+        <div className="grid grid-cols-[20rem_1fr] gap-6">
           <div className="space-y-2">
             {profiles.map((profile) => (
               <button
@@ -173,17 +173,17 @@ export function RecordingProfilesTab() {
 
           <div className="space-y-4">
             {isNativeProfile && (
-              <div className="rounded-lg border border-primary/30 bg-primary/10 p-4">
+              <div className="rounded-lg border border-primary/30 bg-primary/10 p-5">
                 <h3 className="text-sm font-semibold text-foreground">Native Adaptive profile</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Uses the selected screen's native resolution. Screen FPS is selected by the performance analysis
                   tool, targeting 60fps when the PC can sustain it and falling back to 30fps when needed. Webcam stays
-                  at 30fps and uses its native/default capture resolution.
+                  at 30fps and requests the same capture resolution as the selected screen or area.
                 </p>
               </div>
             )}
 
-            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-4">
+            <div className="flex items-center justify-between gap-5 rounded-lg border border-border bg-muted/30 p-5">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">60fps Analysis</h3>
                 <p className="text-sm text-muted-foreground">

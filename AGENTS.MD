@@ -317,7 +317,7 @@ Toolbar and preview control sizing:
 - Timeline zoom slider wrapper width: `w-24`.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
-- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 980x200`, `preview 980x420`, `settings 980x700`.
+- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 1220x200`, `preview 1220x420`, `settings 1380x820`.
 - Recorder toolbar parity rule: Linux and macOS must match the Windows control order and close-button position; Linux-only cursor scale controls belong in `Settings > General`, not in the main recorder toolbar.
 - Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive. Opening any recorder toolbar dropdown temporarily disables click-through until the menu closes.
 - Recorder interactive-surface invariant: on `win32`/`darwin`, controls, select triggers, and open recorder dropdowns must never leave the recorder in click-through mode while the pointer is still over the toolbar. Switching directly between recorder dropdowns, or clicking the toolbar after a menu closes, must not focus the background window.

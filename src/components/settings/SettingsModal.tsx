@@ -65,7 +65,7 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
       <div
         data-interactive="true"
         className={cn(
-          'relative m-4 flex h-[60vh] max-h-[500px] w-full max-w-3xl flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
+          'relative m-3 flex h-[calc(100vh-1.5rem)] max-h-[780px] w-full max-w-[1320px] flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
           isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'
         )}
         onClick={(e) => e.stopPropagation()}
