@@ -12,6 +12,44 @@ function lerp(start: number, end: number, t: number): number {
   return start * (1 - t) + end * t
 }
 
+type SmoothedMousePosition = { x: number; y: number } | null
+
+const smoothedMousePositionCache = new WeakMap<MetaDataItem[], Map<string, SmoothedMousePosition>>()
+const SMOOTHED_MOUSE_POSITION_CACHE_LIMIT = 2048
+
+const getSmoothedMousePositionCacheKey = (targetTime: number, smoothingFactor: number, deadZone: number): string =>
+  `${Math.round(targetTime * 1e6)}:${smoothingFactor}:${deadZone}`
+
+const getCachedSmoothedMousePosition = (
+  metadata: MetaDataItem[],
+  targetTime: number,
+  smoothingFactor: number,
+  deadZone: number,
+): SmoothedMousePosition | undefined => {
+  const cache = smoothedMousePositionCache.get(metadata)
+  if (!cache) return undefined
+  return cache.get(getSmoothedMousePositionCacheKey(targetTime, smoothingFactor, deadZone))
+}
+
+const setCachedSmoothedMousePosition = (
+  metadata: MetaDataItem[],
+  targetTime: number,
+  smoothingFactor: number,
+  deadZone: number,
+  value: SmoothedMousePosition,
+) => {
+  let cache = smoothedMousePositionCache.get(metadata)
+  if (!cache) {
+    cache = new Map<string, SmoothedMousePosition>()
+    smoothedMousePositionCache.set(metadata, cache)
+  }
+  if (cache.size >= SMOOTHED_MOUSE_POSITION_CACHE_LIMIT) {
+    const firstKey = cache.keys().next().value
+    if (firstKey) cache.delete(firstKey)
+  }
+  cache.set(getSmoothedMousePositionCacheKey(targetTime, smoothingFactor, deadZone), value)
+}
+
 /**
  * Finds the index of the last metadata item with a timestamp less than or equal to the given time.
  * Uses binary search for performance optimization.
@@ -45,15 +83,23 @@ function getSmoothedMousePosition(
   smoothingFactor = DEFAULTS.CAMERA.MOVEMENT.SMOOTHING_FACTOR,
   deadZone = DEFAULTS.CAMERA.MOVEMENT.DEAD_ZONE,
 ): { x: number; y: number } | null {
+  const cached = getCachedSmoothedMousePosition(metadata, targetTime, smoothingFactor, deadZone)
+  if (typeof cached !== 'undefined') return cached
+
+  const save = (value: SmoothedMousePosition) => {
+    setCachedSmoothedMousePosition(metadata, targetTime, smoothingFactor, deadZone, value)
+    return value
+  }
+
   const endIndex = findLastMetadataIndex(metadata, targetTime)
-  if (endIndex < 0) return null
+  if (endIndex < 0) return save(null)
 
   // Start smoothing from a bit before the target time to build up the average
   const startTime = Math.max(0, targetTime - DEFAULTS.CAMERA.MOVEMENT.SMOOTHING_WINDOW)
   let startIndex = findLastMetadataIndex(metadata, startTime)
   if (startIndex < 0) startIndex = 0
 
-  if (startIndex >= metadata.length) return null
+  if (startIndex >= metadata.length) return save(null)
 
   let smoothedX = metadata[startIndex].x
   let smoothedY = metadata[startIndex].y
@@ -84,14 +130,14 @@ function getSmoothedMousePosition(
       const progress = (targetTime - lastEvent.timestamp) / timeDiff
       const finalX = lerp(smoothedX, nextEvent.x, smoothingFactor)
       const finalY = lerp(smoothedY, nextEvent.y, smoothingFactor)
-      return {
+      return save({
         x: lerp(smoothedX, finalX, progress),
         y: lerp(smoothedY, finalY, progress),
-      }
+      })
     }
   }
 
-  return { x: smoothedX, y: smoothedY }
+  return save({ x: smoothedX, y: smoothedY })
 }
 
 /**
