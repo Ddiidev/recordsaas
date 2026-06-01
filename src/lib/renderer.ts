@@ -727,19 +727,30 @@ export const drawScene = (
 
     sCtx.drawImage(videoElement, 0, 0, frameContentWidth, frameContentHeight)
 
-    if (state.cursorStyles.clickRippleEffect && state.recordingGeometry) {
-      const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
-      const recentRippleClicks = []
-      const startIndex = findLastMetadataIndex(state.metadata, currentTime)
-      if (startIndex > -1) {
-        for (let i = startIndex; i >= 0; i--) {
-          const event = state.metadata[i]
-          if (currentTime - event.timestamp >= clickRippleDuration) break
-          if (event.type === 'click' && event.pressed && currentTime >= event.timestamp) {
-            recentRippleClicks.push(event)
-          }
+    const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
+    let mostRecentClick = undefined
+    const recentRippleClicks = []
+    const maxClickEffectDuration = Math.max(
+      state.cursorStyles.clickRippleEffect ? state.cursorStyles.clickRippleDuration : 0,
+      state.cursorStyles.clickScaleEffect ? state.cursorStyles.clickScaleDuration : 0,
+    )
+    if (state.recordingGeometry && lastEventIndex > -1 && maxClickEffectDuration > 0) {
+      for (let i = lastEventIndex; i >= 0; i--) {
+        const event = state.metadata[i]
+        const age = currentTime - event.timestamp
+        if (age >= maxClickEffectDuration) break
+        if (event.type !== 'click' || !event.pressed || currentTime < event.timestamp) continue
+        if (!mostRecentClick && state.cursorStyles.clickScaleEffect && age < state.cursorStyles.clickScaleDuration) {
+          mostRecentClick = event
+        }
+        if (state.cursorStyles.clickRippleEffect && age < state.cursorStyles.clickRippleDuration) {
+          recentRippleClicks.push(event)
         }
       }
+    }
+
+    if (state.cursorStyles.clickRippleEffect && state.recordingGeometry && recentRippleClicks.length > 0) {
+      const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
       for (const click of recentRippleClicks) {
         const progress = (currentTime - click.timestamp) / clickRippleDuration
         const easedProgress = EASING_MAP.Balanced(progress)
@@ -760,7 +771,6 @@ export const drawScene = (
       }
     }
 
-    const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
     if (state.cursorStyles.showCursor && lastEventIndex > -1 && state.recordingGeometry) {
       const event = state.metadata[lastEventIndex]
       if (event && currentTime - event.timestamp < 0.1) {
@@ -785,17 +795,6 @@ export const drawScene = (
           let cursorScale = 1
           if (state.cursorStyles.clickScaleEffect) {
             const { clickScaleDuration, clickScaleAmount, clickScaleEasing } = state.cursorStyles
-            let mostRecentClick = undefined
-            if (lastEventIndex > -1) {
-              for (let i = lastEventIndex; i >= 0; i--) {
-                const e = state.metadata[i]
-                if (currentTime - e.timestamp >= clickScaleDuration) break
-                if (e.type === 'click' && e.pressed && e.timestamp <= currentTime) {
-                  mostRecentClick = e
-                  break
-                }
-              }
-            }
             if (mostRecentClick) {
               const progress = (currentTime - mostRecentClick.timestamp) / clickScaleDuration
               const easingFn = EASING_MAP[clickScaleEasing as keyof typeof EASING_MAP] || EASING_MAP.Balanced

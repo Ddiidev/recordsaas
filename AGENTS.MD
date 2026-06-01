@@ -146,6 +146,7 @@ Export startup invariant:
 - WebCodecs H.264 export should prefer High Profile when `VideoEncoder.isConfigSupported` accepts it, falling back to Baseline for compatibility.
 - Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
 - Renderer export helpers may cache `Object.values` for region maps by object identity to avoid per-frame allocations; never mutate cached region arrays in place.
+- Cursor rendering should derive ripple and click-scale state from a single backward metadata scan per frame; avoid separate metadata scans for each cursor effect.
 - Zoom/cursor transform helpers may memoize metadata-derived calculations by metadata array identity and exact timestamp; do not approximate cursor/zoom math unless the visual tolerance is explicitly defined.
 - The export progress window must also be able to poll `export-progress:get-state` from main state, so delayed temp-window loading or missed push events cannot leave the widget stuck at `0%`.
 - The main process must keep a direct DOM sync fallback for the export progress window after each accepted progress update; the tiny temporary window must not depend solely on its preload listener/polling JavaScript to render 0-100% progress.
