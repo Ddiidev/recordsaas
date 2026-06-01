@@ -46,6 +46,16 @@ let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
 const roundedRectPathCache = new Map<string, Path2D>()
 const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+const objectValuesCache = new WeakMap<object, unknown[]>()
+
+const getObjectValuesCached = <T,>(source: Record<string, T> | null | undefined): T[] => {
+  if (!source) return []
+  const cached = objectValuesCache.get(source)
+  if (cached) return cached as T[]
+  const values = Object.values(source)
+  objectValuesCache.set(source, values)
+  return values
+}
 
 const getSourceFrameKey = (source: CanvasImageSource): string | null => {
   if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
@@ -631,13 +641,16 @@ export const drawScene = (
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
   const laneContext = createLanePrecedenceContext(state.timelineLanes)
-  const swapRegions = Object.values(state.swapRegions || {})
-  const zoomRegions = Object.values(state.zoomRegions)
-  const blurRegions = Object.values(state.blurRegions)
-  const activeBlurRegions = sortRegionsByLanePrecedence(
-    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
-    laneContext,
-  ).reverse()
+  const swapRegions = getObjectValuesCached(state.swapRegions)
+  const zoomRegions = getObjectValuesCached(state.zoomRegions)
+  const blurRegions = getObjectValuesCached(state.blurRegions)
+  const activeBlurRegions =
+    blurRegions.length > 0
+      ? sortRegionsByLanePrecedence(
+          blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+          laneContext,
+        ).reverse()
+      : []
 
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
