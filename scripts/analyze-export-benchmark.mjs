@@ -98,6 +98,49 @@ const average = (values) => {
   return finite.reduce((sum, value) => sum + value, 0) / finite.length
 }
 
+const summarizeExport = (exportRun, label) => {
+  const startupSeconds = secondsBetween(exportRun.start, exportRun.startupReady)
+  const workerStartupSeconds = secondsBetween(exportRun.start, exportRun.workerReady)
+  const renderSeconds = secondsBetween(exportRun.workerReady, exportRun.renderFinished)
+  const activeRenderSeconds =
+    exportRun.workerReady && !exportRun.renderFinished ? secondsBetween(exportRun.workerReady, exportRun.lastTimestamp) : null
+  const finalizingSeconds = secondsBetween(exportRun.renderFinished, exportRun.ffmpegClosed)
+  const totalSeconds = exportRun.totalSeconds ?? secondsBetween(exportRun.start, exportRun.completed)
+  const activeTotalSeconds = !exportRun.completed ? secondsBetween(exportRun.start, exportRun.lastTimestamp) : null
+  const perf = exportRun.perf
+  const lastPerf = perf.at(-1)
+
+  return {
+    label,
+    status: exportRun.completed ? 'completed' : exportRun.renderFinished ? 'render-finished' : 'incomplete',
+    total: formatSeconds(totalSeconds),
+    activeElapsed: formatSeconds(activeTotalSeconds),
+    startupUi: formatSeconds(startupSeconds),
+    workerStartup: formatSeconds(workerStartupSeconds),
+    renderLoop: formatSeconds(renderSeconds),
+    activeRenderLoop: formatSeconds(activeRenderSeconds),
+    finalizing: formatSeconds(finalizingSeconds),
+    encoder: exportRun.encoder || 'n/a',
+    outputPath: exportRun.outputPath || 'n/a',
+    ffmpegFpsAverage: average(exportRun.ffmpegFps),
+    ffmpegFpsLast: exportRun.ffmpegFps.at(-1) ?? null,
+    rendererPerfSamples: perf.length,
+    rendererFpsAverage: average(perf.map((item) => item.fps)),
+    lastRendererPerf: lastPerf || null,
+    bottleneckHint: lastPerf
+      ? Object.entries({
+          backpressure: lastPerf.backpressure,
+          mainDecode: lastPerf.mainDecode,
+          webcamDecode: lastPerf.webcamDecode,
+          draw: lastPerf.draw,
+          encode: lastPerf.encode,
+        })
+          .filter(([, value]) => Number.isFinite(value))
+          .sort((a, b) => b[1] - a[1])[0]?.[0] || 'n/a'
+      : 'missing RendererPage perf samples; run a new export with current build',
+  }
+}
+
 const lines = readLog()
 const exports = []
 let current = null
@@ -109,6 +152,7 @@ for (let i = 0; i < lines.length; i += 1) {
   if (line.includes('[ExportManager] Starting export process...')) {
     current = {
       start: timestamp,
+      lastTimestamp: timestamp,
       startupReady: null,
       workerReady: null,
       renderFinished: null,
@@ -124,6 +168,7 @@ for (let i = 0; i < lines.length; i += 1) {
   }
 
   if (!current) continue
+  if (timestamp) current.lastTimestamp = timestamp
 
   if (line.includes('Export startup UI initialized')) current.startupReady = timestamp
   if (line.includes('Configured encoder:')) current.encoder = line.replace(/^.*Configured encoder:\s*/, '').trim()
@@ -148,45 +193,18 @@ for (let i = 0; i < lines.length; i += 1) {
   }
 }
 
-const lastExport = exports.findLast((item) => item.completed || item.renderFinished)
+const lastCompletedExport = exports.findLast((item) => item.completed || item.renderFinished)
+const latestExport = exports.at(-1)
 
-if (!lastExport) {
-  console.log('[analyze-export-benchmark] No completed export found in log.')
+if (!lastCompletedExport && !latestExport) {
+  console.log('[analyze-export-benchmark] No export found in log.')
   process.exit(1)
 }
 
-const startupSeconds = secondsBetween(lastExport.start, lastExport.startupReady)
-const workerStartupSeconds = secondsBetween(lastExport.start, lastExport.workerReady)
-const renderSeconds = secondsBetween(lastExport.workerReady, lastExport.renderFinished)
-const finalizingSeconds = secondsBetween(lastExport.renderFinished, lastExport.ffmpegClosed)
-const totalSeconds = lastExport.totalSeconds ?? secondsBetween(lastExport.start, lastExport.completed)
-const perf = lastExport.perf
-const lastPerf = perf.at(-1)
-
 const result = {
   logPath,
-  total: formatSeconds(totalSeconds),
-  startupUi: formatSeconds(startupSeconds),
-  workerStartup: formatSeconds(workerStartupSeconds),
-  renderLoop: formatSeconds(renderSeconds),
-  finalizing: formatSeconds(finalizingSeconds),
-  encoder: lastExport.encoder || 'n/a',
-  outputPath: lastExport.outputPath || 'n/a',
-  ffmpegFpsAverage: average(lastExport.ffmpegFps),
-  rendererPerfSamples: perf.length,
-  rendererFpsAverage: average(perf.map((item) => item.fps)),
-  lastRendererPerf: lastPerf || null,
-  bottleneckHint: lastPerf
-    ? Object.entries({
-        backpressure: lastPerf.backpressure,
-        mainDecode: lastPerf.mainDecode,
-        webcamDecode: lastPerf.webcamDecode,
-        draw: lastPerf.draw,
-        encode: lastPerf.encode,
-      })
-        .filter(([, value]) => Number.isFinite(value))
-        .sort((a, b) => b[1] - a[1])[0]?.[0] || 'n/a'
-    : 'missing RendererPage perf samples; run a new export with current build',
+  latestExport: latestExport ? summarizeExport(latestExport, 'latest') : null,
+  lastCompletedExport: lastCompletedExport ? summarizeExport(lastCompletedExport, 'last-completed') : null,
 }
 
 console.log(JSON.stringify(result, null, 2))

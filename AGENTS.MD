@@ -142,6 +142,7 @@ Export startup invariant:
 - Renderer-loop progress IPC and diagnostics must stay throttled/bucketed; never log or send redundant progress for every frame on long exports.
 - Render performance diagnostics should be aggregate periodic metrics (decode, draw, encoder backpressure, encode), not per-frame logs.
 - Long-export benchmark reviews should use `npm run analyze:export-benchmark -- [logPath]` after the run to summarize startup, render loop, finalization, encoder config, and renderer perf samples.
+- Export benchmark analysis must report both the latest started export and the last completed export so interrupted/stalled runs are not hidden by older successful runs.
 - Renderer performance metric logs must serialize payloads inline as JSON strings; Electron console forwarding may collapse object arguments to `[object Object]`.
 - WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
 - WebCodecs H.264 export should prefer High Profile when `VideoEncoder.isConfigSupported` accepts it, falling back to Baseline for compatibility.
