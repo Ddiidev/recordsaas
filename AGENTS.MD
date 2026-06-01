@@ -150,6 +150,7 @@ Export startup invariant:
 - The main process must keep a direct DOM sync fallback for the export progress window after each accepted progress update; the tiny temporary window must not depend solely on its preload listener/polling JavaScript to render 0-100% progress.
 - Recording audio with no cuts, speed regions, or `change-sound` edits must reuse the original audio file instead of pre-rendering a full-length processed track.
 - Audio preparation that must render temporary tracks should run through cancellable asynchronous FFmpeg processes, not blocking `spawnSync` calls on the main process.
+- Final MP4 muxing should copy already-AAC audio inputs (`.aac`, `.m4a`, `.mp4`) instead of re-encoding them; only fall back to AAC encoding for unknown audio containers/codecs.
 
 IPC contract baseline (media import):
 - Channel: `media:import-audio`

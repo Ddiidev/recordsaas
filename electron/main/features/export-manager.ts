@@ -1210,6 +1210,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   // If MP4, we receive H.264 stream from Renderer (WebCodecs)
   // If other (GIF), we receive raw RGBA frames
   const isMp4 = format === 'mp4'
+  const canCopyAudioForMp4 = (audioPath: string) => {
+    const ext = path.extname(audioPath).toLowerCase()
+    return ext === '.aac' || ext === '.m4a' || ext === '.mp4'
+  }
 
   const ffmpegArgs = ['-y']
   
@@ -1342,7 +1346,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     // If audio present
     if (resolvedAudioInputPath) {
       // Use input #1 (audio) which is either processed or original
-      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-shortest')
+      const audioCodecArgs = canCopyAudioForMp4(resolvedAudioInputPath) ? ['-c:a', 'copy'] : ['-c:a', 'aac']
+      log.info('[ExportManager] Using audio stream mode for final mux.', {
+        audioInput: resolvedAudioInputPath,
+        codecArgs: audioCodecArgs.join(' '),
+      })
+      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0', ...audioCodecArgs, '-shortest')
     }
   } else {
     ffmpegArgs.push('-vf', 'split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse')
