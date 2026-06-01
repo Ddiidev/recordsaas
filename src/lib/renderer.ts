@@ -35,6 +35,9 @@ type WindowWithScreenCache = Window & {
   __backgroundCacheCanvas?: HTMLCanvasElement
   __backgroundCacheCtx?: CanvasRenderingContext2D | null
   __backgroundCacheKey?: string
+  __mediaLayerCacheCanvas?: HTMLCanvasElement
+  __mediaLayerCacheCtx?: CanvasRenderingContext2D | null
+  __mediaLayerCacheKey?: string
 }
 
 let blurSampleCanvas: HTMLCanvasElement | null = null
@@ -43,6 +46,13 @@ let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
 const roundedRectPathCache = new Map<string, Path2D>()
 const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+
+const getSourceFrameKey = (source: CanvasImageSource): string | null => {
+  if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
+    return `vf:${source.timestamp ?? 'unknown'}:${source.displayWidth}x${source.displayHeight}`
+  }
+  return null
+}
 
 const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
   const key = [
@@ -66,7 +76,7 @@ const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
 }
 
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel' | 'screen' | 'background',
+  kind: 'sample' | 'pixel' | 'screen' | 'background' | 'media-layer',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -106,6 +116,20 @@ const getOrCreateCanvas = (
     }
     const canvas = cacheWindow.__backgroundCacheCanvas
     const ctx = cacheWindow.__backgroundCacheCtx
+    if (!canvas || !ctx) return null
+    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
+    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
+    return { canvas, ctx }
+  }
+
+  if (kind === 'media-layer') {
+    const cacheWindow = window as WindowWithScreenCache
+    if (!cacheWindow.__mediaLayerCacheCanvas) {
+      cacheWindow.__mediaLayerCacheCanvas = document.createElement('canvas')
+      cacheWindow.__mediaLayerCacheCtx = cacheWindow.__mediaLayerCacheCanvas.getContext('2d')
+    }
+    const canvas = cacheWindow.__mediaLayerCacheCanvas
+    const ctx = cacheWindow.__mediaLayerCacheCtx
     if (!canvas || !ctx) return null
     if (canvas.width !== roundedWidth) canvas.width = roundedWidth
     if (canvas.height !== roundedHeight) canvas.height = roundedHeight
@@ -878,6 +902,30 @@ export const drawScene = (
     ctx.save()
     ctx.globalAlpha = globalAlpha
 
+    const mediaLayerWidth = Math.ceil(config.width)
+    const mediaLayerHeight = Math.ceil(config.height)
+    const sourceFrameKey = getSourceFrameKey(source)
+    const canUseMediaLayerCache =
+      sourceFrameKey !== null &&
+      globalAlpha === 1 &&
+      mediaLayerWidth > 0 &&
+      mediaLayerHeight > 0
+    const mediaLayerCacheKey = canUseMediaLayerCache
+      ? JSON.stringify({
+          sourceFrameKey,
+          width: mediaLayerWidth,
+          height: mediaLayerHeight,
+          radius: config.radius,
+          sW,
+          sH,
+          isFlipped,
+          crop,
+        })
+      : null
+    const cacheWindow = window as WindowWithScreenCache
+    const hasCachedMediaLayer =
+      Boolean(mediaLayerCacheKey && cacheWindow.__mediaLayerCacheKey === mediaLayerCacheKey && cacheWindow.__mediaLayerCacheCanvas)
+
     if (config.shadowBlur > 0) {
       ctx.save()
       ctx.shadowColor = config.shadowColor
@@ -890,38 +938,69 @@ export const drawScene = (
       ctx.restore()
     }
 
-    ctx.save()
-    ctx.clip(getRoundedRectPath(config, config.radius))
-
-    const targetAR = config.width / config.height
-    const sourceX = crop ? sW * crop.left : 0
-    const sourceY = crop ? sH * crop.top : 0
-    const sourceWidth = crop ? sW * (1 - crop.left - crop.right) : sW
-    const sourceHeight = crop ? sH * (1 - crop.top - crop.bottom) : sH
-    if (sourceWidth <= 0 || sourceHeight <= 0) {
-      ctx.restore()
-      ctx.restore()
-      return
-    }
-
-    const sourceAR = sourceWidth / sourceHeight
-    let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
-
-    if (sourceAR > targetAR) {
-      drawW = sourceHeight * targetAR
-      sx = sourceX + (sourceWidth - drawW) / 2
+    if (hasCachedMediaLayer && cacheWindow.__mediaLayerCacheCanvas) {
+      ctx.drawImage(cacheWindow.__mediaLayerCacheCanvas, config.x, config.y, config.width, config.height)
     } else {
-      drawH = sourceWidth / targetAR
-      sy = sourceY + (sourceHeight - drawH) / 2
-    }
+      const targetCtx = mediaLayerCacheKey ? getOrCreateCanvas('media-layer', mediaLayerWidth, mediaLayerHeight)?.ctx : null
+      if (targetCtx) {
+        targetCtx.clearRect(0, 0, mediaLayerWidth, mediaLayerHeight)
+        targetCtx.save()
+        targetCtx.imageSmoothingEnabled = ctx.imageSmoothingEnabled
+        targetCtx.imageSmoothingQuality = ctx.imageSmoothingQuality
+        targetCtx.clip(getRoundedRectPath({ x: 0, y: 0, width: mediaLayerWidth, height: mediaLayerHeight }, config.radius))
+      } else {
+        ctx.save()
+        ctx.clip(getRoundedRectPath(config, config.radius))
+      }
 
-    if (isFlipped) {
-      ctx.translate(config.x * 2 + config.width, 0)
-      ctx.scale(-1, 1)
-    }
+      const targetAR = config.width / config.height
+      const sourceX = crop ? sW * crop.left : 0
+      const sourceY = crop ? sH * crop.top : 0
+      const sourceWidth = crop ? sW * (1 - crop.left - crop.right) : sW
+      const sourceHeight = crop ? sH * (1 - crop.top - crop.bottom) : sH
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        if (targetCtx) {
+          targetCtx.restore()
+        } else {
+          ctx.restore()
+        }
+        ctx.restore()
+        return
+      }
 
-    ctx.drawImage(source, sx, sy, drawW, drawH, config.x, config.y, config.width, config.height)
-    ctx.restore()
+      const sourceAR = sourceWidth / sourceHeight
+      let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
+
+      if (sourceAR > targetAR) {
+        drawW = sourceHeight * targetAR
+        sx = sourceX + (sourceWidth - drawW) / 2
+      } else {
+        drawH = sourceWidth / targetAR
+        sy = sourceY + (sourceHeight - drawH) / 2
+      }
+
+      if (isFlipped) {
+        if (targetCtx) {
+          targetCtx.translate(mediaLayerWidth, 0)
+          targetCtx.scale(-1, 1)
+        } else {
+          ctx.translate(config.x * 2 + config.width, 0)
+          ctx.scale(-1, 1)
+        }
+      }
+
+      if (targetCtx) {
+        targetCtx.drawImage(source, sx, sy, drawW, drawH, 0, 0, mediaLayerWidth, mediaLayerHeight)
+        targetCtx.restore()
+        if (mediaLayerCacheKey) cacheWindow.__mediaLayerCacheKey = mediaLayerCacheKey
+        if (cacheWindow.__mediaLayerCacheCanvas) {
+          ctx.drawImage(cacheWindow.__mediaLayerCacheCanvas, config.x, config.y, config.width, config.height)
+        }
+      } else {
+        ctx.drawImage(source, sx, sy, drawW, drawH, config.x, config.y, config.width, config.height)
+        ctx.restore()
+      }
+    }
 
     if (config.borderWidth > 0) {
       ctx.save()
