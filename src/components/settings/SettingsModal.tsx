@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
+import { AdjustmentsHorizontal, IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
 import { AccountTab } from './AccountTab'
+import { RecordingProfilesTab } from './RecordingProfilesTab'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -14,10 +15,11 @@ interface SettingsModalProps {
   defaultTab?: SettingsTab
 }
 
-export type SettingsTab = 'general' | 'shortcuts' | 'account' | 'about'
+export type SettingsTab = 'general' | 'recording' | 'shortcuts' | 'account' | 'about'
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconComponent; solid?: IconComponent }> = [
   { id: 'general', label: 'General', icon: Settings },
+  { id: 'recording', label: 'Recording', icon: AdjustmentsHorizontal },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'account', label: 'Account', icon: UserCircle },
   { id: 'about', label: 'About', icon: InfoCircle, solid: InfoCircleSolid },
@@ -38,6 +40,8 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
     switch (activeTab) {
       case 'general':
         return <GeneralTab />
+      case 'recording':
+        return <RecordingProfilesTab />
       case 'shortcuts':
         return <ShortcutsTab />
       case 'account':

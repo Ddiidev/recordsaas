@@ -56,6 +56,12 @@ Project/runtime flow:
 Recorder-to-editor handoff invariant:
 - Main process stores the current session payload and sends `project:open` only after the editor renderer has registered its listener and emitted `editor:ready-for-project`; do not rely on `did-finish-load` alone for project delivery.
 
+Recording profile invariant:
+- Recorder startup must offer a recording profile dropdown in place of the old local-video load button. The default profile is `Native Adaptive (Recommended)`.
+- Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
+- The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and native/default resolution.
+- Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.
+
 Media URL invariant:
 - Absolute local media paths exposed to renderer media elements use `media://file?path=<encoded absolute path>`.
 - The `media` scheme must be registered with streaming privileges before app `ready`, and served through `protocol.handle`/`net.fetch(file://...)` so Chromium's media pipeline can read MP4 range/stream requests.

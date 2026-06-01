@@ -5,6 +5,7 @@ import log from 'electron-log/main'
 import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
+import { cpus } from 'node:os'
 import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences } from 'electron'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage } from '../lib/utils'
@@ -91,6 +92,29 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
   syncOffset: number
 }
 
+type RecordingResolution = 'native' | 'sd' | 'hd' | 'full-hd' | '2k'
+type RecordingScreenFps = 30 | 60 | 120
+type RecordingWebcamFps = 'synced' | 30 | 60
+type RecordingProfile = {
+  id?: string
+  name?: string
+  isNative?: boolean
+  screenResolution?: RecordingResolution
+  screenFps?: RecordingScreenFps
+  webcamResolution?: RecordingResolution
+  webcamFps?: RecordingWebcamFps
+}
+type RecordingProfileRuntime = {
+  isNative: boolean
+  screenResolution: RecordingResolution
+  screenFps: RecordingScreenFps
+  webcamResolution: RecordingResolution
+  webcamFps: RecordingWebcamFps
+}
+type RecordingOutputOptions = {
+  screenScale?: { width: number; height: number }
+}
+
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
 const LINUX_MIC_PROBE_DURATION_SECONDS = '0.15'
@@ -102,8 +126,72 @@ const FFMPEG_STOP_FORCE_PERIOD_MS = 4500
 const FFMPEG_STOP_RESOLVE_PERIOD_MS = 5500
 const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
+const RECORDING_RESOLUTION_HEIGHTS: Record<Exclude<RecordingResolution, 'native'>, number> = {
+  sd: 480,
+  hd: 720,
+  'full-hd': 1080,
+  '2k': 1440,
+}
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const normalizeRecordingFps = (value: unknown, fallback: RecordingScreenFps): RecordingScreenFps => {
+  if (value === 30 || value === 60 || value === 120) return value
+  return fallback
+}
+
+const normalizeWebcamFps = (value: unknown, fallback: RecordingWebcamFps): RecordingWebcamFps => {
+  if (value === 'synced' || value === 30 || value === 60) return value
+  return fallback
+}
+
+const normalizeRecordingResolution = (value: unknown, fallback: RecordingResolution): RecordingResolution => {
+  if (value === 'native' || value === 'sd' || value === 'hd' || value === 'full-hd' || value === '2k') return value
+  return fallback
+}
+
+const normalizeRecordingProfile = (value: RecordingProfile | null | undefined): RecordingProfileRuntime => {
+  const isNative = value?.isNative === true || value?.id === 'native-adaptive'
+  if (isNative) {
+    return {
+      isNative: true,
+      screenResolution: 'native',
+      screenFps: normalizeRecordingFps(value?.screenFps, 60) === 120 ? 60 : normalizeRecordingFps(value?.screenFps, 60),
+      webcamResolution: 'native',
+      webcamFps: 30,
+    }
+  }
+
+  return {
+    isNative: false,
+    screenResolution: normalizeRecordingResolution(value?.screenResolution, 'native'),
+    screenFps: normalizeRecordingFps(value?.screenFps, 60),
+    webcamResolution: normalizeRecordingResolution(value?.webcamResolution, 'native'),
+    webcamFps: normalizeWebcamFps(value?.webcamFps, 'synced'),
+  }
+}
+
+const resolveScaledDimensions = (width: number, height: number, resolution: RecordingResolution): { width: number; height: number } | null => {
+  if (resolution === 'native') return null
+  const targetHeight = RECORDING_RESOLUTION_HEIGHTS[resolution]
+  if (!targetHeight || height <= 0 || width <= 0) return null
+  const targetWidth = Math.max(2, Math.round((targetHeight * width) / height / 2) * 2)
+  return { width: targetWidth, height: targetHeight % 2 === 0 ? targetHeight : targetHeight + 1 }
+}
+
+const resolveWebcamFps = (profile: RecordingProfileRuntime): 30 | 60 => {
+  if (profile.webcamFps === 'synced') return Math.min(profile.screenFps, 60) as 30 | 60
+  return profile.webcamFps
+}
+
+const appendWebcamInputOptions = (args: string[], profile: RecordingProfileRuntime) => {
+  const webcamFps = resolveWebcamFps(profile)
+  const webcamSize = resolveScaledDimensions(16, 9, profile.webcamResolution)
+  args.push('-framerate', String(webcamFps))
+  if (webcamSize) {
+    args.push('-video_size', `${webcamSize.width}x${webcamSize.height}`)
+  }
+}
 
 function shouldApplyLinuxDisplayScale(scaleFactor: number): boolean {
   return process.platform === 'linux' && Number.isFinite(scaleFactor) && scaleFactor > 0 && Math.abs(scaleFactor - 1) > 0.001
@@ -507,6 +595,7 @@ async function startActualRecording(
   hasMic: boolean,
   recordingGeometry: RecordingGeometry,
   scaleFactor: number = 1,
+  outputOptions: RecordingOutputOptions = {},
 ) {
   const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
   await ensureDirectoryExists(recordingDir)
@@ -569,7 +658,7 @@ async function startActualRecording(
     }
   }
 
-  const finalArgs = buildFfmpegArgs(inputArgs, hasWebcam, hasMic, screenVideoPath, webcamVideoPath, audioPath)
+  const finalArgs = buildFfmpegArgs(inputArgs, hasWebcam, hasMic, screenVideoPath, webcamVideoPath, audioPath, outputOptions)
   log.info(`[FFMPEG] Starting FFmpeg with args: ${finalArgs.join(' ')}`)
   const ffmpeg = spawn(FFMPEG_PATH, finalArgs)
   appState.ffmpegProcess = ffmpeg
@@ -710,6 +799,7 @@ function buildFfmpegArgs(
   screenOut: string,
   webcamOut?: string,
   audioOut?: string,
+  outputOptions: RecordingOutputOptions = {},
 ): string[] {
   const finalArgs = [...inputArgs]
   // Determine the index of each input stream (mic, webcam, screen)
@@ -733,8 +823,11 @@ function buildFfmpegArgs(
     '5.1',
     '-pix_fmt',
     'yuv420p',
-    screenOut,
   )
+  if (outputOptions.screenScale) {
+    finalArgs.push('-vf', `scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
+  }
+  finalArgs.push(screenOut)
 
   // Map audio stream to separate file if present
   if (hasMic && audioOut) {
@@ -796,7 +889,11 @@ function createTray() {
  */
 export async function startRecording(options: any) {
   const { source, displayId, mic, webcam } = options
+  const recordingProfile = normalizeRecordingProfile(options.recordingProfile)
+  const screenFps = recordingProfile.screenFps
+  const outputOptions: RecordingOutputOptions = {}
   log.info('[RecordingManager] Received start recording request with options:', options)
+  log.info('[RecordingManager] Using recording profile:', recordingProfile)
 
   if (webcam) {
     await requestRecorderWebcamRelease()
@@ -872,13 +969,19 @@ export async function startRecording(options: any) {
   if (webcam) {
     switch (process.platform) {
       case 'linux':
-        baseFfmpegArgs.push('-f', 'v4l2', '-framerate', '30', '-i', `/dev/video${webcam.index}`)
+        baseFfmpegArgs.push('-f', 'v4l2')
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        baseFfmpegArgs.push('-i', `/dev/video${webcam.index}`)
         break
       case 'win32':
-        baseFfmpegArgs.push('-f', 'dshow', '-framerate', '30', '-i', `video=${webcam.deviceLabel}`)
+        baseFfmpegArgs.push('-f', 'dshow')
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        baseFfmpegArgs.push('-i', `video=${webcam.deviceLabel}`)
         break
       case 'darwin':
-        baseFfmpegArgs.push('-f', 'avfoundation', '-framerate', '30', '-i', `${webcam.index}:none`)
+        baseFfmpegArgs.push('-f', 'avfoundation')
+        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile)
+        baseFfmpegArgs.push('-i', `${webcam.index}:none`)
         break
     }
   }
@@ -913,13 +1016,14 @@ export async function startRecording(options: any) {
     const safeWidth = Math.floor(width / 2) * 2
     const safeHeight = Math.floor(height / 2) * 2
     recordingGeometry = { x, y, width: safeWidth, height: safeHeight }
+    outputOptions.screenScale = resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
     
     switch (process.platform) {
       case 'linux':
         baseFfmpegArgs.push(
           '-f',
           'x11grab',
-          '-framerate', '60',
+          '-framerate', String(screenFps),
           '-draw_mouse',
           '0',
           '-video_size',
@@ -932,7 +1036,7 @@ export async function startRecording(options: any) {
         baseFfmpegArgs.push(
           '-f',
           'gdigrab',
-          '-framerate', '60',
+          '-framerate', String(screenFps),
           '-draw_mouse',
           '0',
           '-offset_x',
@@ -949,7 +1053,7 @@ export async function startRecording(options: any) {
         baseFfmpegArgs.push(
           '-f',
           'avfoundation',
-          '-framerate', '60',
+          '-framerate', String(screenFps),
           '-i',
           `${allDisplays.findIndex((d) => d.id === targetDisplay.id) || 0}:none`,
         )
@@ -962,6 +1066,7 @@ export async function startRecording(options: any) {
     const safeWidth = Math.floor(selectedGeometry.width / 2) * 2
     const safeHeight = Math.floor(selectedGeometry.height / 2) * 2
     recordingGeometry = { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
+    outputOptions.screenScale = resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
 
     // Get scale factor for the display containing the selection
     const allDisplays = screen.getAllDisplays()
@@ -1005,7 +1110,7 @@ export async function startRecording(options: any) {
         baseFfmpegArgs.push(
           '-f',
           'x11grab',
-          '-framerate', '60',
+          '-framerate', String(screenFps),
           '-draw_mouse',
           '0',
           '-video_size',
@@ -1018,7 +1123,7 @@ export async function startRecording(options: any) {
         baseFfmpegArgs.push(
           '-f',
           'gdigrab',
-          '-framerate', '60',
+          '-framerate', String(screenFps),
           '-draw_mouse',
           '0',
           '-offset_x',
@@ -1060,7 +1165,129 @@ export async function startRecording(options: any) {
   }
 
   log.info('[RecordingManager] Starting actual recording with args:', baseFfmpegArgs)
-  return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor)
+  return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor, outputOptions)
+}
+
+export async function analyzeRecordingCapability(): Promise<{
+  recommendedFps: 30 | 60
+  canRecord60Fps: boolean
+  reason: string
+  measuredFps?: number
+}> {
+  const targetDisplay = screen.getPrimaryDisplay()
+  const scaleFactor = targetDisplay.scaleFactor || 1
+  const { x, y, width, height } = targetDisplay.bounds
+  const physicalWidth =
+    process.platform === 'win32'
+      ? Math.floor((width * scaleFactor) / 2) * 2
+      : process.platform === 'linux'
+        ? getLinuxScaledDimension(width, scaleFactor)
+        : Math.floor(width / 2) * 2
+  const physicalHeight =
+    process.platform === 'win32'
+      ? Math.floor((height * scaleFactor) / 2) * 2
+      : process.platform === 'linux'
+        ? getLinuxScaledDimension(height, scaleFactor)
+        : Math.floor(height / 2) * 2
+  const physicalX =
+    process.platform === 'win32' ? Math.floor(x * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(x, scaleFactor) : x
+  const physicalY =
+    process.platform === 'win32' ? Math.floor(y * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(y, scaleFactor) : y
+
+  const args =
+    process.platform === 'win32'
+      ? [
+          '-hide_banner',
+          '-f',
+          'gdigrab',
+          '-framerate',
+          '60',
+          '-draw_mouse',
+          '0',
+          '-offset_x',
+          String(physicalX),
+          '-offset_y',
+          String(physicalY),
+          '-video_size',
+          `${physicalWidth}x${physicalHeight}`,
+          '-t',
+          '2',
+          '-i',
+          'desktop',
+          '-f',
+          'null',
+          '-',
+        ]
+      : process.platform === 'linux'
+        ? [
+            '-hide_banner',
+            '-f',
+            'x11grab',
+            '-framerate',
+            '60',
+            '-draw_mouse',
+            '0',
+            '-video_size',
+            `${physicalWidth}x${physicalHeight}`,
+            '-t',
+            '2',
+            '-i',
+            `${process.env.DISPLAY || ':0.0'}+${physicalX},${physicalY}`,
+            '-f',
+            'null',
+            '-',
+          ]
+        : null
+
+  if (!args) {
+    const likelyCanRecord60 = (cpus()?.length || 0) >= 8
+    return {
+      recommendedFps: likelyCanRecord60 ? 60 : 30,
+      canRecord60Fps: likelyCanRecord60,
+      reason: likelyCanRecord60
+        ? 'Platform probe is not available; CPU core count suggests 60fps should be acceptable.'
+        : 'Platform probe is not available; CPU core count suggests 30fps is safer.',
+    }
+  }
+
+  return await new Promise((resolve) => {
+    const startedAt = Date.now()
+    let stderr = ''
+    const probe = spawn(FFMPEG_PATH, args)
+    const timeout = setTimeout(() => {
+      if (!probe.killed) probe.kill('SIGKILL')
+    }, 5000)
+
+    probe.stderr.on('data', (data) => {
+      stderr += data.toString()
+    })
+    probe.on('error', (error) => {
+      clearTimeout(timeout)
+      log.warn('[RecordingManager] Recording capability analysis failed:', error)
+      resolve({
+        recommendedFps: 30,
+        canRecord60Fps: false,
+        reason: 'The 60fps probe could not start. Native profile will use the safer 30fps setting.',
+      })
+    })
+    probe.on('close', () => {
+      clearTimeout(timeout)
+      const fpsValues = Array.from(stderr.matchAll(/fps=\s*([0-9.]+)/g))
+        .map((match) => Number(match[1]))
+        .filter((value) => Number.isFinite(value) && value > 0)
+      const measuredFps = fpsValues.length > 0 ? fpsValues[fpsValues.length - 1] : null
+      const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000)
+      const canRecord60Fps = measuredFps ? measuredFps >= 54 : elapsedSeconds <= 3
+      resolve({
+        recommendedFps: canRecord60Fps ? 60 : 30,
+        canRecord60Fps,
+        measuredFps: measuredFps || undefined,
+        reason: canRecord60Fps
+          ? 'The short screen capture probe sustained enough throughput for native 60fps recording.'
+          : 'The short screen capture probe did not sustain enough throughput; native recording will use 30fps.',
+      })
+    })
+  })
 }
 
 export async function selectRecordingArea() {

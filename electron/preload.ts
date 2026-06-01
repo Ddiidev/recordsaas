@@ -147,6 +147,7 @@ export const electronAPI = {
     displayId?: number
     webcam?: { deviceId: string; deviceLabel: string; index: number }
     mic?: { deviceId: string; deviceLabel: string; index: number }
+    recordingProfile?: unknown
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
   selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
@@ -159,6 +160,12 @@ export const electronAPI = {
   getDisplays: (): Promise<DisplayInfo[]> => ipcRenderer.invoke('desktop:get-displays'),
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
+  analyzeRecordingCapability: (): Promise<{
+    recommendedFps: 30 | 60
+    canRecord60Fps: boolean
+    reason: string
+    measuredFps?: number
+  }> => ipcRenderer.invoke('recording:analyze-capability'),
 
   onRecordingStarted: (callback: () => void) => {
     const listener = () => callback()
