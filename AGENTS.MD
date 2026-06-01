@@ -42,6 +42,9 @@ Responsibility boundaries:
 - Main process owns file system access, native dialogs, shell integration, recording orchestration, export orchestration, and runtime session file handling.
 - Renderer owns UI state, timeline interactions, preview composition, and payload assembly for export/import flows.
 - Preload is strict contract glue. Any renderer-to-main capability must be mirrored in both `ipc/index.ts` and `preload.ts`.
+- Electron 41+ preloads must be emitted as CommonJS `.cjs` files; do not let `vite-plugin-electron` emit ESM preload files for `BrowserWindow.webPreferences.preload`.
+- In `vite.config.ts`, preload builds must use `build.rollupOptions.input` plus CommonJS `output.format`; do not use the top-level `entry` shortcut for preloads because package `"type": "module"` makes `vite-plugin-electron` add an ES-module output.
+- Renderer code must use `window.electronAPI` only; do not depend on a raw `window.ipcRenderer` global.
 
 Project/runtime flow:
 1. Session assets are created/copied into runtime storage (`~/.recordsaas`).
@@ -49,6 +52,14 @@ Project/runtime flow:
 3. Editing and preview happen entirely in renderer state.
 4. Export payload is sent to main process for final processing.
 5. Session cleanup is triggered on editor closure per runtime policy.
+
+Recorder-to-editor handoff invariant:
+- Main process stores the current session payload and sends `project:open` only after the editor renderer has registered its listener and emitted `editor:ready-for-project`; do not rely on `did-finish-load` alone for project delivery.
+
+Media URL invariant:
+- Absolute local media paths exposed to renderer media elements use `media://file?path=<encoded absolute path>`.
+- The `media` scheme must be registered with streaming privileges before app `ready`, and served through `protocol.handle`/`net.fetch(file://...)` so Chromium's media pipeline can read MP4 range/stream requests.
+- The `media` protocol and project import/export normalization must remain backward compatible with legacy `media://...` paths and must not serialize `media://file?path=...` as a real project path.
 
 ## 3. Source-of-Truth Code Map (Where to Read First)
 
@@ -124,6 +135,15 @@ Core business rules:
 5. Final mix includes recording + media when both are present.
 6. Image/video media categories can remain placeholder if no render/export behavior is implemented.
 
+Export startup invariant:
+- The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
+- Export startup must clear stale `render:ready` listeners before registering the current one-shot worker listener; a single export must send `render:start` only once.
+- Render progress must be emitted from the renderer loop through `export:render-progress`; do not rely only on encoded frame/chunk delivery because `VideoEncoder` can batch output and hide 0-100% progress.
+- The export progress window must also be able to poll `export-progress:get-state` from main state, so delayed temp-window loading or missed push events cannot leave the widget stuck at `0%`.
+- The main process must keep a direct DOM sync fallback for the export progress window after each accepted progress update; the tiny temporary window must not depend solely on its preload listener/polling JavaScript to render 0-100% progress.
+- Recording audio with no cuts, speed regions, or `change-sound` edits must reuse the original audio file instead of pre-rendering a full-length processed track.
+- Audio preparation that must render temporary tracks should run through cancellable asynchronous FFmpeg processes, not blocking `spawnSync` calls on the main process.
+
 IPC contract baseline (media import):
 - Channel: `media:import-audio`
 - Return union:
@@ -160,6 +180,7 @@ Webcam layout contract baseline:
 - `webcamStyles.crop`: normalized `{ top, right, bottom, left }` source crop, default all `0`
 - `overlay` keeps current PiP camera behavior, honors position/size/zoom controls, and now supports the vertical `phone` shape.
 - `side-by-side` reserves a side column using the split control, keeps webcam shape/border/shadow/flip/crop styling active, and ignores overlay size/position/smart-position controls.
+- With frame padding set to `0`, `side-by-side` must not add an extra internal camera inset or gap; camera and desktop areas should be able to reach the frame edges.
 - `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
 - New recordings/projects without serialized webcam layout or visibility must inherit those values from the active preset before falling back to app defaults.
 
@@ -260,6 +281,8 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - `TIMELINE_MAX_VISIBLE_LANES = 3`
 - `LANE_ACTION_STRIP_WIDTH_PX = 28`
 - Timeline lane controls use a reserved start gutter in the temporal axis; regions/ticks/playhead must not render into this protected area.
+- Timeline empty lane space is selection-only; playhead seeking/dragging belongs to the playhead itself or the sticky temporal ruler above the lanes.
+- The temporal ruler above lanes must stay sticky while the timeline scrolls vertically.
 - Viewport buffer `+14px` to avoid unintended vertical scroll for 2 lanes.
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
 - Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
@@ -423,7 +446,7 @@ Escalation path:
 | UI tweak in side panel/tokens | `src/index.css`, `src/components/editor/SidePanel.tsx`, relevant `src/components/editor/sidepanel/*.tsx` | Medium | Visual check in light/dark + ensure tab flow unchanged |
 | Media-audio insertion/region behavior bug | `src/types/index.ts`, `src/store/slices/timelineSlice.ts`, `src/components/editor/timeline/MediaAudioRegionBlock.tsx`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Region creation/move behavior + playback sync |
 | IPC media import issue | `electron/main/ipc/index.ts`, `electron/main/ipc/handlers/media.ts`, `electron/preload.ts`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Import dialog path + runtime copy rule + renderer response handling |
-| Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | Export output has expected mix and region effects |
+| Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | `npm run verify:export-startup`; progress appears before heavy work; cancel works during auth/audio/render/finalize; output has expected mix and region effects |
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |

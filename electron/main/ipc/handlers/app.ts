@@ -93,3 +93,7 @@ export function setExportProgressCollapsed(_event: IpcMainEvent, payload: { coll
     true,
   )
 }
+
+export function handleGetExportProgressState() {
+  return appState.currentExportProgress
+}

@@ -2,7 +2,7 @@
 
 import log from 'electron-log/main'
 import { app, BrowserWindow, IpcMainInvokeEvent, ipcMain, Menu, Tray, nativeImage, shell, powerSaveBlocker } from 'electron'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
@@ -10,8 +10,8 @@ import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, calculateExportDimensions, getFFmpegSpawnErrorMessage } from '../lib/utils'
-import { spawnSync } from 'node:child_process'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
+import { normalizeMediaPath } from '../lib/media-url'
 import { createExportProgressWindow } from '../windows/temporary-windows'
 import { authorizeDesktopExport, type ExportSelectionRequest } from './auth-manager'
 
@@ -72,6 +72,7 @@ type ChangeSoundRegionLike = {
   fadeOutDuration: number
   zIndex?: number
 }
+type RunFFmpeg = (args: string[], label: string) => Promise<void>
 
 const MIN_AUDIO_SEGMENT_DURATION = 0.01
 const AUDIO_SEGMENT_SAMPLE_RATE = 48000
@@ -161,12 +162,6 @@ const buildAudioTimelineSegments = (
   }
 
   return segments
-}
-
-const normalizeMediaPath = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null
-  const normalized = value.replace(/^media:\/\//, '').trim()
-  return normalized.length > 0 ? normalized : null
 }
 
 const pushExportSegment = (
@@ -491,100 +486,82 @@ const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
   return `volume='${baseVolume.toFixed(6)}*min(${fadeInExpr},${fadeOutExpr})'`
 }
 
-const renderProcessedAudioFile = (sourcePath: string, segments: ExportAudioSegment[]): string | null => {
+const escapeFilterValue = (value: string): string => value.replace(/\\/g, '/').replace(/'/g, "\\'")
+
+const buildAudioFilterChain = (segment: ExportAudioSegment, inputLabel: string, outputLabel: string): string => {
+  const filters: string[] = []
+
+  if (segment.kind === 'silence') {
+    filters.push(
+      `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_SEGMENT_SAMPLE_RATE}`,
+      `atrim=start=0:duration=${segment.outputDuration.toFixed(6)}`,
+      'asetpts=PTS-STARTPTS',
+    )
+  } else {
+    filters.push(
+      `${inputLabel}atrim=start=${segment.sourceStart.toFixed(6)}:duration=${segment.sourceDuration.toFixed(6)}`,
+      'asetpts=PTS-STARTPTS',
+    )
+
+    const atempo = buildAtempoFilter(segment.speed)
+    if (atempo) {
+      filters.push(atempo)
+    }
+
+    const fadeVolume = buildFadeVolumeFilter(segment)
+    if (fadeVolume) {
+      filters.push(fadeVolume)
+    }
+  }
+
+  filters.push(`aresample=${AUDIO_SEGMENT_SAMPLE_RATE}`, `aformat=sample_rates=${AUDIO_SEGMENT_SAMPLE_RATE}:channel_layouts=stereo`)
+
+  return `${filters.join(',')}[${outputLabel}]`
+}
+
+const renderProcessedAudioFile = async (
+  sourcePath: string,
+  segments: ExportAudioSegment[],
+  runFFmpeg: RunFFmpeg,
+): Promise<string | null> => {
   if (segments.length === 0) return null
 
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
-  const segmentFiles: string[] = []
+  const finalOut = path.join(tmpDir, 'processed.m4a')
 
-  for (let index = 0; index < segments.length; index++) {
-    const segment = segments[index]
-    const outPath = path.join(tmpDir, `seg-${index}.m4a`)
+  try {
+    const filterScriptPath = path.join(tmpDir, 'audio-filter.txt')
+    const segmentLabels = segments.map((_, index) => `seg${index}`)
+    const filterLines = segments.map((segment, index) => {
+      log.info(
+        `[ExportManager] Preparing audio segment ${index}: kind=${segment.kind}, sourceStart=${segment.sourceStart.toFixed(3)}, sourceDuration=${segment.sourceDuration.toFixed(3)}, speed=${segment.speed.toFixed(3)}`,
+      )
+      return buildAudioFilterChain(segment, '[0:a]', segmentLabels[index])
+    })
+    filterLines.push(`${segmentLabels.map((label) => `[${label}]`).join('')}concat=n=${segments.length}:v=0:a=1[aout]`)
+    fs.writeFileSync(filterScriptPath, filterLines.join(';\n'), 'utf-8')
 
-    let args: string[]
-    if (segment.kind === 'silence') {
-      args = [
+    await runFFmpeg(
+      [
         '-y',
-        '-f',
-        'lavfi',
         '-i',
-        `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_SEGMENT_SAMPLE_RATE}`,
-        '-t',
-        segment.outputDuration.toFixed(4),
+        sourcePath,
+        '-filter_complex_script',
+        filterScriptPath,
+        '-map',
+        '[aout]',
         '-c:a',
         'aac',
         '-b:a',
         '192k',
-        outPath,
-      ]
-    } else {
-      args = [
-        '-y',
-        '-ss',
-        segment.sourceStart.toFixed(4),
-        '-t',
-        segment.sourceDuration.toFixed(4),
-        '-i',
-        sourcePath,
-        '-vn',
-      ]
-
-      const filters: string[] = []
-      const atempo = buildAtempoFilter(segment.speed)
-      if (atempo) {
-        filters.push(atempo)
-      }
-      const fadeVolume = buildFadeVolumeFilter(segment)
-      if (fadeVolume) {
-        filters.push(fadeVolume)
-      }
-      if (filters.length > 0) {
-        args.push('-af', filters.join(','))
-      }
-      args.push('-c:a', 'aac', '-b:a', '192k', outPath)
-    }
-
-    log.info(
-      `[ExportManager] Rendering audio segment ${index}: kind=${segment.kind}, sourceStart=${segment.sourceStart.toFixed(3)}, sourceDuration=${segment.sourceDuration.toFixed(3)}, speed=${segment.speed.toFixed(3)}`,
+        finalOut,
+      ],
+      `audio-process:${escapeFilterValue(path.basename(sourcePath))}`,
     )
 
-    const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-    if (result.error || result.status !== 0) {
-      log.error('[ExportManager] Failed to render audio segment:', result.error ?? result.stdout, result.stderr)
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true })
-      } catch {
-        // ignore cleanup errors
-      }
-      return null
-    }
-
-    segmentFiles.push(outPath)
-  }
-
-  const listFile = path.join(tmpDir, 'concat.txt')
-  const listContent = segmentFiles
-    .map((filePath) => {
-      const normalizedPath = filePath.replace(/\\/g, '/')
-      return `file '${normalizedPath.replace(/'/g, "'\\''")}'`
-    })
-    .join('\n')
-
-  fs.writeFileSync(listFile, listContent)
-
-  const finalOut = path.join(tmpDir, 'processed.m4a')
-  const concatResult = spawnSync(
-    FFMPEG_PATH,
-    ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', finalOut],
-    { encoding: 'utf-8' },
-  )
-
-  if (concatResult.error || concatResult.status !== 0) {
-    log.error(
-      '[ExportManager] Failed to concatenate processed audio:',
-      concatResult.error ?? concatResult.stdout,
-      concatResult.stderr,
-    )
+    return finalOut
+  } catch (error) {
+    log.error('[ExportManager] Failed to render processed audio:', error)
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     } catch {
@@ -592,11 +569,13 @@ const renderProcessedAudioFile = (sourcePath: string, segments: ExportAudioSegme
     }
     return null
   }
-
-  return finalOut
 }
 
-const mixAudioTracks = (recordingTrackPath: string, mediaTrackPath: string): string | null => {
+const mixAudioTracks = async (
+  recordingTrackPath: string,
+  mediaTrackPath: string,
+  runFFmpeg: RunFFmpeg,
+): Promise<string | null> => {
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
   const outPath = path.join(tmpDir, 'mixed.m4a')
   const args = [
@@ -614,9 +593,11 @@ const mixAudioTracks = (recordingTrackPath: string, mediaTrackPath: string): str
     outPath,
   ]
 
-  const result = spawnSync(FFMPEG_PATH, args, { encoding: 'utf-8' })
-  if (result.error || result.status !== 0) {
-    log.error('[ExportManager] Failed to mix recording/media tracks:', result.error ?? result.stdout, result.stderr)
+  try {
+    await runFFmpeg(args, 'audio-mix')
+    return outPath
+  } catch (error) {
+    log.error('[ExportManager] Failed to mix recording/media tracks:', error)
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     } catch {
@@ -624,8 +605,6 @@ const mixAudioTracks = (recordingTrackPath: string, mediaTrackPath: string): str
     }
     return null
   }
-
-  return outPath
 }
 
 const getTargetPriorityCandidates = () =>
@@ -678,7 +657,23 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   let powerSaveBlockerId: number | null = null
   let lastProgressBroadcastAt = 0
   let lastProgressBroadcast = -1
+  let latestProgressPayload: { progress: number; stage: string } | null = null
+  let lastProgressBroadcastLogBucket = -1
+  let lastRendererProgressLogBucket = -1
+  let lastFrameProgressLogBucket = -1
   let cancellationHandler: () => void = () => {}
+  let renderReadyListener: (() => void) | null = null
+  let ffmpeg: ChildProcessWithoutNullStreams | null = null
+  let cleanupProcessedAudio: () => void = () => {}
+  let cleanupListeners: () => void = () => {
+    ipcMain.removeListener('export:cancel', cancellationHandler)
+    if (renderReadyListener) {
+      ipcMain.removeListener('render:ready', renderReadyListener)
+      renderReadyListener = null
+    }
+  }
+  const processedAudioTempRoots = new Set<string>()
+  const auxiliaryFFmpegProcesses = new Set<ChildProcessWithoutNullStreams>()
 
   const safeExportSettings = exportSettings && typeof exportSettings === 'object' ? exportSettings : {}
   const requestedExportSettings: ExportSelectionRequest & { quality: ExportQuality } = {
@@ -701,25 +696,6 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         : 'medium',
   }
 
-  const authorizedExport = await authorizeDesktopExport({
-    format: requestedExportSettings.format,
-    resolution: requestedExportSettings.resolution,
-    fps: requestedExportSettings.fps,
-  })
-
-  const normalizedExportSettings = {
-    ...requestedExportSettings,
-    format: authorizedExport.approved.format,
-    resolution: authorizedExport.approved.resolution,
-    fps: authorizedExport.approved.fps,
-  }
-
-  const outputDir = path.dirname(outputPath)
-  if (!fs.existsSync(outputDir)) {
-    log.info(`[ExportManager] Creating missing directory: ${outputDir}`)
-    fs.mkdirSync(outputDir, { recursive: true })
-  }
-
   const playCompletionSound = (completionType: 'success' | 'error' | 'cancelled') => {
     if (!playExportCompletionSound || completionType === 'cancelled') return
     try {
@@ -729,10 +705,81 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
   }
 
+  const getProgressLogBucket = (progress: number) => Math.floor(clamp(progress, 0, 100) / 5)
+
+  const shouldLogProgressBucket = (progress: number, lastBucket: number, force = false) => {
+    const bucket = getProgressLogBucket(progress)
+    return {
+      bucket,
+      shouldLog: force || bucket !== lastBucket || progress >= 99 || progress <= 0,
+    }
+  }
+
+  const describeProgressWindow = () => {
+    const exportProgressWindow = appState.exportProgressWin
+    if (!exportProgressWindow || exportProgressWindow.isDestroyed()) return 'missing'
+    return `alive visible=${exportProgressWindow.isVisible()} loading=${exportProgressWindow.webContents.isLoading()}`
+  }
+
+  const syncProgressWindowDom = (
+    progressWindow: BrowserWindow,
+    payload: { progress: number; stage: string },
+    source: string,
+    shouldLog: boolean,
+  ) => {
+    if (progressWindow.isDestroyed() || progressWindow.webContents.isLoading()) return
+
+    const safeProgress = clamp(payload.progress, 0, 100)
+    const stageText = payload.stage.trim().length > 0 ? payload.stage.trim() : 'Rendering...'
+    const script = `
+      (() => {
+        const progress = ${JSON.stringify(safeProgress)};
+        const stage = ${JSON.stringify(stageText)};
+        const fill = document.getElementById('progress-fill');
+        const text = document.getElementById('progress-inline-text');
+        const track = document.querySelector('.progress-track');
+        const previous = Number(window.__recordsaasLastProgress || 0);
+        const next = Math.max(previous, Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0)));
+        window.__recordsaasLastProgress = next;
+        if (fill) fill.style.transform = 'scaleX(' + (next / 100) + ')';
+        if (text) text.textContent = stage + ' ' + Math.round(next) + '%';
+        if (track) track.setAttribute('aria-valuenow', String(Math.round(next)));
+        return {
+          progress: next,
+          text: text ? text.textContent : null,
+          fillTransform: fill ? fill.style.transform : null,
+          readyState: document.readyState,
+          hasTempAPI: Boolean(window.tempAPI)
+        };
+      })()
+    `
+
+    progressWindow.webContents
+      .executeJavaScript(script, true)
+      .then((result) => {
+        if (shouldLog) {
+          log.info('[ExportManager][Progress] Synced progress window DOM directly.', {
+            source,
+            result,
+          })
+        }
+      })
+      .catch((error) => {
+        log.warn('[ExportManager][Progress] Failed to sync progress window DOM directly:', error)
+      })
+  }
+
   const sendExportComplete = (
     payload: { success: boolean; outputPath?: string; error?: string; duration?: number },
     completionType: 'success' | 'error' | 'cancelled',
   ) => {
+    log.info('[ExportManager][Progress] Sending export:complete.', {
+      completionType,
+      success: payload.success,
+      duration: payload.duration,
+      progressWindow: describeProgressWindow(),
+    })
+
     if (editorWindow && !editorWindow.isDestroyed()) {
       editorWindow.webContents.send('export:complete', payload)
     } else {
@@ -756,7 +803,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
   }
 
-  const sendProgressUpdate = (progress: number, stage: string, force: boolean = false) => {
+  const sendProgressUpdate = (progress: number, stage: string, force: boolean = false, source = 'main') => {
     const safeProgress = clamp(progress, 0, 100)
     const now = Date.now()
     const elapsed = now - lastProgressBroadcastAt
@@ -775,6 +822,21 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     lastProgressBroadcast = safeProgress
 
     const payload = { progress: safeProgress, stage }
+    latestProgressPayload = payload
+    appState.currentExportProgress = payload
+
+    const progressLog = shouldLogProgressBucket(safeProgress, lastProgressBroadcastLogBucket, force)
+    if (progressLog.shouldLog) {
+      lastProgressBroadcastLogBucket = progressLog.bucket
+      log.info('[ExportManager][Progress] Broadcasting progress update.', {
+        source,
+        progress: Number(safeProgress.toFixed(2)),
+        stage,
+        force,
+        editorWindow: editorWindow && !editorWindow.isDestroyed() ? 'alive' : 'missing',
+        progressWindow: describeProgressWindow(),
+      })
+    }
 
     if (editorWindow && !editorWindow.isDestroyed()) {
       editorWindow.webContents.send('export:progress', payload)
@@ -783,6 +845,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     const exportProgressWindow = appState.exportProgressWin
     if (exportProgressWindow && !exportProgressWindow.isDestroyed()) {
       exportProgressWindow.webContents.send('export:progress', payload)
+      syncProgressWindowDom(exportProgressWindow, payload, source, progressLog.shouldLog)
     }
 
     updateExportTrayTooltip(safeProgress)
@@ -798,6 +861,21 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     const progressWindow = createExportProgressWindow()
     progressWindow.removeListener('close', handleProgressWindowClose)
     progressWindow.on('close', handleProgressWindowClose)
+    const sendLatestProgressToWindow = () => {
+      if (latestProgressPayload && !progressWindow.isDestroyed()) {
+        log.info('[ExportManager][Progress] Sending latest progress to progress window after load/show.', latestProgressPayload)
+        progressWindow.webContents.send('export:progress', latestProgressPayload)
+        syncProgressWindowDom(progressWindow, latestProgressPayload, 'latest-progress-window-load', true)
+      } else {
+        log.info('[ExportManager][Progress] No latest progress payload available for progress window yet.')
+      }
+    }
+    if (progressWindow.webContents.isLoading()) {
+      log.info('[ExportManager][Progress] Progress window is still loading. Deferring latest progress send.')
+      progressWindow.webContents.once('did-finish-load', sendLatestProgressToWindow)
+    } else {
+      sendLatestProgressToWindow()
+    }
     if (!progressWindow.isVisible()) {
       progressWindow.show()
     }
@@ -892,6 +970,102 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
   }
 
+  const killAuxiliaryFFmpegProcesses = () => {
+    auxiliaryFFmpegProcesses.forEach((child) => {
+      if (!child.killed) {
+        child.kill('SIGKILL')
+      }
+    })
+    auxiliaryFFmpegProcesses.clear()
+  }
+
+  const closeRenderWorker = () => {
+    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
+      appState.renderWorker.close()
+    }
+    appState.renderWorker = null
+  }
+
+  const runAuxiliaryFFmpeg: RunFFmpeg = (args, label) =>
+    new Promise((resolve, reject) => {
+      if (exportCompleted) {
+        reject(new Error('Export cancelled.'))
+        return
+      }
+
+      log.info(`[ExportManager] Spawning auxiliary FFmpeg (${label}) with args:`, args.join(' '))
+      const child = spawn(FFMPEG_PATH, args)
+      auxiliaryFFmpegProcesses.add(child)
+
+      if (typeof child.pid === 'number') {
+        trySetProcessPriorityWithFallback(child.pid, targetPriorityCandidates, `ffmpeg:${label}`)
+      }
+
+      child.stderr.on('data', (data) => log.info(`[FFmpeg ${label} stderr]: ${data.toString()}`))
+      child.on('error', (error) => {
+        auxiliaryFFmpegProcesses.delete(child)
+        reject(error)
+      })
+      child.on('close', (code) => {
+        auxiliaryFFmpegProcesses.delete(child)
+        if (exportCompleted) {
+          reject(new Error('Export cancelled.'))
+          return
+        }
+        if (code === 0) {
+          resolve()
+          return
+        }
+        reject(new Error(`FFmpeg ${label} exited with code ${code}`))
+      })
+    })
+
+  const failExportStartup = (errorMessage: string) => {
+    if (exportCompleted) return
+
+    exportCompleted = true
+
+    if (ffmpeg && !ffmpeg.killed) {
+      ffmpeg.kill('SIGKILL')
+    }
+    killAuxiliaryFFmpegProcesses()
+    closeRenderWorker()
+
+    sendExportComplete({ success: false, error: errorMessage, duration: getElapsedDurationSeconds() }, 'error')
+    cleanupExportUi()
+    cleanupProcessedAudio()
+    cleanupListeners()
+
+    if (fs.existsSync(outputPath)) {
+      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete failed export file:', err))
+    }
+  }
+
+  cancellationHandler = () => {
+    if (exportCompleted) return
+
+    log.warn('[ExportManager] Received "export:cancel". Terminating export.')
+    exportCompleted = true
+
+    if (ffmpeg && !ffmpeg.killed) {
+      ffmpeg.kill('SIGKILL')
+    }
+    killAuxiliaryFFmpegProcesses()
+    closeRenderWorker()
+
+    sendExportComplete({ success: false, error: 'Export cancelled.', duration: getElapsedDurationSeconds() }, 'cancelled')
+    cleanupExportUi()
+
+    if (fs.existsSync(outputPath)) {
+      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete cancelled export file:', err))
+    }
+
+    cleanupProcessedAudio()
+    cleanupListeners()
+  }
+
+  ipcMain.once('export:cancel', cancellationHandler)
+
   try {
     originalMainProcessPriority = getPriority(process.pid)
   } catch (error) {
@@ -909,29 +1083,123 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     powerSaveBlockerId = null
   }
 
-  if (appState.renderWorker) {
-    appState.renderWorker.close()
+  showExportProgressWindow()
+  createExportTray()
+  appState.currentExportProgress = { progress: 0, stage: 'Authorizing export...' }
+  log.info('[ExportManager][Progress] Initialized current export progress state.', appState.currentExportProgress)
+  sendProgressUpdate(0, 'Authorizing export...', true, 'startup')
+  if (!editorWindow.isDestroyed()) {
+    editorWindow.setSkipTaskbar(true)
+    editorWindow.hide()
   }
-  appState.renderWorker = new BrowserWindow({
-    show: false,
-    width: 1280,
-    height: 720,
-    webPreferences: {
-      preload: PRELOAD_SCRIPT,
-      offscreen: false,
-      webSecurity: false,
-      enableBlinkFeatures: 'WebCodecs,WebCodecsExperimental',
-      backgroundThrottling: false,
-    },
-  })
-  if (VITE_DEV_SERVER_URL) {
-    const renderUrl = `${VITE_DEV_SERVER_URL}#renderer`
-    appState.renderWorker.loadURL(renderUrl)
-    log.info(`[ExportManager] Loading render worker URL (Dev): ${renderUrl}`)
-  } else {
-    const renderPath = path.join(RENDERER_DIST, 'index.html')
-    appState.renderWorker.loadFile(renderPath, { hash: 'renderer' })
-    log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
+  log.info(`[ExportManager] Export startup UI initialized in ${getElapsedDurationSeconds().toFixed(2)} seconds.`)
+
+  const outputDir = path.dirname(outputPath)
+  try {
+    if (!fs.existsSync(outputDir)) {
+      log.info(`[ExportManager] Creating missing directory: ${outputDir}`)
+      fs.mkdirSync(outputDir, { recursive: true })
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown output directory error'
+    failExportStartup(`Failed to prepare output directory: ${message}`)
+    return
+  }
+
+  let normalizedExportSettings: ExportSelectionRequest & { quality: ExportQuality } = requestedExportSettings
+  try {
+    const authorizedExport = await authorizeDesktopExport({
+      format: requestedExportSettings.format,
+      resolution: requestedExportSettings.resolution,
+      fps: requestedExportSettings.fps,
+    })
+
+    if (exportCompleted) return
+
+    normalizedExportSettings = {
+      ...requestedExportSettings,
+      format: authorizedExport.approved.format,
+      resolution: authorizedExport.approved.resolution,
+      fps: authorizedExport.approved.fps,
+    }
+  } catch (error) {
+    if (exportCompleted) return
+    cleanupExportUi()
+    cleanupListeners()
+    throw error
+  }
+
+  const createAndLoadRenderWorker = () => {
+    closeRenderWorker()
+    appState.renderWorker = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 720,
+      webPreferences: {
+        preload: PRELOAD_SCRIPT,
+        offscreen: false,
+        webSecurity: false,
+        backgroundThrottling: false,
+      },
+    })
+
+    appState.renderWorker.webContents.on('preload-error', (_event, preloadPath, error) => {
+      log.error(`[ExportManager][RenderWorker] Preload failed: ${preloadPath}`, error)
+    })
+    appState.renderWorker.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      log.error(`[ExportManager][RenderWorker] Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
+    })
+    appState.renderWorker.webContents.on('did-finish-load', () => {
+      log.info('[ExportManager][RenderWorker] Finished loading renderer worker.')
+    })
+    appState.renderWorker.webContents.on('render-process-gone', (_event, details) => {
+      log.error('[ExportManager][RenderWorker] Render process gone:', details)
+    })
+    appState.renderWorker.webContents.on('console-message', (event, ...legacyArgs) => {
+      const eventDetails = event as unknown as {
+        level?: number
+        message?: string
+        lineNumber?: number
+        sourceId?: string
+      }
+      const legacyLevel = legacyArgs[0]
+      const legacyMessage = legacyArgs[1]
+      const legacyLineNumber = legacyArgs[2]
+      const legacySourceId = legacyArgs[3]
+      const messageDetails =
+        typeof legacyLevel === 'number'
+          ? {
+              level: legacyLevel,
+              message: typeof legacyMessage === 'string' ? legacyMessage : '',
+              lineNumber: typeof legacyLineNumber === 'number' ? legacyLineNumber : 0,
+              sourceId: typeof legacySourceId === 'string' ? legacySourceId : 'unknown',
+            }
+          : eventDetails
+      const level = typeof messageDetails.level === 'number' ? messageDetails.level : 0
+      const message = String(messageDetails.message ?? '')
+      if (level < 2 && !message.startsWith('[Preload][Progress]') && !message.startsWith('[RendererPage]')) return
+
+      const sourceId = messageDetails.sourceId || 'unknown'
+      const lineNumber = messageDetails.lineNumber ?? 0
+      const logMessage = `[ExportManager][RenderWorker] Renderer console (${sourceId}:${lineNumber}): ${message}`
+      if (level >= 3) {
+        log.error(logMessage)
+      } else if (level >= 2) {
+        log.warn(logMessage)
+      } else {
+        log.info(logMessage)
+      }
+    })
+
+    if (VITE_DEV_SERVER_URL) {
+      const renderUrl = `${VITE_DEV_SERVER_URL}#renderer`
+      appState.renderWorker.loadURL(renderUrl)
+      log.info(`[ExportManager] Loading render worker URL (Dev): ${renderUrl}`)
+    } else {
+      const renderPath = path.join(RENDERER_DIST, 'index.html')
+      appState.renderWorker.loadFile(renderPath, { hash: 'renderer' })
+      log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
+    }
   }
 
   const { format, resolution, fps } = normalizedExportSettings
@@ -970,10 +1238,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   // - media track (independent media regions)
   // - optional mix of both tracks
   let resolvedAudioInputPath: string | null = null
-  const processedAudioTempRoots = new Set<string>()
 
   const projectStateRecord = projectState as Record<string, unknown>
   try {
+    sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
     const mediaClip = (projectStateRecord.mediaAudioClip || null) as MediaAudioClipLike | null
     const mediaPath = normalizeMediaPath(mediaClip?.path)
@@ -988,58 +1256,74 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         : 0
     const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
     const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
-    const extraBoundaries = [
-      ...collectMediaAudioBoundaries(mediaRegions, duration),
-      ...collectChangeSoundBoundaries(changeSoundRegions, duration),
-    ]
-    const timelineSegments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes, extraBoundaries)
-    const noTimelineTransform =
-      timelineSegments.length === 1 &&
-      Math.abs(timelineSegments[0].start) < 0.001 &&
-      Math.abs(timelineSegments[0].duration - duration) < 0.001 &&
-      Math.abs(timelineSegments[0].speed - 1) < 0.01
+    const recordingTimelineSegments = buildAudioTimelineSegments(
+      duration,
+      cutRegions,
+      speedRegions,
+      timelineLanes,
+      collectChangeSoundBoundaries(changeSoundRegions, duration),
+    )
+    const mediaTimelineSegments = buildAudioTimelineSegments(
+      duration,
+      cutRegions,
+      speedRegions,
+      timelineLanes,
+      collectMediaAudioBoundaries(mediaRegions, duration),
+    )
+    const recordingHasNoTransform =
+      recordingTimelineSegments.length === 1 &&
+      Math.abs(recordingTimelineSegments[0].start) < 0.001 &&
+      Math.abs(recordingTimelineSegments[0].duration - duration) < 0.001 &&
+      Math.abs(recordingTimelineSegments[0].speed - 1) < 0.01 &&
+      changeSoundRegions.length === 0
 
     let recordingTrackPath: string | null = null
     let mediaTrackPath: string | null = null
 
     if (recordingPath) {
-      const recordingSegments = buildRecordingExportAudioSegments(timelineSegments, changeSoundRegions, timelineLanes)
+      const recordingSegments = buildRecordingExportAudioSegments(recordingTimelineSegments, changeSoundRegions, timelineLanes)
       if (recordingSegments.length > 0) {
-        const processedRecordingPath = renderProcessedAudioFile(recordingPath, recordingSegments)
-        if (processedRecordingPath) {
+        if (recordingHasNoTransform) {
+          log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')
+          recordingTrackPath = recordingPath
+        } else {
+          const processedRecordingPath = await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)
+          if (!processedRecordingPath) {
+            throw new Error('Failed to process recording audio track')
+          }
           recordingTrackPath = processedRecordingPath
           processedAudioTempRoots.add(path.dirname(processedRecordingPath))
-        } else if (noTimelineTransform && changeSoundRegions.length === 0) {
-          recordingTrackPath = recordingPath
         }
       }
     }
 
     if (mediaPath && mediaRegions.length > 0) {
-      const mediaSegments = buildMediaExportAudioSegments(timelineSegments, mediaRegions, timelineLanes)
+      const mediaSegments = buildMediaExportAudioSegments(mediaTimelineSegments, mediaRegions, timelineLanes)
       if (mediaSegments.length > 0) {
-        const processedMediaPath = renderProcessedAudioFile(mediaPath, mediaSegments)
-        if (processedMediaPath) {
-          mediaTrackPath = processedMediaPath
-          processedAudioTempRoots.add(path.dirname(processedMediaPath))
+        const processedMediaPath = await renderProcessedAudioFile(mediaPath, mediaSegments, runAuxiliaryFFmpeg)
+        if (!processedMediaPath) {
+          throw new Error('Failed to process media audio track')
         }
+        mediaTrackPath = processedMediaPath
+        processedAudioTempRoots.add(path.dirname(processedMediaPath))
       }
     }
 
     if (recordingTrackPath && mediaTrackPath) {
-      const mixedTrackPath = mixAudioTracks(recordingTrackPath, mediaTrackPath)
-      if (mixedTrackPath) {
-        resolvedAudioInputPath = mixedTrackPath
-        processedAudioTempRoots.add(path.dirname(mixedTrackPath))
-      } else {
-        resolvedAudioInputPath = recordingTrackPath
+      const mixedTrackPath = await mixAudioTracks(recordingTrackPath, mediaTrackPath, runAuxiliaryFFmpeg)
+      if (!mixedTrackPath) {
+        throw new Error('Failed to mix recording and media audio tracks')
       }
+      resolvedAudioInputPath = mixedTrackPath
+      processedAudioTempRoots.add(path.dirname(mixedTrackPath))
     } else {
       resolvedAudioInputPath = recordingTrackPath || mediaTrackPath
     }
   } catch (error) {
     log.error('[ExportManager] Error while preparing export audio input:', error)
-    resolvedAudioInputPath = null
+    const message = error instanceof Error ? error.message : 'Unknown audio preparation error'
+    failExportStartup(`Failed to prepare export audio: ${message}`)
+    return
   }
 
   if (resolvedAudioInputPath) {
@@ -1065,15 +1349,17 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
   ffmpegArgs.push(outputPath)
 
+  sendProgressUpdate(4, 'Starting renderer...', true, 'main')
   log.info('[ExportManager] Spawning FFmpeg with args:', ffmpegArgs.join(' '))
-  const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
-  if (typeof ffmpeg.pid === 'number') {
-    trySetProcessPriorityWithFallback(ffmpeg.pid, targetPriorityCandidates, 'ffmpeg')
+  ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
+  const activeFFmpeg = ffmpeg
+  if (typeof activeFFmpeg.pid === 'number') {
+    trySetProcessPriorityWithFallback(activeFFmpeg.pid, targetPriorityCandidates, 'ffmpeg')
   }
 
-  ffmpeg.stderr.on('data', (data) => log.info(`[FFmpeg stderr]: ${data.toString()}`))
+  activeFFmpeg.stderr.on('data', (data) => log.info(`[FFmpeg stderr]: ${data.toString()}`))
 
-  const cleanupProcessedAudio = () => {
+  cleanupProcessedAudio = () => {
     try {
       processedAudioTempRoots.forEach((tmpDir) => {
         if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -1086,72 +1372,48 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const frameListener = (_e: any, { frame, progress }: { frame: Buffer; progress: number }) => {
-    if (!ffmpegClosed && ffmpeg.stdin.writable) ffmpeg.stdin.write(frame)
-    sendProgressUpdate(progress, 'Rendering...')
+    if (!ffmpegClosed && activeFFmpeg.stdin.writable) activeFFmpeg.stdin.write(frame)
+    const frameProgressLog = shouldLogProgressBucket(progress, lastFrameProgressLogBucket)
+    if (frameProgressLog.shouldLog) {
+      lastFrameProgressLogBucket = frameProgressLog.bucket
+      log.info('[ExportManager][Progress] Received export:frame-data progress.', {
+        progress: Number(clamp(progress, 0, 100).toFixed(2)),
+        frameBytes: frame.byteLength,
+      })
+    }
+    sendProgressUpdate(progress, 'Rendering...', false, 'frame-data')
+  }
+
+  const renderProgressListener = (_e: unknown, { progress }: { progress: number }) => {
+    const renderProgressLog = shouldLogProgressBucket(progress, lastRendererProgressLogBucket)
+    if (renderProgressLog.shouldLog) {
+      lastRendererProgressLogBucket = renderProgressLog.bucket
+      log.info('[ExportManager][Progress] Received export:render-progress from renderer.', {
+        progress: Number(clamp(progress, 0, 100).toFixed(2)),
+      })
+    }
+    sendProgressUpdate(progress, 'Rendering...', false, 'render-progress')
   }
 
   const finishListener = () => {
     log.info('[ExportManager] Render finished. Closing FFmpeg stdin.')
     const finalizingProgress = lastProgressBroadcast < 0 ? 0 : Math.max(lastProgressBroadcast, 99)
-    sendProgressUpdate(finalizingProgress, 'Finalizing export...', true)
-    if (!ffmpegClosed && ffmpeg.stdin.writable) {
-      ffmpeg.stdin.end()
+    sendProgressUpdate(finalizingProgress, 'Finalizing export...', true, 'render-finished')
+    if (!ffmpegClosed && activeFFmpeg.stdin.writable) {
+      activeFFmpeg.stdin.end()
     }
   }
 
-  const cleanupListeners = () => {
+  cleanupListeners = () => {
     ipcMain.removeListener('export:frame-data', frameListener)
+    ipcMain.removeListener('export:render-progress', renderProgressListener)
     ipcMain.removeListener('export:render-finished', finishListener)
     ipcMain.removeListener('export:cancel', cancellationHandler)
     ipcMain.removeListener('export:render-error', renderErrorListener)
-  }
-
-  const failExportStartup = (errorMessage: string) => {
-    if (exportCompleted) return
-
-    exportCompleted = true
-
-    if (ffmpeg && !ffmpeg.killed) {
-      ffmpeg.kill('SIGKILL')
+    if (renderReadyListener) {
+      ipcMain.removeListener('render:ready', renderReadyListener)
+      renderReadyListener = null
     }
-    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.close()
-    }
-    appState.renderWorker = null
-
-    sendExportComplete({ success: false, error: errorMessage, duration: getElapsedDurationSeconds() }, 'error')
-    cleanupExportUi()
-    cleanupProcessedAudio()
-    cleanupListeners()
-
-    if (fs.existsSync(outputPath)) {
-      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete failed export file:', err))
-    }
-  }
-
-  cancellationHandler = () => {
-    if (exportCompleted) return
-
-    log.warn('[ExportManager] Received "export:cancel". Terminating export.')
-    exportCompleted = true
-
-    if (ffmpeg && !ffmpeg.killed) {
-      ffmpeg.kill('SIGKILL')
-    }
-    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.close()
-    }
-    appState.renderWorker = null
-
-    sendExportComplete({ success: false, error: 'Export cancelled.', duration: getElapsedDurationSeconds() }, 'cancelled')
-    cleanupExportUi()
-
-    if (fs.existsSync(outputPath)) {
-      fsPromises.unlink(outputPath).catch((err) => log.error('Failed to delete cancelled export file:', err))
-    }
-
-    cleanupProcessedAudio()
-    cleanupListeners()
   }
 
   const renderErrorListener = (_e: unknown, { error }: { error: string }) => {
@@ -1162,10 +1424,8 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (ffmpeg && !ffmpeg.killed) {
       ffmpeg.kill('SIGKILL')
     }
-    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.close()
-    }
-    appState.renderWorker = null
+    killAuxiliaryFFmpegProcesses()
+    closeRenderWorker()
 
     sendExportComplete({ success: false, error, duration: getElapsedDurationSeconds() }, 'error')
     cleanupExportUi()
@@ -1174,26 +1434,23 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   ipcMain.on('export:frame-data', frameListener)
+  ipcMain.on('export:render-progress', renderProgressListener)
   ipcMain.on('export:render-finished', finishListener)
   ipcMain.on('export:render-error', renderErrorListener)
-  ipcMain.once('export:cancel', cancellationHandler) // Use once to avoid multiple calls
 
-  ffmpeg.on('error', (error) => {
+  activeFFmpeg.on('error', (error) => {
     ffmpegClosed = true
     log.error('[ExportManager] Failed to start FFmpeg process:', error)
     failExportStartup(getFFmpegSpawnErrorMessage(error))
   })
 
-  ffmpeg.on('close', (code) => {
+  activeFFmpeg.on('close', (code) => {
     ffmpegClosed = true
     log.info(`[ExportManager] FFmpeg process exited with code ${code}.`)
 
     cleanupProcessedAudio()
 
-    if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.close()
-    }
-    appState.renderWorker = null
+    closeRenderWorker()
 
     if (!exportCompleted) {
       exportCompleted = true
@@ -1202,7 +1459,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         sendExportComplete({ success: false, error: 'Export cancelled.', duration: renderDuration }, 'cancelled')
       } else if (code === 0) {
         log.info(`[ExportManager] Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
-        sendProgressUpdate(100, 'Export completed', true)
+        sendProgressUpdate(100, 'Export completed', true, 'ffmpeg-close')
         sendExportComplete({ success: true, outputPath, duration: renderDuration }, 'success')
       } else {
         sendExportComplete({ success: false, error: `FFmpeg exited with code ${code}`, duration: renderDuration }, 'error')
@@ -1213,17 +1470,25 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     cleanupListeners()
   })
 
-  ipcMain.once('render:ready', () => {
+  const staleRenderReadyListeners = ipcMain.listenerCount('render:ready')
+  if (staleRenderReadyListeners > 0) {
+    log.warn(`[ExportManager] Removing ${staleRenderReadyListeners} stale render:ready listener(s) before export.`)
+    ipcMain.removeAllListeners('render:ready')
+  }
+
+  renderReadyListener = () => {
+    renderReadyListener = null
     log.info('[ExportManager] Worker ready. Sending project state.')
-    showExportProgressWindow()
-    createExportTray()
-    sendProgressUpdate(0, 'Preparing export...', true)
-    if (!editorWindow.isDestroyed()) {
-      editorWindow.setSkipTaskbar(true)
-      editorWindow.hide()
-    }
+    sendProgressUpdate(5, 'Rendering...', true, 'render-ready')
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
       appState.renderWorker.webContents.send('render:start', { projectState, exportSettings: normalizedExportSettings })
     }
-  })
+  }
+  ipcMain.once('render:ready', renderReadyListener)
+  try {
+    createAndLoadRenderWorker()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown renderer startup error'
+    failExportStartup(`Failed to start renderer worker: ${message}`)
+  }
 }

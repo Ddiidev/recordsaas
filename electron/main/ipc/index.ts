@@ -21,6 +21,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('window:isMaximized', appHandlers.handleIsMaximized)
   ipcMain.on('window:update-title-bar-overlay', appHandlers.updateTitleBarOverlay)
   ipcMain.on('export-progress:set-collapsed', appHandlers.setExportProgressCollapsed)
+  ipcMain.handle('export-progress:get-state', appHandlers.handleGetExportProgressState)
 
   // Auth
   ipcMain.handle('auth:get-session', authHandlers.handleAuthGetSession)

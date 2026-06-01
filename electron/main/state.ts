@@ -32,6 +32,7 @@ interface AppState {
   savingWin: BrowserWindow | null
   selectionWin: BrowserWindow | null
   exportProgressWin: BrowserWindow | null
+  currentExportProgress: { progress: number; stage: string } | null
 
   // System
   tray: Tray | null
@@ -62,6 +63,7 @@ export const appState: AppState = {
   savingWin: null,
   selectionWin: null,
   exportProgressWin: null,
+  currentExportProgress: null,
   tray: null,
   exportTray: null,
   ffmpegProcess: null,
