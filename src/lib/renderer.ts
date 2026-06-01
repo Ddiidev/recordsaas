@@ -32,15 +32,41 @@ type ResolvedLayout = {
 type WindowWithScreenCache = Window & {
   __screenCacheCanvas?: HTMLCanvasElement
   __screenCacheCtx?: CanvasRenderingContext2D | null
+  __backgroundCacheCanvas?: HTMLCanvasElement
+  __backgroundCacheCtx?: CanvasRenderingContext2D | null
+  __backgroundCacheKey?: string
 }
 
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
 let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
+const roundedRectPathCache = new Map<string, Path2D>()
+const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+
+const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
+  const key = [
+    Math.round(rect.x * 100) / 100,
+    Math.round(rect.y * 100) / 100,
+    Math.round(rect.width * 100) / 100,
+    Math.round(rect.height * 100) / 100,
+    Math.round(radius * 100) / 100,
+  ].join(':')
+  const cached = roundedRectPathCache.get(key)
+  if (cached) return cached
+
+  const path = new Path2D()
+  path.roundRect(rect.x, rect.y, rect.width, rect.height, radius)
+  if (roundedRectPathCache.size >= ROUNDED_RECT_PATH_CACHE_LIMIT) {
+    const firstKey = roundedRectPathCache.keys().next().value
+    if (firstKey) roundedRectPathCache.delete(firstKey)
+  }
+  roundedRectPathCache.set(key, path)
+  return path
+}
 
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel' | 'screen',
+  kind: 'sample' | 'pixel' | 'screen' | 'background',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -66,6 +92,20 @@ const getOrCreateCanvas = (
     }
     const canvas = cacheWindow.__screenCacheCanvas
     const ctx = cacheWindow.__screenCacheCtx
+    if (!canvas || !ctx) return null
+    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
+    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
+    return { canvas, ctx }
+  }
+
+  if (kind === 'background') {
+    const cacheWindow = window as WindowWithScreenCache
+    if (!cacheWindow.__backgroundCacheCanvas) {
+      cacheWindow.__backgroundCacheCanvas = document.createElement('canvas')
+      cacheWindow.__backgroundCacheCtx = cacheWindow.__backgroundCacheCanvas.getContext('2d')
+    }
+    const canvas = cacheWindow.__backgroundCacheCanvas
+    const ctx = cacheWindow.__backgroundCacheCtx
     if (!canvas || !ctx) return null
     if (canvas.width !== roundedWidth) canvas.width = roundedWidth
     if (canvas.height !== roundedHeight) canvas.height = roundedHeight
@@ -431,12 +471,31 @@ const drawBackground = (
   backgroundState: EditorState['frameStyles']['background'],
   preloadedImage: BackgroundImageSource | null,
 ): void => {
-  ctx.clearRect(0, 0, width, height)
+  const imageReady = preloadedImage && ('complete' in preloadedImage ? preloadedImage.complete : true)
+  const imageKey =
+    preloadedImage && imageReady
+      ? `${preloadedImage.width}x${preloadedImage.height}`
+      : 'no-image'
+  const cacheKey = JSON.stringify({
+    width,
+    height,
+    backgroundState,
+    imageKey,
+  })
+  const cacheWindow = window as WindowWithScreenCache
+  const cachedBackground = getOrCreateCanvas('background', width, height)
+  if (cachedBackground && cacheWindow.__backgroundCacheKey === cacheKey) {
+    ctx.drawImage(cachedBackground.canvas, 0, 0)
+    return
+  }
+
+  const targetCtx = cachedBackground?.ctx ?? ctx
+  targetCtx.clearRect(0, 0, width, height)
 
   switch (backgroundState.type) {
     case 'color':
-      ctx.fillStyle = backgroundState.color || '#000000'
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = backgroundState.color || '#000000'
+      targetCtx.fillRect(0, 0, width, height)
       break
     case 'gradient': {
       const start = backgroundState.gradientStart || '#000000'
@@ -445,7 +504,7 @@ const drawBackground = (
       let gradient
 
       if (direction.startsWith('circle')) {
-        gradient = ctx.createRadialGradient(
+        gradient = targetCtx.createRadialGradient(
           width / 2,
           height / 2,
           0,
@@ -484,18 +543,17 @@ const drawBackground = (
           }
         }
         const coords = getCoords(direction)
-        gradient = ctx.createLinearGradient(coords[0], coords[1], coords[2], coords[3])
+        gradient = targetCtx.createLinearGradient(coords[0], coords[1], coords[2], coords[3])
         gradient.addColorStop(0, start)
         gradient.addColorStop(1, end)
       }
 
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = gradient
+      targetCtx.fillRect(0, 0, width, height)
       break
     }
     case 'image':
     case 'wallpaper': {
-      const imageReady = preloadedImage && ('complete' in preloadedImage ? preloadedImage.complete : true)
       if (preloadedImage && imageReady) {
         const img = preloadedImage
         const imgRatio = img.width / img.height
@@ -513,16 +571,21 @@ const drawBackground = (
           sx = 0
           sy = (img.height - sHeight) / 2
         }
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height)
+        targetCtx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height)
       } else {
-        ctx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
-        ctx.fillRect(0, 0, width, height)
+        targetCtx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
+        targetCtx.fillRect(0, 0, width, height)
       }
       break
     }
     default:
-      ctx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
+      targetCtx.fillRect(0, 0, width, height)
+  }
+
+  if (cachedBackground) {
+    cacheWindow.__backgroundCacheKey = cacheKey
+    ctx.drawImage(cachedBackground.canvas, 0, 0)
   }
 }
 
@@ -821,18 +884,14 @@ export const drawScene = (
       ctx.shadowBlur = config.shadowBlur
       ctx.shadowOffsetX = config.shadowOffsetX
       ctx.shadowOffsetY = config.shadowOffsetY
-      const shadowPath = new Path2D()
-      shadowPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
       // Use fill for shadow rendering to apply exactly behind the clip area
       ctx.fillStyle = 'black'
-      ctx.fill(shadowPath)
+      ctx.fill(getRoundedRectPath(config, config.radius))
       ctx.restore()
     }
 
     ctx.save()
-    const clipPath = new Path2D()
-    clipPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
-    ctx.clip(clipPath)
+    ctx.clip(getRoundedRectPath(config, config.radius))
 
     const targetAR = config.width / config.height
     const sourceX = crop ? sW * crop.left : 0
@@ -866,11 +925,9 @@ export const drawScene = (
 
     if (config.borderWidth > 0) {
       ctx.save()
-      const borderPath = new Path2D()
-      borderPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
       ctx.strokeStyle = config.borderColor
       ctx.lineWidth = config.borderWidth * 2
-      ctx.stroke(borderPath)
+      ctx.stroke(getRoundedRectPath(config, config.radius))
       ctx.restore()
     }
     ctx.restore()
