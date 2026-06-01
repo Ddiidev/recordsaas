@@ -144,6 +144,7 @@ Export startup invariant:
 - Long-export benchmark reviews should use `npm run analyze:export-benchmark -- [logPath]` after the run to summarize startup, render loop, finalization, encoder config, and renderer perf samples.
 - WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
 - WebCodecs H.264 export should prefer High Profile when `VideoEncoder.isConfigSupported` accepts it, falling back to Baseline for compatibility.
+- The hidden export renderer canvas should request a non-alpha, desynchronized 2D context to reduce compositor synchronization overhead during long renders.
 - Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
 - Renderer export helpers may cache `Object.values` for region maps by object identity to avoid per-frame allocations; never mutate cached region arrays in place.
 - Cursor rendering should derive ripple and click-scale state from a single backward metadata scan per frame; avoid separate metadata scans for each cursor effect.

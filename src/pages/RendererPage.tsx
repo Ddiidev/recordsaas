@@ -403,7 +403,10 @@ export function RendererPage() {
 
         canvas.width = outputWidth
         canvas.height = outputHeight
-        const ctx = canvas.getContext('2d', { alpha: false })
+        const ctx = canvas.getContext('2d', {
+          alpha: false,
+          desynchronized: true,
+        })
         if (!ctx) throw new Error('Failed to get 2D context from canvas.')
 
         // --- 2. PREPARE STATE AND ASSETS ---
