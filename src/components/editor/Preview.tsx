@@ -17,12 +17,19 @@ import { Slider } from '../ui/slider'
 import { Button } from '../ui/button'
 import { drawScene } from '../../lib/renderer'
 import { cn } from '../../lib/utils'
+import { toMediaUrl } from '../../lib/media-url'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
 const WEBCAM_SCRUB_RESYNC_DRIFT_SECS = 0.02
+
+const describeMediaError = (element: HTMLMediaElement | null): string => {
+  const error = element?.error
+  if (!error) return 'code=unknown'
+  return `code=${error.code} message=${error.message || 'unavailable'}`
+}
 
 export const Preview = memo(
   ({
@@ -257,9 +264,7 @@ export const Preview = memo(
         img.onload = () => {
           setBgImage(img)
         }
-        const finalUrl = background.imageUrl.startsWith('blob:')
-          ? background.imageUrl
-          : `media://${background.imageUrl}`
+        const finalUrl = background.imageUrl.startsWith('blob:') ? background.imageUrl : toMediaUrl(background.imageUrl) || ''
         img.src = finalUrl
       } else {
         setBgImage(null)
@@ -596,9 +601,33 @@ export const Preview = memo(
       }
     }
 
+    const handleMediaLoadError = useCallback((label: string, element: HTMLMediaElement | null) => {
+      const src = element?.currentSrc || element?.src || '(empty)'
+      console.error(`[Preview] ${label} failed to load: src=${src} ${describeMediaError(element)}`)
+    }, [])
+
+    const handleVideoError = useCallback(() => {
+      handleMediaLoadError('Main video', videoRef.current)
+    }, [handleMediaLoadError, videoRef])
+
+    const handleWebcamVideoError = useCallback(() => {
+      handleMediaLoadError('Webcam video', webcamVideoRef.current)
+    }, [handleMediaLoadError])
+
+    const handleRecordingAudioError = useCallback(() => {
+      handleMediaLoadError('Recording audio', recordingAudioRef.current)
+    }, [handleMediaLoadError])
+
+    const handleMediaAudioError = useCallback(() => {
+      handleMediaLoadError('Media audio', mediaAudioRef.current)
+    }, [handleMediaLoadError])
+
     const handleLoadedMetadata = () => {
       const video = videoRef.current
       if (video) {
+        console.info(
+          `[Preview] Main video metadata loaded: duration=${video.duration} dimensions=${video.videoWidth}x${video.videoHeight} src=${video.currentSrc}`,
+        )
         setDuration(video.duration)
         setVideoDimensions({ width: video.videoWidth, height: video.videoHeight })
 
@@ -643,6 +672,7 @@ export const Preview = memo(
       const video = videoRef.current
       const recordingAudio = recordingAudioRef.current
       if (video && recordingAudio) {
+        console.info(`[Preview] Recording audio metadata loaded: duration=${recordingAudio.duration} src=${recordingAudio.currentSrc}`)
         const resolvedRecording = resolveRecordingForTime(video.currentTime)
         if (!resolvedRecording.isActive) {
           recordingAudio.pause()
@@ -663,6 +693,7 @@ export const Preview = memo(
       const video = videoRef.current
       const mediaAudio = mediaAudioRef.current
       if (video && mediaAudio) {
+        console.info(`[Preview] Media audio metadata loaded: duration=${mediaAudio.duration} src=${mediaAudio.currentSrc}`)
         if (mediaAudioClip && Number.isFinite(mediaAudio.duration)) {
           setMediaAudioDuration(mediaAudio.duration)
         }
@@ -814,6 +845,7 @@ export const Preview = memo(
           src={videoUrl || undefined}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
+          onError={handleVideoError}
           onPlay={handleVideoPlay}
           onPause={handleVideoPause}
           onEnded={handleVideoEnded}
@@ -824,6 +856,7 @@ export const Preview = memo(
             ref={recordingAudioRef}
             src={audioUrl}
             onLoadedMetadata={handleRecordingAudioLoadedMetadata}
+            onError={handleRecordingAudioError}
             style={{ display: 'none' }}
           />
         )}
@@ -832,6 +865,7 @@ export const Preview = memo(
             ref={mediaAudioRef}
             src={mediaAudioClip.url}
             onLoadedMetadata={handleMediaAudioLoadedMetadata}
+            onError={handleMediaAudioError}
             style={{ display: 'none' }}
           />
         )}
@@ -842,6 +876,7 @@ export const Preview = memo(
             muted
             playsInline
             onLoadedMetadata={handleWebcamLoadedMetadata}
+            onError={handleWebcamVideoError}
             style={{ display: 'none' }}
           />
         )}

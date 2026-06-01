@@ -7,6 +7,9 @@ import { ExportSettings } from '../components/editor/ExportModal'
 import { RESOLUTIONS } from '../lib/constants'
 import { drawScene } from '../lib/renderer'
 import { prepareCursorBitmaps, mapExportTimeToSourceTime, calculateExportDuration } from '../lib/utils'
+import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
+
+let rendererReadySignalSent = false
 
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
@@ -17,6 +20,8 @@ type VideoFrameProvider = {
   getFrameForTime: (timeSec: number) => Promise<VideoFrame | null>
   close: () => void
 }
+
+type ExportBackgroundImage = ImageBitmap
 
 async function createVideoFrameProvider(videoPath: string): Promise<VideoFrameProvider> {
   if (!('VideoDecoder' in window)) {
@@ -199,7 +204,7 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
   })
 
   try {
-    const buffer = await window.electronAPI.readFileBuffer(videoPath)
+    const buffer = await window.electronAPI.readFileBuffer(normalizeMediaPath(videoPath))
     const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
     ;(arrayBuffer as any).fileStart = 0
     mp4boxfile.appendBuffer(arrayBuffer)
@@ -324,24 +329,37 @@ async function prepareMacOSCursorBitmaps(theme: CursorTheme, scale: number): Pro
   return bitmapMap
 }
 
-// Helper to pre-load an image for the renderer worker
-const loadBackgroundImage = (
+const shouldFetchUrlAsIs = (url: string) => /^(blob:|data:|https?:|file:)/i.test(url)
+
+// Helper to pre-load an origin-clean image for the renderer worker.
+const loadBackgroundImage = async (
   background: EditorState['frameStyles']['background'],
-): Promise<HTMLImageElement | null> => {
-  return new Promise((resolve) => {
-    if ((background.type !== 'image' && background.type !== 'wallpaper') || !background.imageUrl) {
-      resolve(null)
-      return
+): Promise<ExportBackgroundImage | null> => {
+  if ((background.type !== 'image' && background.type !== 'wallpaper') || !background.imageUrl) {
+    return null
+  }
+
+  if (!('createImageBitmap' in window)) {
+    log.warn('[RendererPage] createImageBitmap is unavailable; skipping image background during export.')
+    return null
+  }
+
+  const finalUrl = shouldFetchUrlAsIs(background.imageUrl) ? background.imageUrl : toMediaUrl(background.imageUrl)
+  if (!finalUrl) return null
+
+  try {
+    const response = await fetch(finalUrl)
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
     }
-    const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => {
-      log.error(`[RendererPage] Failed to load background image for export: ${img.src}`)
-      resolve(null) // Resolve with null on error to not block rendering
-    }
-    const finalUrl = background.imageUrl.startsWith('blob:') ? background.imageUrl : `media://${background.imageUrl}`
-    img.src = finalUrl
-  })
+    const blob = await response.blob()
+    const bitmap = await createImageBitmap(blob)
+    log.info(`[RendererPage] Loaded origin-clean background image for export: ${finalUrl}`)
+    return bitmap
+  } catch (error) {
+    log.error(`[RendererPage] Failed to load background image for export: ${finalUrl}`, error)
+    return null
+  }
 }
 
 export function RendererPage() {
@@ -358,6 +376,7 @@ export function RendererPage() {
       const webcamVideo = webcamVideoRef.current
       let frameProvider: VideoFrameProvider | null = null
       let webcamFrameProvider: VideoFrameProvider | null = null
+      let bgImage: ExportBackgroundImage | null = null
 
       try {
         log.info('[RendererPage] Received "render:start" event.', { exportSettings })
@@ -394,7 +413,7 @@ export function RendererPage() {
           finalCursorBitmaps = await prepareCursorBitmaps(projectState.cursorImages)
         }
         const projectStateWithCursorBitmaps = { ...projectState, cursorBitmapsToRender: finalCursorBitmaps }
-        const bgImage = await loadBackgroundImage(projectState.frameStyles.background)
+        bgImage = await loadBackgroundImage(projectState.frameStyles.background)
 
         // --- 2.5 SETUP VIDEO DECODER (Optimization) ---
         frameProvider = null
@@ -445,7 +464,12 @@ export function RendererPage() {
               resolve()
             }
             videoElement.onerror = (e) => reject(new Error(`Failed to load ${source}: ${e}`))
-            videoElement.src = `media://${path}`
+            const mediaUrl = toMediaUrl(path)
+            if (!mediaUrl) {
+              reject(new Error(`Failed to resolve ${source} media URL from path: ${path}`))
+              return
+            }
+            videoElement.src = mediaUrl
             videoElement.muted = true
             videoElement.load()
           })
@@ -492,6 +516,16 @@ export function RendererPage() {
         // --- SETUP ENCODER (Optimization) ---
         let videoEncoder: any = null
         let lastProgress = 0
+        let lastProgressLogBucket = -1
+        const emitRenderProgress = (progress: number) => {
+          const safeProgress = Math.max(0, Math.min(99, Number.isFinite(progress) ? progress : 0))
+          const bucket = Math.floor(safeProgress / 5)
+          if (bucket !== lastProgressLogBucket || safeProgress >= 99) {
+            lastProgressLogBucket = bucket
+            log.info(`[RendererPage][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
+          }
+          window.electronAPI.sendRenderProgress({ progress: safeProgress })
+        }
         const useHardwareEncoding = exportSettings.format === 'mp4' && 'VideoEncoder' in window
 
         if (useHardwareEncoding) {
@@ -559,6 +593,7 @@ export function RendererPage() {
           }
 
           lastProgress = Math.min(99, ((frame + 1) / totalFrames) * 100)
+          emitRenderProgress(lastProgress)
           const exportTimestamp = frame / fps
           const sourceTimestamp = mapExportTimeToSourceTime(
             exportTimestamp,
@@ -594,7 +629,7 @@ export function RendererPage() {
             throw new Error('No decoded frame available for main video.')
           }
 
-          const webcamFrameToUse = webcamFrame ?? webcamVideo
+          const webcamFrameToUse = webcamFrame
 
           // Now that videos are at the correct time, draw the scene
           const webcamFrameDimensions = webcamFrame
@@ -640,10 +675,12 @@ export function RendererPage() {
         // --- 6. FINISH ---
         log.info('[RendererPage] Render loop finished. Sending "finishRender" signal.')
         window.electronAPI.finishRender()
+        bgImage?.close()
         if (frameProvider) frameProvider.close()
         if (webcamFrameProvider) webcamFrameProvider.close()
       } catch (error) {
         log.error('[RendererPage] CRITICAL ERROR during render process:', error)
+        bgImage?.close()
         if (frameProvider) frameProvider.close()
         if (webcamFrameProvider) webcamFrameProvider.close()
         const message = error instanceof Error ? error.message : 'Unknown render error'
@@ -651,8 +688,13 @@ export function RendererPage() {
       }
     })
 
-    log.info('[RendererPage] Sending "render:ready" signal to main process.')
-    window.electronAPI.rendererReady()
+    if (!rendererReadySignalSent) {
+      rendererReadySignalSent = true
+      log.info('[RendererPage] Sending "render:ready" signal to main process.')
+      window.electronAPI.rendererReady()
+    } else {
+      log.info('[RendererPage] render:ready signal already sent for this worker.')
+    }
 
     return () => {
       log.info('[RendererPage] Component unmounted. Cleaning up listener.')

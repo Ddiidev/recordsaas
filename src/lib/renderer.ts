@@ -21,6 +21,8 @@ type MediaRectConfig = Rect & {
   borderColor: string
   zIndex: number
 }
+
+type BackgroundImageSource = HTMLImageElement | ImageBitmap
 type ResolvedLayout = {
   mode: WebcamLayout['mode']
   desktopConfig: MediaRectConfig
@@ -344,7 +346,8 @@ const resolveLayoutConfig = ({
   const { webcamLayout, webcamPosition, webcamStyles } = state
   const baseInset = Math.min(outputWidth, outputHeight) * 0.02
   const sidebarWidth = availableWidth * (webcamLayout.webcamWidthPercent / 100)
-  const gap = baseInset
+  const hasFramePadding = state.frameStyles.padding > 0
+  const gap = hasFramePadding ? baseInset : 0
   const sidebarOnLeft = webcamLayout.side === 'left'
   const availableArea: Rect = {
     x: outputWidth * (state.frameStyles.padding / 100),
@@ -400,8 +403,8 @@ const resolveLayoutConfig = ({
   const desktopRect = fitRectWithinBounds(desktopArea, state.videoDimensions.width / state.videoDimensions.height)
 
   if (webcamLayout.mode === 'side-by-side') {
-    const cameraBounds = insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75)
-    const cameraRect = fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+    const cameraBounds = hasFramePadding ? insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75) : sidebarArea
+    const cameraRect = hasFramePadding ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape)) : cameraBounds
     return {
       mode: 'side-by-side',
       desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),
@@ -426,7 +429,7 @@ const drawBackground = (
   width: number,
   height: number,
   backgroundState: EditorState['frameStyles']['background'],
-  preloadedImage: HTMLImageElement | null,
+  preloadedImage: BackgroundImageSource | null,
 ): void => {
   ctx.clearRect(0, 0, width, height)
 
@@ -492,7 +495,8 @@ const drawBackground = (
     }
     case 'image':
     case 'wallpaper': {
-      if (preloadedImage && preloadedImage.complete) {
+      const imageReady = preloadedImage && ('complete' in preloadedImage ? preloadedImage.complete : true)
+      if (preloadedImage && imageReady) {
         const img = preloadedImage
         const imgRatio = img.width / img.height
         const canvasRatio = width / height
@@ -533,7 +537,7 @@ export const drawScene = (
   currentTime: number,
   outputWidth: number,
   outputHeight: number,
-  preloadedBgImage: HTMLImageElement | null,
+  preloadedBgImage: BackgroundImageSource | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
 ): void => {

@@ -1,12 +1,14 @@
 // Entry point of the Electron application.
 
-import { app, BrowserWindow, protocol, ProtocolRequest, ProtocolResponse, Menu, screen, dialog } from 'electron'
+import { app, BrowserWindow, protocol, Menu, screen, dialog, net } from 'electron'
 import log from 'electron-log/main'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import fsSync from 'node:fs'
 import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
 import { setupLogging } from './lib/logging'
+import { resolveMediaRequestPath } from './lib/media-url'
 import { registerIpcHandlers } from './ipc'
 import { createRecorderWindow } from './windows/recorder-window'
 import { handleAuthDeepLinkUrl } from './features/auth-manager'
@@ -17,6 +19,17 @@ import { appState } from './state'
 // --- Initialization ---
 setupLogging()
 app.setName('RecordSaaS')
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'media',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+])
 
 // Enable WebCodecs in renderer/worker contexts
 app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
@@ -44,6 +57,7 @@ function registerCustomProtocolClient() {
 }
 
 let pendingDeepLinkUrl: string | null = process.platform === 'darwin' ? null : getDeepLinkFromArgv(process.argv)
+const loggedMediaRequestPaths = new Set<string>()
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -149,30 +163,28 @@ app.whenReady().then(async () => {
         },
       },
     ])
-    app.dock.setMenu(dockMenu)
+    if (app.dock) {
+      app.dock.setMenu(dockMenu)
+    }
   }
 
   // Initialize platform-specific dependencies asynchronously
   initializeMouseTrackerDependencies()
 
   // Register custom protocol for media files
-  protocol.registerFileProtocol(
-    'media',
-    (request: ProtocolRequest, callback: (response: string | ProtocolResponse) => void) => {
-      const url = request.url.replace('media://', '')
-      const decodedUrl = decodeURIComponent(url)
-      const resourcePath = path.join(VITE_PUBLIC, decodedUrl)
+  protocol.handle('media', async (request) => {
+    const resourcePath = resolveMediaRequestPath(request.url, VITE_PUBLIC)
+    if (resourcePath && fsSync.existsSync(resourcePath)) {
+      if (!loggedMediaRequestPaths.has(resourcePath)) {
+        loggedMediaRequestPaths.add(resourcePath)
+        log.info(`[Protocol] Serving media file: ${request.url} -> ${resourcePath} range=${request.headers.get('range') || 'none'}`)
+      }
+      return net.fetch(pathToFileURL(resourcePath).toString(), { headers: request.headers })
+    }
 
-      if (path.isAbsolute(decodedUrl) && fsSync.existsSync(decodedUrl)) {
-        return callback(decodedUrl)
-      }
-      if (fsSync.existsSync(resourcePath)) {
-        return callback(resourcePath)
-      }
-      log.error(`[Protocol] Could not find file: ${decodedUrl}`)
-      return callback({ error: -6 }) // FILE_NOT_FOUND
-    },
-  )
+    log.error(`[Protocol] Could not find file for media request: ${request.url}`)
+    return new Response('Media file not found.', { status: 404 })
+  })
 
   registerIpcHandlers()
   createRecorderWindow()

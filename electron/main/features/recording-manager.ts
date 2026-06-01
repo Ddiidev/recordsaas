@@ -9,6 +9,7 @@ import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreference
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
+import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
 import { createEditorWindow, cleanupEditorFiles } from '../windows/editor-window'
@@ -1544,7 +1545,8 @@ export async function importProjectFromFile() {
 
     const resolveExistingSourcePath = async (originalPath: string | null | undefined): Promise<string | null> => {
       if (!originalPath) return null
-      const normalized = originalPath.replace('media://', '')
+      const normalized = normalizeMediaPath(originalPath)
+      if (!normalized) return null
       const candidates = path.isAbsolute(normalized)
         ? [normalized, path.join(sourceProjectDir, path.basename(normalized))]
         : [path.join(sourceProjectDir, normalized), path.join(sourceProjectDir, path.basename(normalized))]
@@ -1660,7 +1662,7 @@ export async function importProjectFromFile() {
         ...rawMediaAudioClip,
         id: rawMediaAudioClip.id || `media-audio-${Date.now()}`,
         path: importedMediaAudioPath,
-        url: `media://${importedMediaAudioPath}`,
+        url: toMediaUrl(importedMediaAudioPath) || '',
         name: rawMediaAudioClip.name || path.basename(importedMediaAudioPath),
         duration:
           typeof rawMediaAudioClip.duration === 'number' && Number.isFinite(rawMediaAudioClip.duration)

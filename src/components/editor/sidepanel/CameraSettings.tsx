@@ -260,7 +260,7 @@ export function CameraSettings() {
       <div className="flex-1 space-y-6 overflow-y-auto p-6 stable-scrollbar">
         <ControlGroup label="Visibility" icon={<Eye className="h-4 w-4 text-primary" />}>
           <div className="flex items-center justify-between rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-3">
-            <span className="text-sm font-medium text-sidebar-foreground">{isWebcamVisible ? 'Visible' : 'Hidden'}</span>
+            <span className="text-sm font-medium text-sidebar-foreground">Visible</span>
             <Switch checked={isWebcamVisible} onCheckedChange={setWebcamVisibility} className="data-[state=on]:bg-primary" />
           </div>
         </ControlGroup>

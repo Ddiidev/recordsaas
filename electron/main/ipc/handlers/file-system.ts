@@ -1,13 +1,14 @@
 // Handlers for file system-related IPC (file system).
 
 import fs from 'node:fs/promises'
+import { normalizeMediaPath } from '../../lib/media-url'
 
 export async function handleReadFile(_event: unknown, filePath: string): Promise<string> {
-  return fs.readFile(filePath, 'utf-8')
+  return fs.readFile(normalizeMediaPath(filePath) || filePath, 'utf-8')
 }
 
 export async function handleReadFileBuffer(_event: unknown, filePath: string): Promise<Buffer> {
-  return fs.readFile(filePath)
+  return fs.readFile(normalizeMediaPath(filePath) || filePath)
 }
 
 export async function handleSaveProject(
@@ -28,10 +29,7 @@ export async function handleSaveProject(
     // 3. Copy media files to the target folder
     for (const file of mediaFiles) {
       if (file) {
-        let sourcePath = file
-        if (sourcePath.startsWith('media://')) {
-          sourcePath = sourcePath.replace('media://', '')
-        }
+        const sourcePath = normalizeMediaPath(file) || file
         
         const fileName = path.basename(sourcePath)
         const destPath = path.join(targetFolder, fileName)
