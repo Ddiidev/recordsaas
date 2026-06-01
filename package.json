@@ -16,6 +16,7 @@
   "type": "module",
   "scripts": {
     "setup:binaries": "node scripts/ensure-binaries.mjs",
+    "analyze:export-benchmark": "node scripts/analyze-export-benchmark.mjs",
     "verify:export-startup": "node scripts/verify-export-startup.mjs",
     "dev": "npm run setup:binaries && vite",
     "clean": "rimraf dist dist-electron",
