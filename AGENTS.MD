@@ -141,6 +141,7 @@ Export startup invariant:
 - Render progress must be emitted from the renderer loop through `export:render-progress`; do not rely only on encoded frame/chunk delivery because `VideoEncoder` can batch output and hide 0-100% progress.
 - Renderer-loop progress IPC and diagnostics must stay throttled/bucketed; never log or send redundant progress for every frame on long exports.
 - Render performance diagnostics should be aggregate periodic metrics (decode, draw, encoder backpressure, encode), not per-frame logs.
+- WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
 - Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
 - Zoom/cursor transform helpers may memoize metadata-derived calculations by metadata array identity and exact timestamp; do not approximate cursor/zoom math unless the visual tolerance is explicitly defined.
 - The export progress window must also be able to poll `export-progress:get-state` from main state, so delayed temp-window loading or missed push events cannot leave the widget stuck at `0%`.

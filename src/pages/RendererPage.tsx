@@ -180,6 +180,7 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
           codedWidth: track.video?.width,
           codedHeight: track.video?.height,
           description,
+          hardwareAcceleration: 'prefer-hardware',
         })
 
         mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 1 })
@@ -592,6 +593,7 @@ export function RendererPage() {
             bitrate: targetBitrate,
             framerate: fps,
             avc: { format: 'annexb' },
+            hardwareAcceleration: 'prefer-hardware',
           })
         }
 
