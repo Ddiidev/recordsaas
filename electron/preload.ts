@@ -282,7 +282,7 @@ export const electronAPI = {
   sendRenderProgress: (payload: { progress: number }) => {
     const safeProgress = Math.max(0, Math.min(100, Number.isFinite(payload.progress) ? payload.progress : 0))
     const bucket = Math.floor(safeProgress / 5)
-    if (bucket !== lastPreloadRenderProgressLogBucket || safeProgress >= 99) {
+    if (bucket !== lastPreloadRenderProgressLogBucket) {
       lastPreloadRenderProgressLogBucket = bucket
       console.info(`[Preload][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
     }

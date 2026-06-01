@@ -40,7 +40,7 @@ const shouldLogProgress = (progress, lastBucket) => {
   const bucket = getProgressLogBucket(progress)
   return {
     bucket,
-    shouldLog: bucket !== lastBucket || progress >= 99 || progress <= 0,
+    shouldLog: bucket !== lastBucket,
   }
 }
 

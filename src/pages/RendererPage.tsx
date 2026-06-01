@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import log from 'electron-log/renderer'
 import { useEffect, useRef } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import { EditorState, EditorActions, CursorTheme, CursorFrame, CursorImageBitmap } from '../types'
@@ -10,6 +9,17 @@ import { prepareCursorBitmaps, mapExportTimeToSourceTime, calculateExportDuratio
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 
 let rendererReadySignalSent = false
+
+const log = {
+  info: (...args: unknown[]) => console.info(...args),
+  warn: (...args: unknown[]) => console.warn(...args),
+  error: (...args: unknown[]) => console.error(...args),
+}
+
+const RENDER_PROGRESS_IPC_INTERVAL_MS = 250
+const RENDER_PROGRESS_IPC_STEP_PERCENT = 0.5
+const VIDEO_ENCODER_MAX_QUEUE_SIZE = 12
+const RENDER_PERF_LOG_INTERVAL_MS = 10_000
 
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
@@ -517,13 +527,24 @@ export function RendererPage() {
         let videoEncoder: any = null
         let lastProgress = 0
         let lastProgressLogBucket = -1
-        const emitRenderProgress = (progress: number) => {
+        let lastProgressIpcAt = 0
+        let lastProgressIpcValue = -1
+        const emitRenderProgress = (progress: number, force = false) => {
           const safeProgress = Math.max(0, Math.min(99, Number.isFinite(progress) ? progress : 0))
           const bucket = Math.floor(safeProgress / 5)
-          if (bucket !== lastProgressLogBucket || safeProgress >= 99) {
+          if (bucket !== lastProgressLogBucket || force) {
             lastProgressLogBucket = bucket
             log.info(`[RendererPage][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
           }
+          const now = performance.now()
+          const shouldSend =
+            force ||
+            lastProgressIpcAt === 0 ||
+            now - lastProgressIpcAt >= RENDER_PROGRESS_IPC_INTERVAL_MS ||
+            Math.abs(safeProgress - lastProgressIpcValue) >= RENDER_PROGRESS_IPC_STEP_PERCENT
+          if (!shouldSend) return
+          lastProgressIpcAt = now
+          lastProgressIpcValue = safeProgress
           window.electronAPI.sendRenderProgress({ progress: safeProgress })
         }
         const useHardwareEncoding = exportSettings.format === 'mp4' && 'VideoEncoder' in window
@@ -574,14 +595,28 @@ export function RendererPage() {
           })
         }
 
+        const perfStats = {
+          startedAt: performance.now(),
+          lastLoggedAt: performance.now(),
+          frames: 0,
+          waitMs: 0,
+          mainDecodeMs: 0,
+          webcamDecodeMs: 0,
+          drawMs: 0,
+          encodeMs: 0,
+          totalMs: 0,
+        }
+
         for (let frame = 0; frame < totalFrames; frame++) {
+          const frameStartedAt = performance.now()
           // Backpressure handling using MessageChannel for sub-millisecond polling
           // (setTimeout has ~15ms minimum resolution on Windows)
-          if (videoEncoder && videoEncoder.encodeQueueSize > 2) {
+          if (videoEncoder && videoEncoder.encodeQueueSize > VIDEO_ENCODER_MAX_QUEUE_SIZE) {
+            const waitStartedAt = performance.now()
             await new Promise<void>((resolve) => {
               const ch = new MessageChannel()
               ch.port1.onmessage = () => {
-                if (videoEncoder.encodeQueueSize <= 2) {
+                if (videoEncoder.encodeQueueSize <= VIDEO_ENCODER_MAX_QUEUE_SIZE) {
                   ch.port1.close()
                   resolve()
                 } else {
@@ -590,10 +625,11 @@ export function RendererPage() {
               }
               ch.port2.postMessage(null)
             })
+            perfStats.waitMs += performance.now() - waitStartedAt
           }
 
           lastProgress = Math.min(99, ((frame + 1) / totalFrames) * 100)
-          emitRenderProgress(lastProgress)
+          emitRenderProgress(lastProgress, frame + 1 === totalFrames)
           const exportTimestamp = frame / fps
           const sourceTimestamp = mapExportTimeToSourceTime(
             exportTimestamp,
@@ -607,7 +643,9 @@ export function RendererPage() {
           let webcamFrame: VideoFrame | null = null
 
           if (useDecoder && frameProvider) {
+            const mainDecodeStartedAt = performance.now()
             mainFrame = await frameProvider.getFrameForTime(sourceTimestamp)
+            perfStats.mainDecodeMs += performance.now() - mainDecodeStartedAt
           } else {
             throw new Error('Decoder-only mode: main video decoder not available.')
           }
@@ -619,7 +657,9 @@ export function RendererPage() {
               Math.min(rawWebcamTimestamp, Math.max(0, webcamDuration - 1 / fps)),
             )
             if (useWebcamDecoder && webcamFrameProvider) {
+              const webcamDecodeStartedAt = performance.now()
               webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)
+              perfStats.webcamDecodeMs += performance.now() - webcamDecodeStartedAt
             } else {
               throw new Error('Decoder-only mode: webcam decoder not available.')
             }
@@ -632,6 +672,7 @@ export function RendererPage() {
           const webcamFrameToUse = webcamFrame
 
           // Now that videos are at the correct time, draw the scene
+          const drawStartedAt = performance.now()
           const webcamFrameDimensions = webcamFrame
             ? {
                 width: (webcamFrame as any).displayWidth || (webcamFrame as any).codedWidth,
@@ -651,19 +692,48 @@ export function RendererPage() {
             webcamFrameDimensions,
             exportSettings.quality,
           )
+          perfStats.drawMs += performance.now() - drawStartedAt
 
           if (videoEncoder) {
+            const encodeStartedAt = performance.now()
             const timestamp = (frame / fps) * 1e6
             const vFrame = new VideoFrame(canvas, { timestamp })
             const keyFrame = frame % (fps * 2) === 0
             videoEncoder.encode(vFrame, { keyFrame })
             vFrame.close()
+            perfStats.encodeMs += performance.now() - encodeStartedAt
           } else {
             // Send the rendered frame to the main process
+            const encodeStartedAt = performance.now()
             const imageData = ctx.getImageData(0, 0, outputWidth, outputHeight)
             const frameBuffer = Buffer.from(imageData.data.buffer)
             const progress = Math.min(99, ((frame + 1) / totalFrames) * 100)
             window.electronAPI.sendFrameToMain({ frame: frameBuffer, progress })
+            perfStats.encodeMs += performance.now() - encodeStartedAt
+          }
+
+          perfStats.frames += 1
+          const now = performance.now()
+          perfStats.totalMs += now - frameStartedAt
+          if (now - perfStats.lastLoggedAt >= RENDER_PERF_LOG_INTERVAL_MS || frame + 1 === totalFrames) {
+            const elapsedSec = Math.max(0.001, (now - perfStats.startedAt) / 1000)
+            const frames = Math.max(1, perfStats.frames)
+            log.info('[RendererPage][Perf] Render loop metrics.', {
+              frame: frame + 1,
+              totalFrames,
+              fps: Number((perfStats.frames / elapsedSec).toFixed(2)),
+              progress: Number(lastProgress.toFixed(2)),
+              avgMs: {
+                backpressure: Number((perfStats.waitMs / frames).toFixed(3)),
+                mainDecode: Number((perfStats.mainDecodeMs / frames).toFixed(3)),
+                webcamDecode: Number((perfStats.webcamDecodeMs / frames).toFixed(3)),
+                draw: Number((perfStats.drawMs / frames).toFixed(3)),
+                encode: Number((perfStats.encodeMs / frames).toFixed(3)),
+                totalLoop: Number((perfStats.totalMs / frames).toFixed(3)),
+              },
+              encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
+            })
+            perfStats.lastLoggedAt = now
           }
         }
 

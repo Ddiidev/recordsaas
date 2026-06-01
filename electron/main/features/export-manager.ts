@@ -711,7 +711,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     const bucket = getProgressLogBucket(progress)
     return {
       bucket,
-      shouldLog: force || bucket !== lastBucket || progress >= 99 || progress <= 0,
+      shouldLog: force || bucket !== lastBucket,
     }
   }
 

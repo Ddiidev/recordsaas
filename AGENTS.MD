@@ -139,6 +139,8 @@ Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
 - Export startup must clear stale `render:ready` listeners before registering the current one-shot worker listener; a single export must send `render:start` only once.
 - Render progress must be emitted from the renderer loop through `export:render-progress`; do not rely only on encoded frame/chunk delivery because `VideoEncoder` can batch output and hide 0-100% progress.
+- Renderer-loop progress IPC and diagnostics must stay throttled/bucketed; never log or send redundant progress for every frame on long exports.
+- Render performance diagnostics should be aggregate periodic metrics (decode, draw, encoder backpressure, encode), not per-frame logs.
 - The export progress window must also be able to poll `export-progress:get-state` from main state, so delayed temp-window loading or missed push events cannot leave the widget stuck at `0%`.
 - The main process must keep a direct DOM sync fallback for the export progress window after each accepted progress update; the tiny temporary window must not depend solely on its preload listener/polling JavaScript to render 0-100% progress.
 - Recording audio with no cuts, speed regions, or `change-sound` edits must reuse the original audio file instead of pre-rendering a full-length processed track.
