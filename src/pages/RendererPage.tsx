@@ -581,19 +581,19 @@ export function RendererPage() {
           const baselineBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps, 'baseline')
           const encoderConfigCandidates = [
             {
-              codec: 'avc1.640033', // H.264 High Profile Level 5.1
+              codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
               width: outputWidth,
               height: outputHeight,
-              bitrate: highProfileBitrate,
+              bitrate: baselineBitrate,
               framerate: fps,
               avc: { format: 'annexb' },
               hardwareAcceleration: 'prefer-hardware',
             },
             {
-              codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
+              codec: 'avc1.640033', // H.264 High Profile Level 5.1
               width: outputWidth,
               height: outputHeight,
-              bitrate: baselineBitrate,
+              bitrate: highProfileBitrate,
               framerate: fps,
               avc: { format: 'annexb' },
               hardwareAcceleration: 'prefer-hardware',

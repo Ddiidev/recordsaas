@@ -145,7 +145,7 @@ Export startup invariant:
 - Export benchmark analysis must report both the latest started export and the last completed export so interrupted/stalled runs are not hidden by older successful runs.
 - Renderer performance metric logs must serialize payloads inline as JSON strings; Electron console forwarding may collapse object arguments to `[object Object]`.
 - WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
-- WebCodecs H.264 export should prefer High Profile when `VideoEncoder.isConfigSupported` accepts it, falling back to Baseline for compatibility.
+- WebCodecs H.264 export should prefer Baseline Profile for throughput on current benchmark hardware; High Profile may be tried only as a fallback or with benchmark evidence that it improves completion time.
 - The hidden export renderer canvas should request a non-alpha, desynchronized 2D context to reduce compositor synchronization overhead during long renders.
 - Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
 - Renderer export helpers may cache `Object.values` for region maps by object identity to avoid per-frame allocations; never mutate cached region arrays in place.
