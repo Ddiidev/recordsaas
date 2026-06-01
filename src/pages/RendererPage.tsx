@@ -553,7 +553,7 @@ export function RendererPage() {
         if (useHardwareEncoding) {
           log.info('[RendererPage] Initializing hardware encoder (VideoEncoder)')
           
-          const calculateBitrate = (res: string, qual: string, f: number) => {
+          const calculateBitrate = (res: string, qual: string, f: number, profile: 'high' | 'baseline') => {
             const baseBitrates: Record<string, number> = {
               '720p': 5_000_000,
               '1080p': 8_000_000,
@@ -566,16 +566,50 @@ export function RendererPage() {
               'ultra high': 2.0, // Same bitrate as high, difference is in imageSmoothingQuality
             }
             const fpsMultiplier = f >= 60 ? 1.4 : 1.0 // Higher FPS needs more data
-            const codecPenalty = 1.3 // Baseline profile needs ~30% more bitrate than High profile
+            const codecPenalty = profile === 'baseline' ? 1.3 : 1.0 // Baseline needs more bitrate than High profile
 
              const base = baseBitrates[res] || 8_000_000
              const qualMult = qualityMultipliers[qual] || 1.0
-             
+              
              return Math.floor(base * qualMult * fpsMultiplier * codecPenalty)
           }
 
-          const targetBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps)
-          log.info(`[RendererPage] Configured encoder bitrate: ${(targetBitrate / 1_000_000).toFixed(2)} Mbps`)
+          const highProfileBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps, 'high')
+          const baselineBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps, 'baseline')
+          const encoderConfigCandidates = [
+            {
+              codec: 'avc1.640033', // H.264 High Profile Level 5.1
+              width: outputWidth,
+              height: outputHeight,
+              bitrate: highProfileBitrate,
+              framerate: fps,
+              avc: { format: 'annexb' },
+              hardwareAcceleration: 'prefer-hardware',
+            },
+            {
+              codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
+              width: outputWidth,
+              height: outputHeight,
+              bitrate: baselineBitrate,
+              framerate: fps,
+              avc: { format: 'annexb' },
+              hardwareAcceleration: 'prefer-hardware',
+            },
+          ]
+          let selectedEncoderConfig = encoderConfigCandidates[encoderConfigCandidates.length - 1]
+          for (const candidate of encoderConfigCandidates) {
+            const support =
+              typeof (window as any).VideoEncoder.isConfigSupported === 'function'
+                ? await (window as any).VideoEncoder.isConfigSupported(candidate)
+                : { supported: true }
+            if (support?.supported) {
+              selectedEncoderConfig = support.config ?? candidate
+              break
+            }
+          }
+          log.info(
+            `[RendererPage] Configured encoder: codec=${selectedEncoderConfig.codec}, bitrate=${(selectedEncoderConfig.bitrate / 1_000_000).toFixed(2)} Mbps`,
+          )
 
           videoEncoder = new (window as any).VideoEncoder({
             output: (chunk: any) => {
@@ -586,15 +620,7 @@ export function RendererPage() {
             error: (e: any) => log.error('[RendererPage] Encoder error:', e),
           })
 
-          videoEncoder.configure({
-            codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
-            width: outputWidth,
-            height: outputHeight,
-            bitrate: targetBitrate,
-            framerate: fps,
-            avc: { format: 'annexb' },
-            hardwareAcceleration: 'prefer-hardware',
-          })
+          videoEncoder.configure(selectedEncoderConfig)
         }
 
         const perfStats = {
