@@ -15,6 +15,14 @@ type ProjectPayload = {
   originalProjectPath?: string
 }
 
+let latestProjectPayload: ProjectPayload | null = null
+const projectPayloadListeners = new Set<(payload: ProjectPayload) => void>()
+
+ipcRenderer.on('project:open', (_event: IpcRendererEvent, payload: ProjectPayload) => {
+  latestProjectPayload = payload
+  projectPayloadListeners.forEach((listener) => listener(payload))
+})
+
 type ExportPayload = {
   projectState: any
   exportSettings: any
@@ -40,6 +48,8 @@ type CompletePayload = {
   error?: string
   duration?: number
 }
+
+let lastPreloadRenderProgressLogBucket = -1
 
 // Payload for worker render
 type RenderStartPayload = {
@@ -177,13 +187,20 @@ export const electronAPI = {
 
   // --- Editor window ---
   onProjectOpen: (callback: (payload: ProjectPayload) => void) => {
-    const listener = (_event: IpcRendererEvent, payload: ProjectPayload) => callback(payload)
-    ipcRenderer.on('project:open', listener)
+    projectPayloadListeners.add(callback)
+    if (latestProjectPayload) {
+      queueMicrotask(() => {
+        if (latestProjectPayload && projectPayloadListeners.has(callback)) {
+          callback(latestProjectPayload)
+        }
+      })
+    }
 
     return () => {
-      ipcRenderer.removeListener('project:open', listener)
+      projectPayloadListeners.delete(callback)
     }
   },
+  editorReadyForProject: (): void => ipcRenderer.send('editor:ready-for-project'),
 
   readFile: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readFile', filePath),
   readFileBuffer: (filePath: string): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileBuffer', filePath),
@@ -261,6 +278,15 @@ export const electronAPI = {
   },
   sendFrameToMain: (payload: { frame: Buffer; progress: number }) => {
     ipcRenderer.send('export:frame-data', payload)
+  },
+  sendRenderProgress: (payload: { progress: number }) => {
+    const safeProgress = Math.max(0, Math.min(100, Number.isFinite(payload.progress) ? payload.progress : 0))
+    const bucket = Math.floor(safeProgress / 5)
+    if (bucket !== lastPreloadRenderProgressLogBucket || safeProgress >= 99) {
+      lastPreloadRenderProgressLogBucket = bucket
+      console.info(`[Preload][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
+    }
+    ipcRenderer.send('export:render-progress', payload)
   },
   finishRender: () => {
     ipcRenderer.send('export:render-finished')
