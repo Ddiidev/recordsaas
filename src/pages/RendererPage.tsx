@@ -749,7 +749,7 @@ export function RendererPage() {
           if (now - perfStats.lastLoggedAt >= RENDER_PERF_LOG_INTERVAL_MS || frame + 1 === totalFrames) {
             const elapsedSec = Math.max(0.001, (now - perfStats.startedAt) / 1000)
             const frames = Math.max(1, perfStats.frames)
-            log.info('[RendererPage][Perf] Render loop metrics.', {
+            const perfPayload = {
               frame: frame + 1,
               totalFrames,
               fps: Number((perfStats.frames / elapsedSec).toFixed(2)),
@@ -763,7 +763,8 @@ export function RendererPage() {
                 totalLoop: Number((perfStats.totalMs / frames).toFixed(3)),
               },
               encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
-            })
+            }
+            log.info(`[RendererPage][Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
             perfStats.lastLoggedAt = now
           }
         }

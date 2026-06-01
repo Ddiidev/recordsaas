@@ -39,6 +39,43 @@ const extractNumber = (line, pattern) => {
 }
 
 const parsePerfBlock = (lines, startIndex) => {
+  const firstLine = lines[startIndex] || ''
+  const jsonMatch = /Render loop metrics:\s*(\{.*\})/.exec(firstLine)
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1])
+      return {
+        frame: parsed.frame ?? null,
+        totalFrames: parsed.totalFrames ?? null,
+        fps: parsed.fps ?? null,
+        progress: parsed.progress ?? null,
+        backpressure: parsed.avgMs?.backpressure ?? null,
+        mainDecode: parsed.avgMs?.mainDecode ?? null,
+        webcamDecode: parsed.avgMs?.webcamDecode ?? null,
+        draw: parsed.avgMs?.draw ?? null,
+        encode: parsed.avgMs?.encode ?? null,
+        totalLoop: parsed.avgMs?.totalLoop ?? null,
+      }
+    } catch {
+      // Fall through to legacy multi-line parser.
+    }
+  }
+
+  if (firstLine.includes('[object Object]')) {
+    return {
+      frame: null,
+      totalFrames: null,
+      fps: null,
+      progress: null,
+      backpressure: null,
+      mainDecode: null,
+      webcamDecode: null,
+      draw: null,
+      encode: null,
+      totalLoop: null,
+    }
+  }
+
   const chunk = lines.slice(startIndex, Math.min(lines.length, startIndex + 18)).join('\n')
   const frame = extractNumber(chunk, /frame:\s*([0-9.]+)/)
   const totalFrames = extractNumber(chunk, /totalFrames:\s*([0-9.]+)/)
