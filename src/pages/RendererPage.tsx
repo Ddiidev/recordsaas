@@ -27,6 +27,9 @@ type RenderStartPayload = {
 }
 
 type VideoFrameProvider = {
+  width: number
+  height: number
+  fps: number | null
   getFrameForTime: (timeSec: number) => Promise<VideoFrame | null>
   close: () => void
 }
@@ -55,6 +58,9 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
   const waiters: Array<(frame: VideoFrame | null) => void> = []
   let decoder: any = null
   let timescale = 1
+  let sourceWidth = 0
+  let sourceHeight = 0
+  let sourceFps: number | null = null
   let closed = false
   let lastFrame: VideoFrame | null = null
   let nextFrame: VideoFrame | null = null
@@ -159,6 +165,11 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
         const track = info.videoTracks?.[0]
         if (!track) throw new Error('No video track found in MP4')
         timescale = track.timescale || 1
+        sourceWidth = track.video?.width || 0
+        sourceHeight = track.video?.height || 0
+        const durationSeconds = track.duration && track.timescale ? track.duration / track.timescale : 0
+        const sampleCount = typeof track.nb_samples === 'number' ? track.nb_samples : 0
+        sourceFps = durationSeconds > 0 && sampleCount > 0 ? sampleCount / durationSeconds : null
 
         decoder = new VideoDecoder({
           output: (frame: VideoFrame) => pushFrame(frame),
@@ -269,7 +280,7 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
     if (typeof mp4boxfile.stop === 'function') mp4boxfile.stop()
   }
 
-  return { getFrameForTime, close }
+  return { width: sourceWidth, height: sourceHeight, fps: sourceFps, getFrameForTime, close }
 }
 
 // These are needed to regenerate bitmaps within the renderer worker context.
@@ -394,12 +405,21 @@ export function RendererPage() {
         if (!canvas || !video) throw new Error('Canvas or Video ref is not available.')
 
         // --- 1. SETUP CANVAS AND CONTEXT ---
-        const { resolution, fps } = exportSettings
+        const { resolution } = exportSettings
         const [ratioW, ratioH] = projectState.aspectRatio.split(':').map(Number)
         const baseHeight = RESOLUTIONS[resolution as keyof typeof RESOLUTIONS].height
         let outputWidth = Math.round(baseHeight * (ratioW / ratioH))
         outputWidth = outputWidth % 2 === 0 ? outputWidth : outputWidth + 1
-        const outputHeight = baseHeight
+        let outputHeight = baseHeight
+
+        if (exportSettings.adaptiveRender) {
+          const adaptiveWidth = exportSettings.effectiveWidth || projectState.videoDimensions.width
+          const adaptiveHeight = exportSettings.effectiveHeight || projectState.videoDimensions.height
+          if (adaptiveWidth > 0 && adaptiveHeight > 0) {
+            outputWidth = adaptiveWidth % 2 === 0 ? adaptiveWidth : adaptiveWidth + 1
+            outputHeight = adaptiveHeight % 2 === 0 ? adaptiveHeight : adaptiveHeight + 1
+          }
+        }
 
         canvas.width = outputWidth
         canvas.height = outputHeight
@@ -469,6 +489,20 @@ export function RendererPage() {
             `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}). Export requires decoder-only mode.`,
           )
         }
+        const fps = Math.max(
+          1,
+          Math.min(
+            120,
+            Number.isFinite(exportSettings.effectiveFps)
+              ? Number(exportSettings.effectiveFps)
+              : exportSettings.adaptiveRender && frameProvider?.fps
+                ? frameProvider.fps
+                : exportSettings.fps,
+          ),
+        )
+        log.info(
+          `[RendererPage] Effective export settings: adaptive=${exportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
+        )
 
         // --- 3. LOAD VIDEO SOURCES ---
         const loadVideo = (videoElement: HTMLVideoElement, source: string, path: string): Promise<void> =>
@@ -577,8 +611,9 @@ export function RendererPage() {
              return Math.floor(base * qualMult * fpsMultiplier * codecPenalty)
           }
 
-          const highProfileBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps, 'high')
-          const baselineBitrate = calculateBitrate(exportSettings.resolution, exportSettings.quality, fps, 'baseline')
+          const bitrateResolution = outputHeight > 1080 ? '2k' : outputHeight > 720 ? '1080p' : outputHeight > 576 ? '720p' : outputHeight > 480 ? '576p' : '480p'
+          const highProfileBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'high')
+          const baselineBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'baseline')
           const encoderConfigCandidates = [
             {
               codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
@@ -625,6 +660,7 @@ export function RendererPage() {
 
           videoEncoder.configure(selectedEncoderConfig)
         }
+        const keyFrameIntervalFrames = Math.max(1, Math.round(fps * 2))
 
         const perfStats = {
           startedAt: performance.now(),
@@ -729,7 +765,7 @@ export function RendererPage() {
             const encodeStartedAt = performance.now()
             const timestamp = (frame / fps) * 1e6
             const vFrame = new VideoFrame(canvas, { timestamp })
-            const keyFrame = frame % (fps * 2) === 0
+            const keyFrame = frame % keyFrameIntervalFrames === 0
             videoEncoder.encode(vFrame, { keyFrame })
             vFrame.close()
             perfStats.encodeMs += performance.now() - encodeStartedAt

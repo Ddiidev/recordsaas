@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
+import * as MP4BoxModule from 'mp4box'
 import { appState } from '../state'
 import { getFFmpegPath, calculateExportDimensions, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
@@ -30,6 +31,18 @@ type LaneLike = { id: string; order: number }
 type CutLike = { startTime: number; duration: number; laneId?: string; zIndex?: number }
 type SpeedLike = { startTime: number; duration: number; speed: number; laneId?: string; zIndex?: number }
 type ExportQuality = 'low' | 'medium' | 'high' | 'ultra high'
+type NormalizedExportSettings = ExportSelectionRequest & {
+  quality: ExportQuality
+  adaptiveRender: boolean
+  effectiveWidth?: number
+  effectiveHeight?: number
+  effectiveFps?: number
+}
+type SourceVideoInfo = {
+  width: number
+  height: number
+  fps: number | null
+}
 type TimelineAudioSegment = { start: number; duration: number; speed: number }
 type ExportAudioSegment = {
   kind: 'audio' | 'silence'
@@ -76,6 +89,66 @@ type RunFFmpeg = (args: string[], label: string) => Promise<void>
 
 const MIN_AUDIO_SEGMENT_DURATION = 0.01
 const AUDIO_SEGMENT_SAMPLE_RATE = 48000
+
+const sanitizeFrameRate = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+  return Math.max(1, Math.min(120, value))
+}
+
+const mapHeightToExportResolution = (height: number): ExportSelectionRequest['resolution'] => {
+  if (height <= 480) return '480p'
+  if (height <= 576) return '576p'
+  if (height <= 720) return '720p'
+  if (height <= 1080) return '1080p'
+  return '2k'
+}
+
+const mapFpsToExportTier = (fps: number | null, fallback: ExportSelectionRequest['fps']): ExportSelectionRequest['fps'] => {
+  if (!fps) return fallback
+  return fps > 30.5 ? 60 : 30
+}
+
+const readSourceVideoInfo = async (videoPath: string | null | undefined): Promise<SourceVideoInfo | null> => {
+  const normalizedPath = normalizeMediaPath(videoPath)
+  if (!normalizedPath) return null
+
+  try {
+    const buffer = await fsPromises.readFile(normalizedPath)
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    ;(arrayBuffer as ArrayBuffer & { fileStart?: number }).fileStart = 0
+
+    return await new Promise<SourceVideoInfo | null>((resolve, reject) => {
+      const mp4boxfile = (MP4BoxModule as { createFile?: () => any }).createFile?.()
+      if (!mp4boxfile) {
+        reject(new Error('MP4Box.createFile is unavailable.'))
+        return
+      }
+
+      mp4boxfile.onReady = (info: any) => {
+        const track = info.videoTracks?.[0]
+        if (!track) {
+          resolve(null)
+          return
+        }
+
+        const durationSeconds = track.duration && track.timescale ? track.duration / track.timescale : 0
+        const sampleCount = typeof track.nb_samples === 'number' ? track.nb_samples : 0
+        const fps = sanitizeFrameRate(durationSeconds > 0 && sampleCount > 0 ? sampleCount / durationSeconds : null)
+        resolve({
+          width: track.video?.width || 0,
+          height: track.video?.height || 0,
+          fps,
+        })
+      }
+      mp4boxfile.onError = (error: unknown) => reject(error)
+      mp4boxfile.appendBuffer(arrayBuffer)
+      mp4boxfile.flush()
+    })
+  } catch (error) {
+    log.warn('[ExportManager] Failed to read adaptive source video info. Falling back to manual export settings.', error)
+    return null
+  }
+}
 
 const sortLanesForPrecedence = (lanes: LaneLike[] | undefined): LaneLike[] => {
   const source = Array.isArray(lanes) && lanes.length > 0 ? lanes : [{ id: 'lane-1', order: 0 }]
@@ -676,7 +749,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   const auxiliaryFFmpegProcesses = new Set<ChildProcessWithoutNullStreams>()
 
   const safeExportSettings = exportSettings && typeof exportSettings === 'object' ? exportSettings : {}
-  const requestedExportSettings: ExportSelectionRequest & { quality: ExportQuality } = {
+  const requestedExportSettings: NormalizedExportSettings = {
     format: safeExportSettings.format === 'gif' ? 'gif' : 'mp4',
     resolution:
       safeExportSettings.resolution === '480p' ||
@@ -694,6 +767,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       safeExportSettings.quality === 'ultra high'
         ? safeExportSettings.quality
         : 'medium',
+    adaptiveRender: safeExportSettings.adaptiveRender !== false,
   }
 
   const playCompletionSound = (completionType: 'success' | 'error' | 'cancelled') => {
@@ -1106,12 +1180,42 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     return
   }
 
-  let normalizedExportSettings: ExportSelectionRequest & { quality: ExportQuality } = requestedExportSettings
+  let adaptiveSourceInfo: SourceVideoInfo | null = null
+  if (requestedExportSettings.adaptiveRender) {
+    sendProgressUpdate(1, 'Reading source media...', true, 'adaptive-source')
+    adaptiveSourceInfo = await readSourceVideoInfo(projectState.videoPath)
+    if (adaptiveSourceInfo?.width && adaptiveSourceInfo.height) {
+      requestedExportSettings.effectiveWidth = adaptiveSourceInfo.width
+      requestedExportSettings.effectiveHeight = adaptiveSourceInfo.height
+    }
+    if (adaptiveSourceInfo?.fps) {
+      requestedExportSettings.effectiveFps = adaptiveSourceInfo.fps
+    }
+    const fpsLog = adaptiveSourceInfo?.fps ? adaptiveSourceInfo.fps.toFixed(3) : 'unknown'
+    log.info(
+      `[ExportManager] Adaptive export source info: ${adaptiveSourceInfo?.width || 'unknown'}x${adaptiveSourceInfo?.height || 'unknown'} @ ${fpsLog}fps`,
+    )
+  }
+
+  let normalizedExportSettings: NormalizedExportSettings = requestedExportSettings
   try {
+    const authorizationSelection: ExportSelectionRequest = requestedExportSettings.adaptiveRender
+      ? {
+          format: requestedExportSettings.format,
+          resolution: mapHeightToExportResolution(
+            requestedExportSettings.effectiveHeight || projectState.videoDimensions?.height || 720,
+          ),
+          fps: mapFpsToExportTier(requestedExportSettings.effectiveFps ?? null, requestedExportSettings.fps),
+        }
+      : {
+          format: requestedExportSettings.format,
+          resolution: requestedExportSettings.resolution,
+          fps: requestedExportSettings.fps,
+        }
     const authorizedExport = await authorizeDesktopExport({
-      format: requestedExportSettings.format,
-      resolution: requestedExportSettings.resolution,
-      fps: requestedExportSettings.fps,
+      format: authorizationSelection.format,
+      resolution: authorizationSelection.resolution,
+      fps: authorizationSelection.fps,
     })
 
     if (exportCompleted) return
@@ -1119,8 +1223,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     normalizedExportSettings = {
       ...requestedExportSettings,
       format: authorizedExport.approved.format,
-      resolution: authorizedExport.approved.resolution,
-      fps: authorizedExport.approved.fps,
+      resolution: requestedExportSettings.adaptiveRender
+        ? requestedExportSettings.resolution
+        : authorizedExport.approved.resolution,
+      fps: requestedExportSettings.adaptiveRender
+        ? requestedExportSettings.fps
+        : authorizedExport.approved.fps,
     }
   } catch (error) {
     if (exportCompleted) return
@@ -1202,8 +1310,20 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
   }
 
-  const { format, resolution, fps } = normalizedExportSettings
-  const { width: outputWidth, height: outputHeight } = calculateExportDimensions(resolution, projectState.aspectRatio)
+  const { format, resolution } = normalizedExportSettings
+  const presetDimensions = calculateExportDimensions(resolution, projectState.aspectRatio)
+  const outputWidth =
+    normalizedExportSettings.adaptiveRender && normalizedExportSettings.effectiveWidth
+      ? normalizedExportSettings.effectiveWidth + (normalizedExportSettings.effectiveWidth % 2)
+      : presetDimensions.width
+  const outputHeight =
+    normalizedExportSettings.adaptiveRender && normalizedExportSettings.effectiveHeight
+      ? normalizedExportSettings.effectiveHeight + (normalizedExportSettings.effectiveHeight % 2)
+      : presetDimensions.height
+  const fps = sanitizeFrameRate(normalizedExportSettings.effectiveFps) || normalizedExportSettings.fps
+  log.info(
+    `[ExportManager] Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
+  )
 
 
   // Determine input format based on output format
