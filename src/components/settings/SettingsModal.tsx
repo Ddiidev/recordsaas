@@ -13,6 +13,8 @@ interface SettingsModalProps {
   onClose: () => void
   isTransparent?: boolean
   defaultTab?: SettingsTab
+  recordingProfileCreateRequestId?: number
+  onRecordingProfileCreateRequestHandled?: () => void
 }
 
 export type SettingsTab = 'general' | 'recording' | 'shortcuts' | 'account' | 'about'
@@ -25,7 +27,14 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconComponent; solid?:
   { id: 'about', label: 'About', icon: InfoCircle, solid: InfoCircleSolid },
 ]
 
-export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultTab = 'general' }: SettingsModalProps) {
+export function SettingsModal({
+  isOpen,
+  onClose,
+  isTransparent = false,
+  defaultTab = 'general',
+  recordingProfileCreateRequestId = 0,
+  onRecordingProfileCreateRequestHandled,
+}: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab)
 
   useEffect(() => {
@@ -41,7 +50,12 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
       case 'general':
         return <GeneralTab />
       case 'recording':
-        return <RecordingProfilesTab />
+        return (
+          <RecordingProfilesTab
+            createProfileRequestId={recordingProfileCreateRequestId}
+            onCreateProfileRequestHandled={onRecordingProfileCreateRequestHandled}
+          />
+        )
       case 'shortcuts':
         return <ShortcutsTab />
       case 'account':

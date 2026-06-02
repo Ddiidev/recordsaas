@@ -19,7 +19,7 @@ import {
   UserCircle,
 } from '@icons'
 import { Button } from '../components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../components/ui/select'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
@@ -43,6 +43,7 @@ const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
 const WEBCAM_RELEASE_DELAY_MS = 1000
 const RECORDER_DEVICE_LABEL_MAX_LENGTH = 50
+const CREATE_RECORDING_PROFILE_ACTION = '__create_recording_profile__'
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -77,6 +78,7 @@ export function RecorderPage() {
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
@@ -602,6 +604,13 @@ export function RecorderPage() {
   }
 
   const handleProfileChange = (id: string) => {
+    if (id === CREATE_RECORDING_PROFILE_ACTION) {
+      setRecordingProfileCreateRequestId((current) => current + 1)
+      setSettingsDefaultTab('recording')
+      setSettingsModalOpen(true)
+      return
+    }
+
     setSelectedRecordingProfileId(id)
     window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
@@ -796,6 +805,10 @@ export function RecorderPage() {
                         {getRecordingProfileLabel(profile)}
                       </SelectItem>
                     ))}
+                    <SelectSeparator />
+                    <SelectItem value={CREATE_RECORDING_PROFILE_ACTION} className="font-medium text-primary">
+                      Create profile
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -956,6 +969,8 @@ export function RecorderPage() {
         onClose={handleSettingsClose}
         isTransparent
         defaultTab={settingsDefaultTab}
+        recordingProfileCreateRequestId={recordingProfileCreateRequestId}
+        onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
       />
     </TooltipProvider>
   )

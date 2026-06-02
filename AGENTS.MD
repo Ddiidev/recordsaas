@@ -58,6 +58,7 @@ Recorder-to-editor handoff invariant:
 
 Recording profile invariant:
 - Recorder startup must offer a recording profile dropdown in place of the old local-video load button. The default profile is `Native Adaptive (Recommended)`.
+- The recording profile dropdown includes profile items first, then a separator and a `Create profile` action that opens `Settings > Recording` and starts a new editable profile.
 - Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
 - The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution.
 - Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.

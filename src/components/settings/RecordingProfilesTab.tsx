@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Input } from '../ui/input'
@@ -38,12 +38,20 @@ const persistProfiles = (profiles: RecordingProfile[]) => {
   )
 }
 
-export function RecordingProfilesTab() {
+export function RecordingProfilesTab({
+  createProfileRequestId = 0,
+  onCreateProfileRequestHandled,
+}: {
+  createProfileRequestId?: number
+  onCreateProfileRequestHandled?: () => void
+}) {
   const [profiles, setProfiles] = useState<RecordingProfile[]>([createNativeRecordingProfile()])
   const [selectedProfileId, setSelectedProfileId] = useState(NATIVE_RECORDING_PROFILE_ID)
   const [isEditing, setIsEditing] = useState(false)
   const [analysis, setAnalysis] = useState<RecordingCapabilityAnalysis | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isLoaded, setIsLoaded] = useState(false)
+  const handledCreateRequestIdRef = useRef(0)
 
   useEffect(() => {
     let isMounted = true
@@ -61,6 +69,7 @@ export function RecordingProfilesTab() {
       setProfiles(normalized)
       setSelectedProfileId(normalized.some((profile) => profile.id === storedSelectedId) ? storedSelectedId : NATIVE_RECORDING_PROFILE_ID)
       setAnalysis(storedAnalysis || null)
+      setIsLoaded(true)
     }
 
     void load()
@@ -96,6 +105,14 @@ export function RecordingProfilesTab() {
     setSelectedProfileId(profile.id)
     setIsEditing(true)
   }
+
+  useEffect(() => {
+    if (!isLoaded || createProfileRequestId <= 0 || handledCreateRequestIdRef.current === createProfileRequestId) return
+
+    handledCreateRequestIdRef.current = createProfileRequestId
+    handleAddProfile()
+    onCreateProfileRequestHandled?.()
+  }, [createProfileRequestId, isLoaded, onCreateProfileRequestHandled])
 
   const handleDeleteProfile = () => {
     if (isNativeProfile) return
