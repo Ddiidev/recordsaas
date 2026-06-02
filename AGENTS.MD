@@ -61,6 +61,7 @@ Recording profile invariant:
 - The recording profile dropdown includes profile items first, then a separator and a `Create profile` action that opens `Settings > Recording` and starts a new editable profile.
 - Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
 - The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution.
+- On Windows, webcam capture options must be probed before recording when an explicit size is requested. If DShow rejects the target size, fall back to a supported common size or device default instead of aborting the recording.
 - Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.
 
 Media URL invariant:

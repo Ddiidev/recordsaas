@@ -118,6 +118,10 @@ type WebcamInputContext = {
   screenWidth?: number
   screenHeight?: number
 }
+type WebcamInputOptions = {
+  fps: 30 | 60
+  size?: { width: number; height: number }
+}
 
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
@@ -188,15 +192,110 @@ const resolveWebcamFps = (profile: RecordingProfileRuntime): 30 | 60 => {
   return profile.webcamFps
 }
 
-const appendWebcamInputOptions = (args: string[], profile: RecordingProfileRuntime, context: WebcamInputContext = {}) => {
-  const webcamFps = resolveWebcamFps(profile)
+const resolveDesiredWebcamSize = (
+  profile: RecordingProfileRuntime,
+  context: WebcamInputContext = {},
+): { width: number; height: number } | undefined => {
   const webcamSize = profile.isNative && context.screenWidth && context.screenHeight
     ? { width: context.screenWidth, height: context.screenHeight }
     : resolveScaledDimensions(16, 9, profile.webcamResolution)
-  args.push('-framerate', String(webcamFps))
-  if (webcamSize) {
-    args.push('-video_size', `${webcamSize.width}x${webcamSize.height}`)
+
+  return webcamSize || undefined
+}
+
+const appendWebcamInputOptions = (args: string[], options: WebcamInputOptions) => {
+  args.push('-framerate', String(options.fps))
+  if (options.size) {
+    args.push('-video_size', `${options.size.width}x${options.size.height}`)
   }
+}
+
+const isSameWebcamSize = (
+  left: { width: number; height: number } | undefined,
+  right: { width: number; height: number } | undefined,
+) => left?.width === right?.width && left?.height === right?.height
+
+const getWin32WebcamFallbackSizes = (
+  desiredSize: { width: number; height: number } | undefined,
+): Array<{ width: number; height: number } | undefined> => {
+  const candidates: Array<{ width: number; height: number } | undefined> = []
+  const pushUnique = (size: { width: number; height: number } | undefined) => {
+    if (candidates.some((candidate) => isSameWebcamSize(candidate, size))) return
+    candidates.push(size)
+  }
+
+  pushUnique(desiredSize)
+  pushUnique({ width: 1920, height: 1080 })
+  pushUnique({ width: 1280, height: 720 })
+  pushUnique({ width: 640, height: 480 })
+  pushUnique(undefined)
+
+  return candidates
+}
+
+const probeWin32DshowWebcamInput = (
+  deviceLabel: string,
+  fps: 30 | 60,
+  size: { width: number; height: number } | undefined,
+): Promise<boolean> =>
+  new Promise((resolve) => {
+    const args = ['-hide_banner', '-f', 'dshow', '-framerate', String(fps)]
+    if (size) {
+      args.push('-video_size', `${size.width}x${size.height}`)
+    }
+    args.push('-t', '0.2', '-i', `video=${deviceLabel}`, '-f', 'null', '-')
+
+    const probe = spawn(FFMPEG_PATH, args, { windowsHide: true })
+    let settled = false
+
+    const settle = (result: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      resolve(result)
+    }
+
+    const timeoutId = setTimeout(() => {
+      try {
+        probe.kill('SIGKILL')
+      } catch {
+        // ignore probe cleanup errors
+      }
+      settle(false)
+    }, 3000)
+
+    probe.once('error', () => settle(false))
+    probe.once('exit', (code) => settle(code === 0))
+  })
+
+const resolveWebcamInputOptions = async (
+  profile: RecordingProfileRuntime,
+  context: WebcamInputContext,
+  webcam: { deviceLabel: string },
+): Promise<WebcamInputOptions> => {
+  const fps = resolveWebcamFps(profile)
+  const desiredSize = resolveDesiredWebcamSize(profile, context)
+
+  if (process.platform !== 'win32') {
+    return { fps, size: desiredSize }
+  }
+
+  for (const candidate of getWin32WebcamFallbackSizes(desiredSize)) {
+    const canOpen = await probeWin32DshowWebcamInput(webcam.deviceLabel, fps, candidate)
+    if (canOpen) {
+      if (!isSameWebcamSize(candidate, desiredSize)) {
+        log.warn(
+          `[RecordingManager] Webcam rejected requested capture size ${desiredSize ? `${desiredSize.width}x${desiredSize.height}` : 'native/default'}; using ${
+            candidate ? `${candidate.width}x${candidate.height}` : 'device default'
+          } instead.`,
+        )
+      }
+      return { fps, size: candidate }
+    }
+  }
+
+  log.warn('[RecordingManager] Webcam probe failed for all explicit sizes; falling back to DShow device default.')
+  return { fps }
 }
 
 function shouldApplyLinuxDisplayScale(scaleFactor: number): boolean {
@@ -1024,20 +1123,21 @@ export async function startRecording(options: any) {
     }
   }
   if (webcam) {
+    const webcamInputOptions = await resolveWebcamInputOptions(recordingProfile, webcamInputContext, webcam)
     switch (process.platform) {
       case 'linux':
         baseFfmpegArgs.push('-f', 'v4l2')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
+        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
         baseFfmpegArgs.push('-i', `/dev/video${webcam.index}`)
         break
       case 'win32':
         baseFfmpegArgs.push('-f', 'dshow')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
+        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
         baseFfmpegArgs.push('-i', `video=${webcam.deviceLabel}`)
         break
       case 'darwin':
         baseFfmpegArgs.push('-f', 'avfoundation')
-        appendWebcamInputOptions(baseFfmpegArgs, recordingProfile, webcamInputContext)
+        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
         baseFfmpegArgs.push('-i', `${webcam.index}:none`)
         break
     }
