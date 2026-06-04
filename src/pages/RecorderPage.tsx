@@ -99,12 +99,10 @@ export function RecorderPage() {
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
-  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
-  const isWindowClickThroughSupported = platform === 'win32' || platform === 'darwin'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -416,46 +414,18 @@ export function RecorderPage() {
     }
   }, [])
 
-  // Enable click-through only when Settings is closed
+  // Keep the recorder window interactive while its controls are visible.
   useEffect(() => {
-    if (isSettingsModalOpen || isAnyToolbarSelectOpen || !isWindowClickThroughSupported) {
+    if (platform === 'win32' || platform === 'darwin') {
       window.electronAPI.setRecorderIgnoreMouse(false)
-      return
-    }
-
-    const isInteractiveElement = (target: HTMLElement | null) =>
-      !!target?.closest('[data-interactive="true"], [data-radix-popper-content-wrapper], [role="listbox"]')
-
-    const syncIgnoreMouseState = (target: HTMLElement | null) => {
-      const interactive = isInteractiveElement(target)
-      window.electronAPI.setRecorderIgnoreMouse(!interactive)
-    }
-
-    const onMouseMove = (e: MouseEvent) => {
-      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY }
-      syncIgnoreMouseState(e.target as HTMLElement | null)
-    }
-
-    const onMouseLeave = () => {
-      window.electronAPI.setRecorderIgnoreMouse(true)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseleave', onMouseLeave)
-
-    const lastPointerPosition = lastPointerPositionRef.current
-    if (lastPointerPosition) {
-      syncIgnoreMouseState(document.elementFromPoint(lastPointerPosition.x, lastPointerPosition.y) as HTMLElement | null)
-    } else {
-      window.electronAPI.setRecorderIgnoreMouse(true)
     }
 
     return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseleave', onMouseLeave)
-      window.electronAPI.setRecorderIgnoreMouse(false)
+      if (platform === 'win32' || platform === 'darwin') {
+        window.electronAPI.setRecorderIgnoreMouse(false)
+      }
     }
-  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, isWindowClickThroughSupported])
+  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, platform])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {

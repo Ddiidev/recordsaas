@@ -1,4 +1,5 @@
 import { app, BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, screen } from 'electron'
+import { totalmem } from 'node:os'
 import { appState } from '../../state'
 import { createRecorderWindow } from '../../windows/recorder-window'
 
@@ -12,6 +13,12 @@ export function handleGetVersion() {
 
 export function handleGetPlatform() {
   return process.platform
+}
+
+export function handleGetSystemMemoryInfo() {
+  return {
+    totalMemoryBytes: totalmem(),
+  }
 }
 
 export function minimizeWindow(event: IpcMainEvent) {

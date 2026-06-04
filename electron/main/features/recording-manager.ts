@@ -113,6 +113,14 @@ type RecordingProfileRuntime = {
 }
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
+  screenFps?: RecordingScreenFps
+}
+type RecordingCapabilityProbeBackend = 'ddagrab' | 'gdigrab' | 'x11grab'
+type RecordingCapabilityProbeResult = {
+  backend: RecordingCapabilityProbeBackend
+  ok: boolean
+  stderr: string
+  measuredFps: number | null
 }
 type WebcamInputContext = {
   screenWidth?: number
@@ -134,6 +142,16 @@ const FFMPEG_STOP_FORCE_PERIOD_MS = 4500
 const FFMPEG_STOP_RESOLVE_PERIOD_MS = 5500
 const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
+const RECORDING_CAPABILITY_PROBE_SECONDS = 5
+const RECORDING_CAPABILITY_PROBE_TIMEOUT_MS = 8000
+const WEBCAM_RECORDING_ENCODING_CONFIG = {
+  codec: 'libx264',
+  preset: 'ultrafast',
+  crf: '30',
+  maxrate: '2500k',
+  bufsize: '5000k',
+  pixFmt: 'yuv420p',
+}
 const RECORDING_RESOLUTION_HEIGHTS: Record<Exclude<RecordingResolution, 'native'>, number> = {
   sd: 480,
   hd: 720,
@@ -297,6 +315,66 @@ const resolveWebcamInputOptions = async (
   log.warn('[RecordingManager] Webcam probe failed for all explicit sizes; falling back to DShow device default.')
   return { fps }
 }
+
+const parseProbeTimeSeconds = (value: string): number | null => {
+  const match = value.match(/(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  const seconds = Number(match[3])
+  if (![hours, minutes, seconds].every(Number.isFinite)) return null
+  return hours * 3600 + minutes * 60 + seconds
+}
+
+const parseRecordingCapabilityProbeFps = (stderr: string): number | null => {
+  const fpsValues = Array.from(stderr.matchAll(/fps=\s*([0-9.]+)/g))
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0)
+  const lastReportedFps = fpsValues.length > 0 ? fpsValues[fpsValues.length - 1] : null
+  const progressMatches = Array.from(stderr.matchAll(/frame=\s*(\d+).*?time=(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/g))
+  const lastProgress = progressMatches.length > 0 ? progressMatches[progressMatches.length - 1] : null
+  const frameCount = lastProgress ? Number(lastProgress[1]) : null
+  const durationSeconds = lastProgress ? parseProbeTimeSeconds(lastProgress[2]) : null
+  const frameDerivedFps =
+    frameCount && durationSeconds && durationSeconds > 0
+      ? frameCount / durationSeconds
+      : null
+
+  if (frameDerivedFps && lastReportedFps) return Math.max(frameDerivedFps, lastReportedFps)
+  return frameDerivedFps || lastReportedFps
+}
+
+const runRecordingCapabilityProbe = async (
+  backend: RecordingCapabilityProbeBackend,
+  args: string[],
+): Promise<RecordingCapabilityProbeResult> =>
+  await new Promise((resolve) => {
+    let stderr = ''
+    let settled = false
+    const probe = spawn(FFMPEG_PATH, args)
+    const timeout = setTimeout(() => {
+      if (!probe.killed) probe.kill('SIGKILL')
+    }, RECORDING_CAPABILITY_PROBE_TIMEOUT_MS)
+
+    const settle = (result: RecordingCapabilityProbeResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+
+    probe.stderr.on('data', (data) => {
+      stderr += data.toString()
+    })
+    probe.on('error', (error) => {
+      log.warn(`[RecordingManager] ${backend} recording capability probe failed:`, error)
+      settle({ backend, ok: false, stderr, measuredFps: null })
+    })
+    probe.on('close', (code) => {
+      const measuredFps = parseRecordingCapabilityProbeFps(stderr)
+      settle({ backend, ok: code === 0 && Boolean(measuredFps), stderr, measuredFps })
+    })
+  })
 
 function shouldApplyLinuxDisplayScale(scaleFactor: number): boolean {
   return process.platform === 'linux' && Number.isFinite(scaleFactor) && scaleFactor > 0 && Math.abs(scaleFactor - 1) > 0.001
@@ -913,6 +991,9 @@ function buildFfmpegArgs(
   const screenIndex = (hasMic ? 1 : 0) + (hasWebcam ? 1 : 0)
 
   // Map screen video stream (video only, no audio)
+  log.info(
+    `[RecordingManager] Screen recording encode config: output=${screenOut} codec=libx264 preset=ultrafast crf=18 fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
+  )
   finalArgs.push(
     '-map',
     `${screenIndex}:v`,
@@ -932,6 +1013,9 @@ function buildFfmpegArgs(
   if (outputOptions.screenScale) {
     finalArgs.push('-vf', `scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
   }
+  if (outputOptions.screenFps) {
+    finalArgs.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
+  }
   finalArgs.push(screenOut)
 
   // Map audio stream to separate file if present
@@ -941,22 +1025,24 @@ function buildFfmpegArgs(
 
   // Map webcam video stream if present
   if (hasWebcam && webcamOut) {
+    log.info(
+      `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt}`,
+    )
     finalArgs.push(
       '-map',
       `${webcamIndex}:v`,
       '-c:v',
-      'libx264',
+      WEBCAM_RECORDING_ENCODING_CONFIG.codec,
       '-preset',
-      'ultrafast',
+      WEBCAM_RECORDING_ENCODING_CONFIG.preset,
       '-crf',
-      '18',
-      '-tune', 'zerolatency',
-      '-profile:v',
-      'high',
-      '-level',
-      '5.1',
+      WEBCAM_RECORDING_ENCODING_CONFIG.crf,
+      '-maxrate',
+      WEBCAM_RECORDING_ENCODING_CONFIG.maxrate,
+      '-bufsize',
+      WEBCAM_RECORDING_ENCODING_CONFIG.bufsize,
       '-pix_fmt',
-      'yuv420p',
+      WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
       webcamOut,
     )
   }
@@ -996,7 +1082,7 @@ export async function startRecording(options: any) {
   const { source, displayId, mic, webcam } = options
   const recordingProfile = normalizeRecordingProfile(options.recordingProfile)
   const screenFps = recordingProfile.screenFps
-  const outputOptions: RecordingOutputOptions = {}
+  const outputOptions: RecordingOutputOptions = { screenFps }
   log.info('[RecordingManager] Received start recording request with options:', options)
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
 
@@ -1331,7 +1417,9 @@ export async function analyzeRecordingCapability(): Promise<{
   reason: string
   measuredFps?: number
 }> {
+  const allDisplays = screen.getAllDisplays()
   const targetDisplay = screen.getPrimaryDisplay()
+  const targetDisplayIndex = Math.max(0, allDisplays.findIndex((display) => display.id === targetDisplay.id))
   const scaleFactor = targetDisplay.scaleFactor || 1
   const { x, y, width, height } = targetDisplay.bounds
   const physicalWidth =
@@ -1351,52 +1439,86 @@ export async function analyzeRecordingCapability(): Promise<{
   const physicalY =
     process.platform === 'win32' ? Math.floor(y * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(y, scaleFactor) : y
 
-  const args =
+  const ddagrabInput = [
+    `ddagrab=output_idx=${targetDisplayIndex}`,
+    'framerate=60',
+    'draw_mouse=0',
+    `video_size=${physicalWidth}x${physicalHeight}`,
+    'offset_x=0',
+    'offset_y=0',
+    'dup_frames=1',
+  ].join(':')
+  const probes: Array<{ backend: RecordingCapabilityProbeBackend; args: string[] }> =
     process.platform === 'win32'
       ? [
-          '-hide_banner',
-          '-f',
-          'gdigrab',
-          '-framerate',
-          '60',
-          '-draw_mouse',
-          '0',
-          '-offset_x',
-          String(physicalX),
-          '-offset_y',
-          String(physicalY),
-          '-video_size',
-          `${physicalWidth}x${physicalHeight}`,
-          '-t',
-          '2',
-          '-i',
-          'desktop',
-          '-f',
-          'null',
-          '-',
+          {
+            backend: 'ddagrab',
+            args: [
+              '-hide_banner',
+              '-f',
+              'lavfi',
+              '-i',
+              ddagrabInput,
+              '-t',
+              String(RECORDING_CAPABILITY_PROBE_SECONDS),
+              '-f',
+              'null',
+              '-',
+            ],
+          },
+          {
+            backend: 'gdigrab',
+            args: [
+              '-hide_banner',
+              '-f',
+              'gdigrab',
+              '-framerate',
+              '60',
+              '-draw_mouse',
+              '0',
+              '-offset_x',
+              String(physicalX),
+              '-offset_y',
+              String(physicalY),
+              '-video_size',
+              `${physicalWidth}x${physicalHeight}`,
+              '-t',
+              String(RECORDING_CAPABILITY_PROBE_SECONDS),
+              '-i',
+              'desktop',
+              '-f',
+              'null',
+              '-',
+            ],
+          },
         ]
       : process.platform === 'linux'
         ? [
-            '-hide_banner',
-            '-f',
-            'x11grab',
-            '-framerate',
-            '60',
-            '-draw_mouse',
-            '0',
-            '-video_size',
-            `${physicalWidth}x${physicalHeight}`,
-            '-t',
-            '2',
-            '-i',
-            `${process.env.DISPLAY || ':0.0'}+${physicalX},${physicalY}`,
-            '-f',
-            'null',
-            '-',
+            {
+              backend: 'x11grab',
+              args: [
+                '-hide_banner',
+                '-f',
+                'x11grab',
+                '-framerate',
+                '60',
+                '-draw_mouse',
+                '0',
+                '-video_size',
+                `${physicalWidth}x${physicalHeight}`,
+                '-t',
+                String(RECORDING_CAPABILITY_PROBE_SECONDS),
+                '-i',
+                `${process.env.DISPLAY || ':0.0'}+${physicalX},${physicalY}`,
+                '-f',
+                'null',
+                '-',
+              ],
+            },
           ]
-        : null
+        : []
 
-  if (!args) {
+  if (probes.length === 0) {
     const likelyCanRecord60 = (cpus()?.length || 0) >= 8
     return {
       recommendedFps: likelyCanRecord60 ? 60 : 30,
@@ -1407,44 +1529,40 @@ export async function analyzeRecordingCapability(): Promise<{
     }
   }
 
-  return await new Promise((resolve) => {
-    const startedAt = Date.now()
-    let stderr = ''
-    const probe = spawn(FFMPEG_PATH, args)
-    const timeout = setTimeout(() => {
-      if (!probe.killed) probe.kill('SIGKILL')
-    }, 5000)
+  let lastResult: RecordingCapabilityProbeResult | null = null
+  for (const probe of probes) {
+    const result = await runRecordingCapabilityProbe(probe.backend, probe.args)
+    lastResult = result
+    log.info(
+      `[RecordingManager] ${result.backend} capability probe result: ok=${result.ok} measuredFps=${result.measuredFps?.toFixed(1) || 'unknown'}`,
+    )
+    if (result.ok) break
+  }
 
-    probe.stderr.on('data', (data) => {
-      stderr += data.toString()
-    })
-    probe.on('error', (error) => {
-      clearTimeout(timeout)
-      log.warn('[RecordingManager] Recording capability analysis failed:', error)
-      resolve({
-        recommendedFps: 30,
-        canRecord60Fps: false,
-        reason: 'The 60fps probe could not start. Native profile will use the safer 30fps setting.',
-      })
-    })
-    probe.on('close', () => {
-      clearTimeout(timeout)
-      const fpsValues = Array.from(stderr.matchAll(/fps=\s*([0-9.]+)/g))
-        .map((match) => Number(match[1]))
-        .filter((value) => Number.isFinite(value) && value > 0)
-      const measuredFps = fpsValues.length > 0 ? fpsValues[fpsValues.length - 1] : null
-      const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000)
-      const canRecord60Fps = measuredFps ? measuredFps >= 54 : elapsedSeconds <= 3
-      resolve({
-        recommendedFps: canRecord60Fps ? 60 : 30,
-        canRecord60Fps,
-        measuredFps: measuredFps || undefined,
-        reason: canRecord60Fps
-          ? 'The short screen capture probe sustained enough throughput for native 60fps recording.'
-          : 'The short screen capture probe did not sustain enough throughput; native recording will use 30fps.',
-      })
-    })
-  })
+  if (!lastResult?.ok) {
+    return {
+      recommendedFps: 30,
+      canRecord60Fps: false,
+      reason: 'The 60fps probe could not start. Native profile will use the safer 30fps setting.',
+    }
+  }
+
+  const measuredFps = lastResult.measuredFps
+  const canRecord60Fps = Boolean(measuredFps && measuredFps >= 54)
+  const backendLabel =
+    lastResult.backend === 'ddagrab'
+      ? 'Desktop Duplication'
+      : lastResult.backend === 'gdigrab'
+        ? 'GDI'
+        : 'X11'
+  return {
+    recommendedFps: canRecord60Fps ? 60 : 30,
+    canRecord60Fps,
+    measuredFps: measuredFps || undefined,
+    reason: canRecord60Fps
+      ? `The 5-second ${backendLabel} screen capture probe sustained enough throughput for native 60fps recording.`
+      : `The 5-second ${backendLabel} screen capture probe did not sustain enough throughput; native recording will use 30fps.`,
+  }
 }
 
 export async function selectRecordingArea() {

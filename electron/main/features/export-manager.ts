@@ -18,6 +18,7 @@ import { authorizeDesktopExport, type ExportSelectionRequest } from './auth-mana
 const FFMPEG_PATH = getFFmpegPath()
 const EXPORT_PROGRESS_INTERVAL_MS = 300
 const EXPORT_PROGRESS_STEP_PERCENT = 2
+const MAX_SUPPORTED_EXPORT_FPS = 60
 const POSIX_PRIORITY_CANDIDATES = [-10, -5]
 const WINDOWS_PRIORITY_CANDIDATES = [
   osConstants.priority.PRIORITY_HIGH,
@@ -37,10 +38,12 @@ type NormalizedExportSettings = ExportSelectionRequest & {
   effectiveHeight?: number
   effectiveFps?: number
 }
-type SourceVideoInfo = {
+export type SourceVideoInfo = {
   width: number
   height: number
   fps: number | null
+  averageFps: number | null
+  nominalFps: number | null
 }
 type TimelineAudioSegment = { start: number; duration: number; speed: number }
 type ExportAudioSegment = {
@@ -94,6 +97,18 @@ const sanitizeFrameRate = (value: unknown): number | null => {
   return Math.max(1, Math.min(120, value))
 }
 
+const sanitizeExportFrameRate = (value: unknown): number | null => {
+  const fps = sanitizeFrameRate(value)
+  if (!fps) return null
+  return Math.min(MAX_SUPPORTED_EXPORT_FPS, fps)
+}
+
+const sanitizeNominalFrameRate = (value: unknown): number | null => {
+  const fps = sanitizeFrameRate(value)
+  if (!fps || fps < 24 || fps > 120) return null
+  return fps
+}
+
 const mapHeightToExportResolution = (height: number): ExportSelectionRequest['resolution'] => {
   if (height <= 480) return '480p'
   if (height <= 576) return '576p'
@@ -135,7 +150,10 @@ const readSourceVideoInfo = async (videoPath: string | null | undefined): Promis
       const tbrMatch = videoLine.match(/,\s*([0-9]+(?:\.[0-9]+)?)\s*tbr(?:\s|,)/)
       const width = dimensionsMatch ? Number(dimensionsMatch[1]) : 0
       const height = dimensionsMatch ? Number(dimensionsMatch[2]) : 0
-      const fps = sanitizeFrameRate(fpsMatch ? Number(fpsMatch[1]) : tbrMatch ? Number(tbrMatch[1]) : null)
+      const averageFps = sanitizeFrameRate(fpsMatch ? Number(fpsMatch[1]) : null)
+      const nominalFps = sanitizeNominalFrameRate(tbrMatch ? Number(tbrMatch[1]) : null)
+      const shouldUseNominalFps = Boolean(averageFps && averageFps < 10 && nominalFps)
+      const fps = shouldUseNominalFps ? nominalFps : averageFps ?? nominalFps
 
       if (!width || !height) {
         log.warn(`[ExportManager] Adaptive source probe could not parse dimensions from: ${videoLine}`)
@@ -143,10 +161,19 @@ const readSourceVideoInfo = async (videoPath: string | null | undefined): Promis
         return
       }
 
-      resolve({ width, height, fps })
+      if (shouldUseNominalFps) {
+        log.warn(
+          `[ExportManager] Adaptive source probe detected low average fps (${averageFps?.toFixed(3)}) with nominal tbr ${nominalFps?.toFixed(3)}. Using nominal tbr for export FPS.`,
+        )
+      }
+
+      resolve({ width, height, fps, averageFps, nominalFps })
     })
   })
 }
+
+export const probeSourceVideoInfo = async (videoPath: string | null | undefined): Promise<SourceVideoInfo | null> =>
+  await readSourceVideoInfo(videoPath)
 
 const sortLanesForPrecedence = (lanes: LaneLike[] | undefined): LaneLike[] => {
   const source = Array.isArray(lanes) && lanes.length > 0 ? lanes : [{ id: 'lane-1', order: 0 }]
@@ -1186,12 +1213,20 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       requestedExportSettings.effectiveWidth = adaptiveSourceInfo.width
       requestedExportSettings.effectiveHeight = adaptiveSourceInfo.height
     }
-    if (adaptiveSourceInfo?.fps) {
-      requestedExportSettings.effectiveFps = adaptiveSourceInfo.fps
+    const cappedAdaptiveFps = sanitizeExportFrameRate(adaptiveSourceInfo?.fps)
+    if (cappedAdaptiveFps) {
+      requestedExportSettings.effectiveFps = cappedAdaptiveFps
+      if (adaptiveSourceInfo?.fps && cappedAdaptiveFps < adaptiveSourceInfo.fps) {
+        log.warn(
+          `[ExportManager] Adaptive source fps ${adaptiveSourceInfo.fps.toFixed(3)} exceeds supported export max ${MAX_SUPPORTED_EXPORT_FPS}. Exporting at ${cappedAdaptiveFps.toFixed(3)}fps.`,
+        )
+      }
     }
     const fpsLog = adaptiveSourceInfo?.fps ? adaptiveSourceInfo.fps.toFixed(3) : 'unknown'
+    const averageFpsLog = adaptiveSourceInfo?.averageFps ? adaptiveSourceInfo.averageFps.toFixed(3) : 'unknown'
+    const nominalFpsLog = adaptiveSourceInfo?.nominalFps ? adaptiveSourceInfo.nominalFps.toFixed(3) : 'unknown'
     log.info(
-      `[ExportManager] Adaptive export source info: ${adaptiveSourceInfo?.width || 'unknown'}x${adaptiveSourceInfo?.height || 'unknown'} @ ${fpsLog}fps`,
+      `[ExportManager] Adaptive export source info: ${adaptiveSourceInfo?.width || 'unknown'}x${adaptiveSourceInfo?.height || 'unknown'} @ ${fpsLog}fps (average=${averageFpsLog}, nominal=${nominalFpsLog})`,
     )
   }
 
@@ -1318,7 +1353,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     normalizedExportSettings.adaptiveRender && normalizedExportSettings.effectiveHeight
       ? normalizedExportSettings.effectiveHeight + (normalizedExportSettings.effectiveHeight % 2)
       : presetDimensions.height
-  const fps = sanitizeFrameRate(normalizedExportSettings.effectiveFps) || normalizedExportSettings.fps
+  const fps = sanitizeExportFrameRate(normalizedExportSettings.effectiveFps) || normalizedExportSettings.fps
   log.info(
     `[ExportManager] Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
   )

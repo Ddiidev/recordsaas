@@ -4,7 +4,21 @@ import { fileURLToPath } from 'node:url'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const exportManagerPath = path.join(rootDir, 'electron', 'main', 'features', 'export-manager.ts')
+const exportIpcHandlersPath = path.join(rootDir, 'electron', 'main', 'ipc', 'handlers', 'export.ts')
+const appIpcHandlersPath = path.join(rootDir, 'electron', 'main', 'ipc', 'handlers', 'app.ts')
+const recordingManagerPath = path.join(rootDir, 'electron', 'main', 'features', 'recording-manager.ts')
+const rendererPagePath = path.join(rootDir, 'src', 'pages', 'RendererPage.tsx')
+const exportModalPath = path.join(rootDir, 'src', 'components', 'editor', 'ExportModal.tsx')
+const preloadPath = path.join(rootDir, 'electron', 'preload.ts')
+const ipcIndexPath = path.join(rootDir, 'electron', 'main', 'ipc', 'index.ts')
 const source = fs.readFileSync(exportManagerPath, 'utf-8')
+const exportIpcHandlersSource = fs.readFileSync(exportIpcHandlersPath, 'utf-8')
+const appIpcHandlersSource = fs.readFileSync(appIpcHandlersPath, 'utf-8')
+const recordingSource = fs.readFileSync(recordingManagerPath, 'utf-8')
+const rendererSource = fs.readFileSync(rendererPagePath, 'utf-8')
+const exportModalSource = fs.readFileSync(exportModalPath, 'utf-8')
+const preloadSource = fs.readFileSync(preloadPath, 'utf-8')
+const ipcIndexSource = fs.readFileSync(ipcIndexPath, 'utf-8')
 
 function fail(message) {
   console.error(`[verify-export-startup] ${message}`)
@@ -33,8 +47,18 @@ function assertBefore(leftLabel, leftIndex, rightLabel, rightIndex) {
   }
 }
 
+function assertIncludes(label, haystack, needle) {
+  if (!haystack.includes(needle)) {
+    fail(`${label} missing expected source marker: ${needle}`)
+  }
+}
+
 if (source.includes('spawnSync')) {
   fail('export-manager.ts must not use blocking spawnSync during export startup/audio preparation')
+}
+
+if (rendererSource.includes('readFileBuffer')) {
+  fail('RendererPage.tsx must not load full video files through readFileBuffer during export')
 }
 
 const registerCancel = indexOf("ipcMain.once('export:cancel', cancellationHandler)")
@@ -55,5 +79,35 @@ assertBefore('authorization', authorizeExport, 'audio preparation', prepareAudio
 assertBefore('audio preparation', prepareAudioProgress, 'main FFmpeg spawn', mainFfmpegSpawn)
 assertBefore('recording audio fast path', reuseOriginalAudio, 'recording audio processing fallback', processRecordingAudio)
 assertBefore('render:ready listener registration', renderReadyRegistration, 'worker loading', workerLoad)
+
+assertIncludes('Renderer video chunking', rendererSource, 'window.electronAPI.statFile(normalizedVideoPath)')
+assertIncludes('Renderer video chunking', rendererSource, 'window.electronAPI.readFileChunk')
+assertIncludes('Renderer video chunking', rendererSource, 'fileStart = offset')
+assertIncludes('Renderer video chunking', rendererSource, 'getNextBufferOffset(mp4boxfile.appendBuffer(arrayBuffer))')
+assertIncludes('Renderer video chunking', rendererSource, 'mp4boxfile.seek(0, true)')
+assertIncludes('Renderer video chunking', rendererSource, 'mp4boxfile.releaseUsedSamples')
+assertIncludes('Renderer memory budget', rendererSource, 'EXPORT_MEMORY_LIMIT_SETTING_KEY')
+assertIncludes('Renderer memory budget', rendererSource, 'resolveExportMemoryBudget')
+assertIncludes('Renderer memory budget', rendererSource, 'memoryBudget.maxBufferedFramesPerProvider')
+assertIncludes('Renderer memory budget', rendererSource, 'memoryBudget.maxEncoderQueueSize')
+assertIncludes('Renderer memory pressure throttle', rendererSource, 'createExportMemoryController')
+assertIncludes('Renderer memory pressure throttle', rendererSource, "waitForBudget('mp4-pump')")
+assertIncludes('Renderer memory pressure throttle', rendererSource, "waitForBudget('render-loop')")
+assertIncludes('Filesystem IPC registration', ipcIndexSource, "ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)")
+assertIncludes('Filesystem IPC registration', ipcIndexSource, "ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)")
+assertIncludes('System memory IPC handler', appIpcHandlersSource, 'totalmem()')
+assertIncludes('System memory IPC registration', ipcIndexSource, "ipcMain.handle('app:getSystemMemoryInfo', appHandlers.handleGetSystemMemoryInfo)")
+assertIncludes('Current process memory preload', preloadSource, 'getCurrentProcessMemoryInfo')
+assertIncludes('Current process memory preload', preloadSource, 'process.getProcessMemoryInfo()')
+assertIncludes('Export source probe IPC', exportIpcHandlersSource, 'probeSourceVideoInfo')
+assertIncludes('Export source probe IPC', ipcIndexSource, "ipcMain.handle('export:probe-source-video-info', exportHandlers.handleProbeSourceVideoInfo)")
+assertIncludes('Export modal source probe', exportModalSource, 'probeExportSourceVideoInfo(videoPath)')
+assertIncludes('Adaptive low-fps fallback', source, 'sanitizeNominalFrameRate')
+assertIncludes('Adaptive low-fps fallback', source, 'Using nominal tbr for export FPS')
+assertIncludes('Adaptive export FPS cap', source, 'MAX_SUPPORTED_EXPORT_FPS = 60')
+assertIncludes('Adaptive export FPS cap', source, 'sanitizeExportFrameRate')
+assertIncludes('Screen recording CFR output', recordingSource, "'-fps_mode'")
+assertIncludes('Screen recording CFR output', recordingSource, "'cfr'")
+assertIncludes('Screen recording CFR output', recordingSource, 'Screen recording encode config')
 
 console.log('[verify-export-startup] Export startup invariants verified.')

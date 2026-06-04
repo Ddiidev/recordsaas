@@ -1,5 +1,5 @@
 // Modal for configuring export settings and showing export progress
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Upload, Loader2, CircleCheck, CircleX, Folder, Ban } from '@icons'
@@ -134,6 +134,7 @@ const SettingsView = ({
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS)
   const [isGpuEnabled, setIsGpuEnabled] = useState(true)
   const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
+  const sourceProbeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -168,12 +169,13 @@ const SettingsView = ({
   }, [])
 
   const [outputPath, setOutputPath] = useState('')
-  const { originalProjectPath, duration, cutRegions, speedRegions, videoDimensions } = useEditorStore((state) => ({
+  const { originalProjectPath, duration, cutRegions, speedRegions, videoDimensions, videoPath } = useEditorStore((state) => ({
     originalProjectPath: state.originalProjectPath,
     duration: state.duration,
     cutRegions: state.cutRegions,
     speedRegions: state.speedRegions,
     videoDimensions: state.videoDimensions,
+    videoPath: state.videoPath,
   }))
 
   const estimatedDuration = useMemo(() => {
@@ -204,6 +206,46 @@ const SettingsView = ({
       return updated
     })
   }
+
+  useEffect(() => {
+    if (!settings.adaptiveRender) {
+      sourceProbeKeyRef.current = null
+      return
+    }
+    if (!videoPath || sourceProbeKeyRef.current === videoPath) return
+
+    let cancelled = false
+    sourceProbeKeyRef.current = videoPath
+
+    const probeSource = async () => {
+      try {
+        const sourceInfo = await window.electronAPI.probeExportSourceVideoInfo(videoPath)
+        if (cancelled || !sourceInfo?.fps) return
+
+        const effectiveFps: ExportSettings['fps'] = sourceInfo.fps > 30.5 ? 60 : 30
+        setSettings((prev) => {
+          if (!prev.adaptiveRender) return prev
+          const next = {
+            ...prev,
+            fps: effectiveFps,
+            effectiveWidth: sourceInfo.width || prev.effectiveWidth,
+            effectiveHeight: sourceInfo.height || prev.effectiveHeight,
+            effectiveFps: sourceInfo.fps ?? prev.effectiveFps,
+          }
+          window.electronAPI.setSetting('exportSettings', next)
+          return next
+        })
+      } catch (error) {
+        console.error('Failed to probe export source video info:', error)
+      }
+    }
+
+    void probeSource()
+
+    return () => {
+      cancelled = true
+    }
+  }, [settings.adaptiveRender, videoPath])
 
   const handleBrowse = async () => {
     const result = await window.electronAPI.showSaveDialog({

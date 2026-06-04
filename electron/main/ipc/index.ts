@@ -14,6 +14,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('app:getPath', appHandlers.handleGetPath)
   ipcMain.handle('app:getVersion', appHandlers.handleGetVersion)
   ipcMain.handle('app:getPlatform', appHandlers.handleGetPlatform)
+  ipcMain.handle('app:getSystemMemoryInfo', appHandlers.handleGetSystemMemoryInfo)
   ipcMain.on('window:minimize', appHandlers.minimizeWindow)
   ipcMain.on('window:maximize', appHandlers.maximizeWindow)
   ipcMain.on('window:close', appHandlers.closeWindow)
@@ -52,10 +53,13 @@ export function registerIpcHandlers() {
 
   // Export
   ipcMain.handle('export:start', exportHandlers.handleStartExport)
+  ipcMain.handle('export:probe-source-video-info', exportHandlers.handleProbeSourceVideoInfo)
 
   // File System
   ipcMain.handle('fs:readFile', fsHandlers.handleReadFile)
   ipcMain.handle('fs:readFileBuffer', fsHandlers.handleReadFileBuffer)
+  ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)
+  ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)
   ipcMain.handle('fs:saveProject', fsHandlers.handleSaveProject)
 
   // Settings & Presets

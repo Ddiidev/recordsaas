@@ -28,6 +28,21 @@ type ExportPayload = {
   exportSettings: any
   outputPath: string
 }
+type SourceVideoInfo = {
+  width: number
+  height: number
+  fps: number | null
+  averageFps: number | null
+  nominalFps: number | null
+}
+type SystemMemoryInfo = {
+  totalMemoryBytes: number
+}
+type CurrentProcessMemoryInfo = {
+  private: number
+  residentSet?: number
+  shared: number
+}
 
 type MediaAudioImportResult = {
   canceled: boolean
@@ -35,6 +50,15 @@ type MediaAudioImportResult = {
     path: string
     name: string
   }
+}
+type FileStatResult = {
+  size: number
+  isFile: boolean
+}
+type ReadFileChunkPayload = {
+  filePath: string
+  offset: number
+  length: number
 }
 // Payload received from process
 type ProgressPayload = {
@@ -211,9 +235,13 @@ export const electronAPI = {
 
   readFile: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readFile', filePath),
   readFileBuffer: (filePath: string): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileBuffer', filePath),
+  statFile: (filePath: string): Promise<FileStatResult> => ipcRenderer.invoke('fs:statFile', filePath),
+  readFileChunk: (payload: ReadFileChunkPayload): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileChunk', payload),
 
   // --- Export ---
   startExport: (payload: ExportPayload): Promise<void> => ipcRenderer.invoke('export:start', payload),
+  probeExportSourceVideoInfo: (videoPath: string | null | undefined): Promise<SourceVideoInfo | null> =>
+    ipcRenderer.invoke('export:probe-source-video-info', videoPath),
   cancelExport: (): void => ipcRenderer.send('export:cancel'),
 
   onExportProgress: (callback: (payload: ProgressPayload) => void) => {
@@ -255,6 +283,8 @@ export const electronAPI = {
   },
   openExternal: (url: string): void => ipcRenderer.send('shell:openExternal', url),
   getAuthSession: (): Promise<AuthSession> => ipcRenderer.invoke('auth:get-session'),
+  getSystemMemoryInfo: (): Promise<SystemMemoryInfo> => ipcRenderer.invoke('app:getSystemMemoryInfo'),
+  getCurrentProcessMemoryInfo: (): Promise<CurrentProcessMemoryInfo> => process.getProcessMemoryInfo(),
   startAuthLogin: (): Promise<{ success: boolean }> => ipcRenderer.invoke('auth:start-login'),
   logoutAuth: (): Promise<AuthSession> => ipcRenderer.invoke('auth:logout'),
   onAuthDeepLink: (callback: (payload: AuthDeepLinkPayload) => void) => {

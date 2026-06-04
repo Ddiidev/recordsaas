@@ -18,6 +18,8 @@
     "setup:binaries": "node scripts/ensure-binaries.mjs",
     "analyze:export-benchmark": "node scripts/analyze-export-benchmark.mjs",
     "verify:export-startup": "node scripts/verify-export-startup.mjs",
+    "verify:video-chunked-reader": "node scripts/verify-video-chunked-reader.mjs",
+    "verify:webcodecs-decode": "electron scripts/verify-webcodecs-decode.cjs",
     "dev": "npm run setup:binaries && vite",
     "clean": "rimraf dist dist-electron",
     "build": "npm run clean && tsc && vite build",

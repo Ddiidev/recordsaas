@@ -18,8 +18,22 @@ const log = {
 
 const RENDER_PROGRESS_IPC_INTERVAL_MS = 250
 const RENDER_PROGRESS_IPC_STEP_PERCENT = 0.5
-const VIDEO_ENCODER_MAX_QUEUE_SIZE = 12
 const RENDER_PERF_LOG_INTERVAL_MS = 10_000
+const VIDEO_FILE_PUMP_PROGRESS_INTERVAL_CHUNKS = 32
+const EXPORT_MEMORY_LIMIT_SETTING_KEY = 'export.memoryLimitPercent'
+const DEFAULT_EXPORT_MEMORY_LIMIT_PERCENT = 50
+const EXPORT_MEMORY_HARD_CAP_FRACTION = 0.6
+const DEFAULT_VIDEO_FILE_CHUNK_SIZE_BYTES = 16 * 1024 * 1024
+const MIN_VIDEO_FILE_CHUNK_SIZE_BYTES = 4 * 1024 * 1024
+const DEFAULT_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES = 90
+const MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES = 4
+const DEFAULT_VIDEO_ENCODER_MAX_QUEUE_SIZE = 12
+const MIN_VIDEO_ENCODER_MAX_QUEUE_SIZE = 2
+const EXPORT_MEMORY_PRESSURE_CHECK_INTERVAL_MS = 500
+const EXPORT_MEMORY_PRESSURE_RETRY_MS = 250
+const EXPORT_MEMORY_PRESSURE_MAX_WAIT_MS = 15_000
+const EXPORT_MEMORY_PRESSURE_PAUSE_FRACTION = 0.98
+const EXPORT_MEMORY_PRESSURE_RESUME_FRACTION = 0.9
 
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
@@ -35,8 +49,164 @@ type VideoFrameProvider = {
 }
 
 type ExportBackgroundImage = ImageBitmap
+type ExportMemoryBudget = {
+  totalMemoryBytes: number | null
+  limitPercent: number
+  maxBytes: number | null
+  chunkSizeBytes: number
+  maxBufferedFramesPerProvider: number
+  maxDecodeQueueSize: number
+  maxEncoderQueueSize: number
+}
+type ExportMemoryController = {
+  waitForBudget: (phase: string) => Promise<void>
+}
 
-async function createVideoFrameProvider(videoPath: string): Promise<VideoFrameProvider> {
+const clampNumber = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+const sanitizeExportMemoryLimitPercent = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed)) return DEFAULT_EXPORT_MEMORY_LIMIT_PERCENT
+  return clampNumber(Math.round(parsed), 10, 100)
+}
+
+const estimateFrameBytes = (width: number, height: number): number =>
+  Math.max(1, Math.ceil(Math.max(1, width) * Math.max(1, height) * 4))
+
+const formatMemoryBytes = (bytes: number | null): string => {
+  if (!bytes || !Number.isFinite(bytes)) return 'unknown'
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MiB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`
+}
+
+const resolveExportMemoryBudget = async (
+  outputWidth: number,
+  outputHeight: number,
+  providerCount: number,
+): Promise<ExportMemoryBudget> => {
+  const [savedLimitPercent, systemMemoryInfo] = await Promise.all([
+    window.electronAPI.getSetting<number>(EXPORT_MEMORY_LIMIT_SETTING_KEY),
+    window.electronAPI.getSystemMemoryInfo(),
+  ])
+  const limitPercent = sanitizeExportMemoryLimitPercent(savedLimitPercent)
+  const totalMemoryBytes =
+    systemMemoryInfo?.totalMemoryBytes && Number.isFinite(systemMemoryInfo.totalMemoryBytes)
+      ? systemMemoryInfo.totalMemoryBytes
+      : null
+
+  if (!totalMemoryBytes) {
+    return {
+      totalMemoryBytes: null,
+      limitPercent,
+      maxBytes: null,
+      chunkSizeBytes: DEFAULT_VIDEO_FILE_CHUNK_SIZE_BYTES,
+      maxBufferedFramesPerProvider: DEFAULT_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
+      maxDecodeQueueSize: DEFAULT_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
+      maxEncoderQueueSize: DEFAULT_VIDEO_ENCODER_MAX_QUEUE_SIZE,
+    }
+  }
+
+  const maxBytes = Math.floor(totalMemoryBytes * EXPORT_MEMORY_HARD_CAP_FRACTION * (limitPercent / 100))
+  const safeProviderCount = Math.max(1, providerCount)
+  const frameBytes = estimateFrameBytes(outputWidth, outputHeight)
+  const frameQueueBytes = Math.max(frameBytes * safeProviderCount * MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES, maxBytes * 0.35)
+  const maxBufferedFramesPerProvider = clampNumber(
+    Math.floor(frameQueueBytes / (frameBytes * safeProviderCount)),
+    MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
+    DEFAULT_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
+  )
+  const encoderQueueBytes = Math.max(frameBytes * MIN_VIDEO_ENCODER_MAX_QUEUE_SIZE, maxBytes * 0.1)
+  const maxEncoderQueueSize = clampNumber(
+    Math.floor(encoderQueueBytes / frameBytes),
+    MIN_VIDEO_ENCODER_MAX_QUEUE_SIZE,
+    DEFAULT_VIDEO_ENCODER_MAX_QUEUE_SIZE,
+  )
+  const chunkSizeBytes = clampNumber(
+    Math.floor(maxBytes / 512),
+    MIN_VIDEO_FILE_CHUNK_SIZE_BYTES,
+    DEFAULT_VIDEO_FILE_CHUNK_SIZE_BYTES,
+  )
+
+  return {
+    totalMemoryBytes,
+    limitPercent,
+    maxBytes,
+    chunkSizeBytes,
+    maxBufferedFramesPerProvider,
+    maxDecodeQueueSize: maxBufferedFramesPerProvider,
+    maxEncoderQueueSize,
+  }
+}
+
+const createExportMemoryController = (memoryBudget: ExportMemoryBudget): ExportMemoryController => {
+  let lastCheckedAt = 0
+  let lastResidentBytes: number | null = null
+  let lastPressureLogAt = 0
+
+  const readCurrentResidentBytes = async (force = false): Promise<number | null> => {
+    if (!memoryBudget.maxBytes) return null
+
+    const now = performance.now()
+    if (!force && lastResidentBytes !== null && now - lastCheckedAt < EXPORT_MEMORY_PRESSURE_CHECK_INTERVAL_MS) {
+      return lastResidentBytes
+    }
+
+    lastCheckedAt = now
+    try {
+      const current = await window.electronAPI.getCurrentProcessMemoryInfo()
+      const residentKilobytes =
+        typeof current?.residentSet === 'number' && current.residentSet > 0
+          ? current.residentSet
+          : current?.private
+      lastResidentBytes =
+        typeof residentKilobytes === 'number' && Number.isFinite(residentKilobytes)
+          ? residentKilobytes * 1024
+          : null
+      return lastResidentBytes
+    } catch (error) {
+      log.warn('[RendererPage] Failed to read renderer process memory info:', error)
+      return null
+    }
+  }
+
+  const waitForBudget = async (phase: string) => {
+    if (!memoryBudget.maxBytes) return
+
+    const pauseAtBytes = memoryBudget.maxBytes * EXPORT_MEMORY_PRESSURE_PAUSE_FRACTION
+    const resumeAtBytes = memoryBudget.maxBytes * EXPORT_MEMORY_PRESSURE_RESUME_FRACTION
+    let currentBytes = await readCurrentResidentBytes()
+    if (!currentBytes || currentBytes <= pauseAtBytes) return
+
+    const waitStartedAt = performance.now()
+    while (currentBytes > resumeAtBytes) {
+      const now = performance.now()
+      if (now - lastPressureLogAt >= RENDER_PERF_LOG_INTERVAL_MS) {
+        lastPressureLogAt = now
+        log.warn(
+          `[RendererPage] Export memory pressure phase=${phase} current=${formatMemoryBytes(currentBytes)} budget=${formatMemoryBytes(memoryBudget.maxBytes)} waiting=true`,
+        )
+      }
+
+      if (now - waitStartedAt >= EXPORT_MEMORY_PRESSURE_MAX_WAIT_MS) {
+        throw new Error(
+          `Export memory budget exceeded during ${phase}: current=${formatMemoryBytes(currentBytes)}, budget=${formatMemoryBytes(memoryBudget.maxBytes)}. Increase Settings > General > Export RAM Budget or lower export resolution/FPS.`,
+        )
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, EXPORT_MEMORY_PRESSURE_RETRY_MS))
+      currentBytes = await readCurrentResidentBytes(true)
+      if (!currentBytes) return
+    }
+  }
+
+  return { waitForBudget }
+}
+
+async function createVideoFrameProvider(
+  videoPath: string,
+  memoryBudget: ExportMemoryBudget,
+  memoryController: ExportMemoryController,
+): Promise<VideoFrameProvider> {
   if (!('VideoDecoder' in window)) {
     throw new Error('VideoDecoder is not available in this context.')
   }
@@ -54,16 +224,72 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
   }
 
   const mp4boxfile = MP4Box.createFile()
+  const normalizedVideoPath = normalizeMediaPath(videoPath)
+  const fileStat = await window.electronAPI.statFile(normalizedVideoPath)
+  if (!fileStat.isFile) {
+    throw new Error(`Video path is not a file: ${normalizedVideoPath}`)
+  }
+
+  const fileSize = fileStat.size
+  const chunkSize = memoryBudget.chunkSizeBytes
+  if (fileSize <= 0) {
+    throw new Error(`Video file is empty: ${normalizedVideoPath}`)
+  }
   const frameQueue: VideoFrame[] = []
   const waiters: Array<(frame: VideoFrame | null) => void> = []
+  const frameDrainWaiters: Array<() => void> = []
   let decoder: any = null
   let timescale = 1
   let sourceWidth = 0
   let sourceHeight = 0
   let sourceFps: number | null = null
   let closed = false
+  let pumpError: unknown = null
+  let pendingExtractionSeekOffset: number | null = null
   let lastFrame: VideoFrame | null = null
   let nextFrame: VideoFrame | null = null
+
+  const formatBytes = (bytes: number): string => `${bytes} bytes (${(bytes / 1024 / 1024).toFixed(2)} MiB)`
+
+  const toStandaloneArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+    const arrayBuffer = new ArrayBuffer(bytes.byteLength)
+    new Uint8Array(arrayBuffer).set(bytes)
+    return arrayBuffer
+  }
+
+  const notifyFrameDrain = () => {
+    while (frameDrainWaiters.length > 0) {
+      const waiter = frameDrainWaiters.shift()
+      if (waiter) waiter()
+    }
+  }
+
+  const resolvePendingFrameWaiters = () => {
+    while (waiters.length > 0) {
+      const waiter = waiters.shift()
+      if (waiter) waiter(null)
+    }
+  }
+
+  const asPumpError = (): Error =>
+    pumpError instanceof Error ? pumpError : new Error(`MP4 chunk pump failed for ${normalizedVideoPath}.`)
+
+  const throwIfPumpFailed = () => {
+    if (pumpError) throw asPumpError()
+  }
+
+  const getNextBufferOffset = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value
+    }
+    if (value && typeof value === 'object') {
+      const offset = (value as { offset?: unknown }).offset
+      if (typeof offset === 'number' && Number.isFinite(offset) && offset >= 0) {
+        return offset
+      }
+    }
+    return null
+  }
 
   const buildAvcCRecord = (avcC: any): Uint8Array | undefined => {
     if (!avcC) return undefined
@@ -144,22 +370,41 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
   }
 
   const pushFrame = (frame: VideoFrame) => {
+    if (closed) {
+      frame.close()
+      return
+    }
+
     if (waiters.length > 0) {
       const waiter = waiters.shift()
       if (waiter) waiter(frame)
     } else {
       frameQueue.push(frame)
     }
+    notifyFrameDrain()
   }
 
-  const pullFrame = () =>
-    new Promise<VideoFrame | null>((resolve) => {
-      if (frameQueue.length > 0) return resolve(frameQueue.shift()!)
-      if (closed) return resolve(null)
+  const pullFrame = async (): Promise<VideoFrame | null> => {
+    throwIfPumpFailed()
+
+    if (frameQueue.length > 0) {
+      const frame = frameQueue.shift()!
+      notifyFrameDrain()
+      return frame
+    }
+
+    if (closed) return null
+
+    const frame = await new Promise<VideoFrame | null>((resolve) => {
       waiters.push(resolve)
     })
+    throwIfPumpFailed()
+    return frame
+  }
 
+  let rejectReady: ((reason?: unknown) => void) | null = null
   const ready = new Promise<void>((resolve, reject) => {
+    rejectReady = reject
     mp4boxfile.onReady = (info: any) => {
       try {
         const track = info.videoTracks?.[0]
@@ -170,6 +415,9 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
         const durationSeconds = track.duration && track.timescale ? track.duration / track.timescale : 0
         const sampleCount = typeof track.nb_samples === 'number' ? track.nb_samples : 0
         sourceFps = durationSeconds > 0 && sampleCount > 0 ? sampleCount / durationSeconds : null
+        log.info(
+          `[RendererPage] MP4Box onReady path=${normalizedVideoPath} fileSize=${formatBytes(fileSize)} trackId=${track.id} codec=${track.codec} source=${sourceWidth}x${sourceHeight} fps=${sourceFps ? sourceFps.toFixed(2) : 'unknown'}`,
+        )
 
         decoder = new VideoDecoder({
           output: (frame: VideoFrame) => pushFrame(frame),
@@ -196,17 +444,29 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
 
         mp4boxfile.setExtractionOptions(track.id, null, { nbSamples: 1 })
         mp4boxfile.start()
+        if (typeof mp4boxfile.seek === 'function') {
+          const seekResult = mp4boxfile.seek(0, true)
+          const seekOffset = getNextBufferOffset(seekResult)
+          pendingExtractionSeekOffset = seekOffset
+          log.info(
+            `[RendererPage] MP4Box extraction seek path=${normalizedVideoPath} offset=${seekOffset ?? 'unknown'} result=${JSON.stringify(seekResult)}`,
+          )
+        }
         resolve()
       } catch (err) {
         reject(err)
       }
     }
 
-    mp4boxfile.onError = (err: any) => reject(err)
+    mp4boxfile.onError = (err: any) => {
+      pumpError = err
+      reject(err)
+    }
 
     let hasKeyframe = false
-    mp4boxfile.onSamples = (_id: any, _user: any, samples: any[]) => {
+    mp4boxfile.onSamples = (id: any, _user: any, samples: any[]) => {
       if (!decoder) return
+      let lastReleasedSampleNumber: number | null = null
       for (const sample of samples) {
         if (!hasKeyframe) {
           if (!sample.is_sync) continue
@@ -221,26 +481,115 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
           data: sample.data,
         })
         decoder.decode(chunk)
+        if (typeof sample.number === 'number' && Number.isFinite(sample.number)) {
+          lastReleasedSampleNumber = sample.number
+        }
+      }
+      if (lastReleasedSampleNumber !== null && typeof mp4boxfile.releaseUsedSamples === 'function') {
+        mp4boxfile.releaseUsedSamples(id, lastReleasedSampleNumber)
       }
     }
   })
 
-  try {
-    const buffer = await window.electronAPI.readFileBuffer(normalizeMediaPath(videoPath))
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
-    ;(arrayBuffer as any).fileStart = 0
-    mp4boxfile.appendBuffer(arrayBuffer)
-    await ready
-    mp4boxfile.flush()
-    decoder?.flush().finally(() => {
-      closed = true
-      while (waiters.length > 0) {
-        const waiter = waiters.shift()
-        if (waiter) waiter(null)
+  const waitForDecodeBackpressure = async () => {
+    while (
+      !closed &&
+      (frameQueue.length >= memoryBudget.maxBufferedFramesPerProvider ||
+        (decoder?.decodeQueueSize ?? 0) >= memoryBudget.maxDecodeQueueSize)
+    ) {
+      await new Promise<void>((resolve) => {
+        frameDrainWaiters.push(resolve)
+      })
+    }
+  }
+
+  const pumpChunks = async () => {
+    let offset = 0
+    let chunkCount = 0
+    let bytesFetched = 0
+    let stoppedByClose = false
+
+    log.info(
+      `[RendererPage] MP4 chunk pump started path=${normalizedVideoPath} fileSize=${formatBytes(fileSize)} chunkSize=${formatBytes(chunkSize)}`,
+    )
+
+    try {
+      while (offset < fileSize && !closed) {
+        await memoryController.waitForBudget('mp4-pump')
+        await waitForDecodeBackpressure()
+        if (closed) break
+
+        const length = Math.min(chunkSize, fileSize - offset)
+        const chunk = await window.electronAPI.readFileChunk({
+          filePath: normalizedVideoPath,
+          offset,
+          length,
+        })
+        if (closed) break
+        if (chunk.byteLength === 0) {
+          log.warn(`[RendererPage] MP4 chunk pump received an empty chunk at offset=${offset} for ${normalizedVideoPath}.`)
+          break
+        }
+
+        const arrayBuffer = toStandaloneArrayBuffer(chunk)
+        ;(arrayBuffer as any).fileStart = offset
+        const requestedNextOffset = getNextBufferOffset(mp4boxfile.appendBuffer(arrayBuffer))
+        const fallbackNextOffset = offset + chunk.byteLength
+        const nextOffset = requestedNextOffset ?? pendingExtractionSeekOffset ?? fallbackNextOffset
+        pendingExtractionSeekOffset = null
+
+        bytesFetched += chunk.byteLength
+        chunkCount += 1
+
+        if (
+          chunkCount === 1 ||
+          nextOffset >= fileSize ||
+          chunkCount % VIDEO_FILE_PUMP_PROGRESS_INTERVAL_CHUNKS === 0
+        ) {
+          log.info(
+            `[RendererPage] MP4 chunk pump progress path=${normalizedVideoPath} bytesFetched=${formatBytes(bytesFetched)} chunks=${chunkCount} nextOffset=${formatBytes(nextOffset)}`,
+          )
+        }
+
+        offset = nextOffset === offset ? fallbackNextOffset : nextOffset
       }
-    })
+
+      stoppedByClose = closed
+
+      if (!closed) {
+        log.info(
+          `[RendererPage] MP4 chunk pump reached EOF path=${normalizedVideoPath} finalOffset=${formatBytes(offset)} bytesFetched=${formatBytes(bytesFetched)} chunks=${chunkCount}`,
+        )
+        mp4boxfile.flush()
+        if (!decoder) {
+          throw new Error(`MP4Box did not report a decodable video track before EOF for ${normalizedVideoPath}.`)
+        }
+        if (decoder && decoder.state !== 'closed') {
+          await decoder.flush()
+        }
+      }
+    } catch (error) {
+      pumpError = error
+      rejectReady?.(error)
+      log.warn('[RendererPage] MP4 chunk pump failed:', error)
+    } finally {
+      closed = true
+      resolvePendingFrameWaiters()
+      notifyFrameDrain()
+      log.info(
+        `[RendererPage] MP4 chunk pump finished path=${normalizedVideoPath} finalOffset=${formatBytes(offset)} bytesFetched=${formatBytes(bytesFetched)} chunks=${chunkCount} stoppedByClose=${stoppedByClose} failed=${pumpError ? 'true' : 'false'}`,
+      )
+    }
+  }
+
+  try {
+    void pumpChunks()
+    await ready
   } catch (e) {
     log.warn('[RendererPage] Failed to initialize MP4Box/VideoDecoder:', e)
+    closed = true
+    resolvePendingFrameWaiters()
+    notifyFrameDrain()
     try {
       decoder?.close()
     } catch { /* ignore */ }
@@ -248,16 +597,19 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
   }
 
   const getFrameForTime = async (timeSec: number): Promise<VideoFrame | null> => {
+    throwIfPumpFailed()
     const targetUs = Math.round(timeSec * 1e6)
 
     if (!nextFrame) {
       nextFrame = await pullFrame()
+      throwIfPumpFailed()
     }
 
     while (nextFrame && (nextFrame.timestamp ?? 0) < targetUs) {
       if (lastFrame && lastFrame !== nextFrame) lastFrame.close()
       lastFrame = nextFrame
       nextFrame = await pullFrame()
+      throwIfPumpFailed()
     }
 
     if (!lastFrame) return nextFrame ?? null
@@ -274,6 +626,8 @@ async function createVideoFrameProvider(videoPath: string): Promise<VideoFramePr
       const frame = frameQueue.shift()
       frame?.close()
     }
+    resolvePendingFrameWaiters()
+    notifyFrameDrain()
     if (lastFrame) lastFrame.close()
     if (nextFrame && nextFrame !== lastFrame) nextFrame.close()
     if (decoder && decoder.state !== 'closed') decoder.close()
@@ -467,13 +821,23 @@ export function RendererPage() {
             `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, hasVideoEncoder=${hasVideoEncoder}, ua=${ua}). Export requires decoder-only mode.`,
           )
         }
+        const hasWebcam = Boolean(projectStateWithCursorBitmaps.webcamVideoPath && typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string')
+        const memoryBudget = await resolveExportMemoryBudget(outputWidth, outputHeight, hasWebcam ? 2 : 1)
+        const memoryController = createExportMemoryController(memoryBudget)
+        log.info(
+          `[RendererPage] Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
+        )
         try {
           if (projectStateWithCursorBitmaps.videoPath) {
-            frameProvider = await createVideoFrameProvider(projectStateWithCursorBitmaps.videoPath)
+            frameProvider = await createVideoFrameProvider(projectStateWithCursorBitmaps.videoPath, memoryBudget, memoryController)
             if (frameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for main video.')
           }
-          if (projectStateWithCursorBitmaps.webcamVideoPath) {
-            webcamFrameProvider = await createVideoFrameProvider(projectStateWithCursorBitmaps.webcamVideoPath)
+          if (hasWebcam) {
+            webcamFrameProvider = await createVideoFrameProvider(
+              projectStateWithCursorBitmaps.webcamVideoPath!,
+              memoryBudget,
+              memoryController,
+            )
             if (webcamFrameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for webcam video.')
           }
         } catch (e) {
@@ -523,7 +887,6 @@ export function RendererPage() {
           })
 
         const loadPromises: Promise<void>[] = [loadVideo(video, 'Main video', projectStateWithCursorBitmaps.videoPath!)]
-        const hasWebcam = Boolean(projectStateWithCursorBitmaps.webcamVideoPath && typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string')
         if (hasWebcam && webcamVideo) {
           loadPromises.push(loadVideo(webcamVideo, 'Webcam video', projectStateWithCursorBitmaps.webcamVideoPath!))
         }
@@ -531,17 +894,12 @@ export function RendererPage() {
 
         const mainDuration = video.duration || projectState.duration
         const webcamDuration = hasWebcam && webcamVideo ? webcamVideo.duration : 0
-        const webcamDurationDelta = hasWebcam ? Math.abs(webcamDuration - mainDuration) : 0
-        const shouldScaleWebcam =
-          hasWebcam && webcamDuration > 0 && mainDuration > 0 && webcamDurationDelta > 0.5
-        const webcamTimeScale = shouldScaleWebcam ? webcamDuration / mainDuration : 1
         if (hasWebcam) {
           log.info('[RendererPage] Webcam timing sync', {
             mainDuration,
             webcamDuration,
-            webcamDurationDelta,
-            shouldScaleWebcam,
-            webcamTimeScale,
+            durationDelta: Math.abs(webcamDuration - mainDuration),
+            alignedToSourceTimeline: true,
           })
         }
 
@@ -676,14 +1034,15 @@ export function RendererPage() {
 
         for (let frame = 0; frame < totalFrames; frame++) {
           const frameStartedAt = performance.now()
+          await memoryController.waitForBudget('render-loop')
           // Backpressure handling using MessageChannel for sub-millisecond polling
           // (setTimeout has ~15ms minimum resolution on Windows)
-          if (videoEncoder && videoEncoder.encodeQueueSize > VIDEO_ENCODER_MAX_QUEUE_SIZE) {
+          if (videoEncoder && videoEncoder.encodeQueueSize > memoryBudget.maxEncoderQueueSize) {
             const waitStartedAt = performance.now()
             await new Promise<void>((resolve) => {
               const ch = new MessageChannel()
               ch.port1.onmessage = () => {
-                if (videoEncoder.encodeQueueSize <= VIDEO_ENCODER_MAX_QUEUE_SIZE) {
+                if (videoEncoder.encodeQueueSize <= memoryBudget.maxEncoderQueueSize) {
                   ch.port1.close()
                   resolve()
                 } else {
@@ -718,11 +1077,7 @@ export function RendererPage() {
           }
 
           if (hasWebcam && webcamVideo) {
-            const rawWebcamTimestamp = sourceTimestamp * webcamTimeScale
-            const webcamTimestamp = Math.max(
-              0,
-              Math.min(rawWebcamTimestamp, Math.max(0, webcamDuration - 1 / fps)),
-            )
+            const webcamTimestamp = Math.max(0, sourceTimestamp)
             if (useWebcamDecoder && webcamFrameProvider) {
               const webcamDecodeStartedAt = performance.now()
               webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)

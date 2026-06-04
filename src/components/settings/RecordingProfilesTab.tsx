@@ -31,6 +31,8 @@ const createCustomProfile = (): RecordingProfile => ({
   webcamFps: 'synced',
 })
 
+const ANALYSIS_DURATION_SECONDS = 5
+
 const persistProfiles = (profiles: RecordingProfile[]) => {
   window.electronAPI.setSetting(
     RECORDING_PROFILES_SETTING_KEY,
@@ -50,6 +52,7 @@ export function RecordingProfilesTab({
   const [isEditing, setIsEditing] = useState(false)
   const [analysis, setAnalysis] = useState<RecordingCapabilityAnalysis | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisCountdown, setAnalysisCountdown] = useState(ANALYSIS_DURATION_SECONDS)
   const [isLoaded, setIsLoaded] = useState(false)
   const handledCreateRequestIdRef = useRef(0)
 
@@ -83,6 +86,25 @@ export function RecordingProfilesTab({
     [profiles, selectedProfileId],
   )
   const isNativeProfile = selectedProfile.id === NATIVE_RECORDING_PROFILE_ID || selectedProfile.isNative
+
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setAnalysisCountdown(ANALYSIS_DURATION_SECONDS)
+      return
+    }
+
+    const startedAt = Date.now()
+    const updateCountdown = () => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+      setAnalysisCountdown(Math.max(0, ANALYSIS_DURATION_SECONDS - elapsedSeconds))
+    }
+    updateCountdown()
+    const interval = window.setInterval(updateCountdown, 250)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [isAnalyzing])
 
   const updateProfiles = (updater: (current: RecordingProfile[]) => RecordingProfile[]) => {
     setProfiles((current) => {
@@ -124,6 +146,7 @@ export function RecordingProfilesTab({
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true)
+    setAnalysisCountdown(ANALYSIS_DURATION_SECONDS)
     try {
       const result = await window.electronAPI.analyzeRecordingCapability()
       setAnalysis(result)
@@ -206,12 +229,19 @@ export function RecordingProfilesTab({
                 <p className="text-sm text-muted-foreground">
                   {analysis
                     ? `${analysis.reason}${typeof analysis.measuredFps === 'number' ? ` Measured: ${analysis.measuredFps.toFixed(1)}fps.` : ''}`
-                    : 'Run a short capture probe to decide whether native recording should use 60fps or 30fps.'}
+                    : 'Run a 5-second capture probe to decide whether native recording should use 60fps or 30fps.'}
                 </p>
               </div>
               <Button onClick={handleAnalyze} disabled={isAnalyzing} variant="secondary" size="sm">
-                {isAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Analyze
+                {isAnalyzing ? (
+                  <span className="mr-2 grid h-5 w-5 place-items-center">
+                    <Loader2 className="col-start-1 row-start-1 h-5 w-5 animate-spin" />
+                    <span className="col-start-1 row-start-1 text-[10px] font-semibold leading-none">
+                      {analysisCountdown}
+                    </span>
+                  </span>
+                ) : null}
+                {isAnalyzing ? 'Analyzing' : 'Analyze'}
               </Button>
             </div>
 
