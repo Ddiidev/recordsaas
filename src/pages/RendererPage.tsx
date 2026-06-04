@@ -38,6 +38,7 @@ const EXPORT_MEMORY_PRESSURE_RESUME_FRACTION = 0.9
 type RenderStartPayload = {
   projectState: Omit<EditorState, keyof EditorActions>
   exportSettings: ExportSettings
+  exportSessionId?: string
 }
 
 type VideoFrameProvider = {
@@ -746,7 +747,8 @@ export function RendererPage() {
   useEffect(() => {
     log.info('[RendererPage] Component mounted. Setting up listeners.')
 
-    const cleanup = window.electronAPI.onRenderStart(async ({ projectState, exportSettings }: RenderStartPayload) => {
+    const cleanup = window.electronAPI.onRenderStart(async ({ projectState, exportSettings, exportSessionId }: RenderStartPayload) => {
+      const renderLogPrefix = exportSessionId ? `[RendererPage][${exportSessionId}]` : '[RendererPage]'
       const canvas = canvasRef.current
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -755,7 +757,7 @@ export function RendererPage() {
       let bgImage: ExportBackgroundImage | null = null
 
       try {
-        log.info('[RendererPage] Received "render:start" event.', { exportSettings })
+        log.info(`${renderLogPrefix} Received "render:start" event.`, { exportSettings })
         if (!canvas || !video) throw new Error('Canvas or Video ref is not available.')
 
         // --- 1. SETUP CANVAS AND CONTEXT ---
@@ -825,7 +827,7 @@ export function RendererPage() {
         const memoryBudget = await resolveExportMemoryBudget(outputWidth, outputHeight, hasWebcam ? 2 : 1)
         const memoryController = createExportMemoryController(memoryBudget)
         log.info(
-          `[RendererPage] Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
+          `${renderLogPrefix} Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
         )
         try {
           if (projectStateWithCursorBitmaps.videoPath) {
@@ -865,7 +867,7 @@ export function RendererPage() {
           ),
         )
         log.info(
-          `[RendererPage] Effective export settings: adaptive=${exportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
+          `${renderLogPrefix} Effective export settings: adaptive=${exportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
         )
 
         // --- 3. LOAD VIDEO SOURCES ---
@@ -930,7 +932,7 @@ export function RendererPage() {
           const bucket = Math.floor(safeProgress / 5)
           if (bucket !== lastProgressLogBucket || force) {
             lastProgressLogBucket = bucket
-            log.info(`[RendererPage][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
+            log.info(`${renderLogPrefix}[Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
           }
           const now = performance.now()
           const shouldSend =
@@ -1155,7 +1157,7 @@ export function RendererPage() {
               },
               encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
             }
-            log.info(`[RendererPage][Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
+            log.info(`${renderLogPrefix}[Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
             perfStats.lastLoggedAt = now
           }
         }

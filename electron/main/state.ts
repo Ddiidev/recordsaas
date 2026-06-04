@@ -32,7 +32,7 @@ interface AppState {
   savingWin: BrowserWindow | null
   selectionWin: BrowserWindow | null
   exportProgressWin: BrowserWindow | null
-  currentExportProgress: { progress: number; stage: string } | null
+  currentExportProgress: { progress: number; stage: string; exportSessionId?: string } | null
 
   // System
   tray: Tray | null

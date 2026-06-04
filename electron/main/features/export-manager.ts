@@ -733,9 +733,10 @@ const trySetProcessPriorityWithFallback = (pid: number, priorities: number[], la
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function startExport(event: IpcMainInvokeEvent, { projectState, exportSettings, outputPath }: any) {
-  log.info('[ExportManager] Starting export process...')
-
   const exportStartTime = Date.now()
+  const exportSessionId = `export-${exportStartTime.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const sessionLogPrefix = `[ExportManager][${exportSessionId}]`
+  log.info(`${sessionLogPrefix} Starting export process...`)
   const getElapsedDurationSeconds = () => (Date.now() - exportStartTime) / 1000
 
   const editorWindow = BrowserWindow.fromWebContents(event.sender)
@@ -755,7 +756,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   let powerSaveBlockerId: number | null = null
   let lastProgressBroadcastAt = 0
   let lastProgressBroadcast = -1
-  let latestProgressPayload: { progress: number; stage: string } | null = null
+  let latestProgressPayload: { progress: number; stage: string; exportSessionId: string } | null = null
   let lastProgressBroadcastLogBucket = -1
   let lastRendererProgressLogBucket = -1
   let lastFrameProgressLogBucket = -1
@@ -822,7 +823,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   const syncProgressWindowDom = (
     progressWindow: BrowserWindow,
-    payload: { progress: number; stage: string },
+    payload: { progress: number; stage: string; exportSessionId?: string },
     source: string,
     shouldLog: boolean,
   ) => {
@@ -920,18 +921,19 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     lastProgressBroadcastAt = now
     lastProgressBroadcast = safeProgress
 
-    const payload = { progress: safeProgress, stage }
+    const payload = { progress: safeProgress, stage, exportSessionId }
     latestProgressPayload = payload
     appState.currentExportProgress = payload
 
     const progressLog = shouldLogProgressBucket(safeProgress, lastProgressBroadcastLogBucket, force)
     if (progressLog.shouldLog) {
       lastProgressBroadcastLogBucket = progressLog.bucket
-      log.info('[ExportManager][Progress] Broadcasting progress update.', {
+      log.info(`${sessionLogPrefix}[Progress] Broadcasting progress update.`, {
         source,
         progress: Number(safeProgress.toFixed(2)),
         stage,
         force,
+        elapsedMs: now - exportStartTime,
         editorWindow: editorWindow && !editorWindow.isDestroyed() ? 'alive' : 'missing',
         progressWindow: describeProgressWindow(),
       })
@@ -962,15 +964,15 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     progressWindow.on('close', handleProgressWindowClose)
     const sendLatestProgressToWindow = () => {
       if (latestProgressPayload && !progressWindow.isDestroyed()) {
-        log.info('[ExportManager][Progress] Sending latest progress to progress window after load/show.', latestProgressPayload)
+        log.info(`${sessionLogPrefix}[Progress] Sending latest progress to progress window after load/show.`, latestProgressPayload)
         progressWindow.webContents.send('export:progress', latestProgressPayload)
         syncProgressWindowDom(progressWindow, latestProgressPayload, 'latest-progress-window-load', true)
       } else {
-        log.info('[ExportManager][Progress] No latest progress payload available for progress window yet.')
+        log.info(`${sessionLogPrefix}[Progress] No latest progress payload available for progress window yet.`)
       }
     }
     if (progressWindow.webContents.isLoading()) {
-      log.info('[ExportManager][Progress] Progress window is still loading. Deferring latest progress send.')
+      log.info(`${sessionLogPrefix}[Progress] Progress window is still loading. Deferring latest progress send.`)
       progressWindow.webContents.once('did-finish-load', sendLatestProgressToWindow)
     } else {
       sendLatestProgressToWindow()
@@ -1184,14 +1186,14 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   showExportProgressWindow()
   createExportTray()
-  appState.currentExportProgress = { progress: 0, stage: 'Authorizing export...' }
-  log.info('[ExportManager][Progress] Initialized current export progress state.', appState.currentExportProgress)
+  appState.currentExportProgress = { progress: 0, stage: 'Authorizing export...', exportSessionId }
+  log.info(`${sessionLogPrefix}[Progress] Initialized current export progress state.`, appState.currentExportProgress)
   sendProgressUpdate(0, 'Authorizing export...', true, 'startup')
   if (!editorWindow.isDestroyed()) {
     editorWindow.setSkipTaskbar(true)
     editorWindow.hide()
   }
-  log.info(`[ExportManager] Export startup UI initialized in ${getElapsedDurationSeconds().toFixed(2)} seconds.`)
+  log.info(`${sessionLogPrefix} Export startup UI initialized in ${getElapsedDurationSeconds().toFixed(2)} seconds.`)
 
   const outputDir = path.dirname(outputPath)
   try {
@@ -1291,7 +1293,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       log.error(`[ExportManager][RenderWorker] Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
     })
     appState.renderWorker.webContents.on('did-finish-load', () => {
-      log.info('[ExportManager][RenderWorker] Finished loading renderer worker.')
+      log.info(`${sessionLogPrefix}[RenderWorker] Finished loading renderer worker.`)
     })
     appState.renderWorker.webContents.on('render-process-gone', (_event, details) => {
       log.error('[ExportManager][RenderWorker] Render process gone:', details)
@@ -1322,7 +1324,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
       const sourceId = messageDetails.sourceId || 'unknown'
       const lineNumber = messageDetails.lineNumber ?? 0
-      const logMessage = `[ExportManager][RenderWorker] Renderer console (${sourceId}:${lineNumber}): ${message}`
+      const logMessage = `${sessionLogPrefix}[RenderWorker] Renderer console (${sourceId}:${lineNumber}): ${message}`
       if (level >= 3) {
         log.error(logMessage)
       } else if (level >= 2) {
@@ -1335,11 +1337,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (VITE_DEV_SERVER_URL) {
       const renderUrl = `${VITE_DEV_SERVER_URL}#renderer`
       appState.renderWorker.loadURL(renderUrl)
-      log.info(`[ExportManager] Loading render worker URL (Dev): ${renderUrl}`)
+      log.info(`${sessionLogPrefix} Loading render worker URL (Dev): ${renderUrl}`)
     } else {
       const renderPath = path.join(RENDERER_DIST, 'index.html')
       appState.renderWorker.loadFile(renderPath, { hash: 'renderer' })
-      log.info(`[ExportManager] Loading render worker file (Prod): ${renderPath}#renderer`)
+      log.info(`${sessionLogPrefix} Loading render worker file (Prod): ${renderPath}#renderer`)
     }
   }
 
@@ -1355,7 +1357,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       : presetDimensions.height
   const fps = sanitizeExportFrameRate(normalizedExportSettings.effectiveFps) || normalizedExportSettings.fps
   log.info(
-    `[ExportManager] Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
+    `${sessionLogPrefix} Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
   )
 
 
@@ -1512,7 +1514,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   ffmpegArgs.push(outputPath)
 
   sendProgressUpdate(4, 'Starting renderer...', true, 'main')
-  log.info('[ExportManager] Spawning FFmpeg with args:', ffmpegArgs.join(' '))
+  log.info(`${sessionLogPrefix} Spawning FFmpeg with args:`, ffmpegArgs.join(' '))
   ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
   const activeFFmpeg = ffmpeg
   if (typeof activeFFmpeg.pid === 'number') {
@@ -1538,7 +1540,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     const frameProgressLog = shouldLogProgressBucket(progress, lastFrameProgressLogBucket)
     if (frameProgressLog.shouldLog) {
       lastFrameProgressLogBucket = frameProgressLog.bucket
-      log.info('[ExportManager][Progress] Received export:frame-data progress.', {
+      log.info(`${sessionLogPrefix}[Progress] Received export:frame-data progress.`, {
         progress: Number(clamp(progress, 0, 100).toFixed(2)),
         frameBytes: frame.byteLength,
       })
@@ -1550,7 +1552,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     const renderProgressLog = shouldLogProgressBucket(progress, lastRendererProgressLogBucket)
     if (renderProgressLog.shouldLog) {
       lastRendererProgressLogBucket = renderProgressLog.bucket
-      log.info('[ExportManager][Progress] Received export:render-progress from renderer.', {
+      log.info(`${sessionLogPrefix}[Progress] Received export:render-progress from renderer.`, {
         progress: Number(clamp(progress, 0, 100).toFixed(2)),
       })
     }
@@ -1558,7 +1560,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   const finishListener = () => {
-    log.info('[ExportManager] Render finished. Closing FFmpeg stdin.')
+    log.info(`${sessionLogPrefix} Render finished. Closing FFmpeg stdin.`)
     const finalizingProgress = lastProgressBroadcast < 0 ? 0 : Math.max(lastProgressBroadcast, 99)
     sendProgressUpdate(finalizingProgress, 'Finalizing export...', true, 'render-finished')
     if (!ffmpegClosed && activeFFmpeg.stdin.writable) {
@@ -1581,7 +1583,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   const renderErrorListener = (_e: unknown, { error }: { error: string }) => {
     if (exportCompleted) return
 
-    log.error('[ExportManager] Render error:', error)
+    log.error(`${sessionLogPrefix} Render error:`, error)
     exportCompleted = true
     if (ffmpeg && !ffmpeg.killed) {
       ffmpeg.kill('SIGKILL')
@@ -1608,7 +1610,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   activeFFmpeg.on('close', (code) => {
     ffmpegClosed = true
-    log.info(`[ExportManager] FFmpeg process exited with code ${code}.`)
+    log.info(`${sessionLogPrefix} FFmpeg process exited with code ${code}.`)
 
     cleanupProcessedAudio()
 
@@ -1620,7 +1622,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       if (code === null) {
         sendExportComplete({ success: false, error: 'Export cancelled.', duration: renderDuration }, 'cancelled')
       } else if (code === 0) {
-        log.info(`[ExportManager] Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
+        log.info(`${sessionLogPrefix} Export completed successfully in ${renderDuration.toFixed(2)} seconds.`)
         sendProgressUpdate(100, 'Export completed', true, 'ffmpeg-close')
         sendExportComplete({ success: true, outputPath, duration: renderDuration }, 'success')
       } else {
@@ -1640,10 +1642,14 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   renderReadyListener = () => {
     renderReadyListener = null
-    log.info('[ExportManager] Worker ready. Sending project state.')
+    log.info(`${sessionLogPrefix} Worker ready. Sending project state.`)
     sendProgressUpdate(5, 'Rendering...', true, 'render-ready')
     if (appState.renderWorker && !appState.renderWorker.isDestroyed()) {
-      appState.renderWorker.webContents.send('render:start', { projectState, exportSettings: normalizedExportSettings })
+      appState.renderWorker.webContents.send('render:start', {
+        projectState,
+        exportSettings: normalizedExportSettings,
+        exportSessionId,
+      })
     }
   }
   ipcMain.once('render:ready', renderReadyListener)

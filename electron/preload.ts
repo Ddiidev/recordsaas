@@ -64,6 +64,7 @@ type ReadFileChunkPayload = {
 type ProgressPayload = {
   progress: number // 0-100
   stage: string
+  exportSessionId?: string
 }
 // Payload when completed
 type CompletePayload = {
@@ -79,6 +80,7 @@ let lastPreloadRenderProgressLogBucket = -1
 type RenderStartPayload = {
   projectState: any
   exportSettings: any
+  exportSessionId?: string
 }
 
 type WindowSource = {
