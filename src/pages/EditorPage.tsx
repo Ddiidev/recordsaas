@@ -16,9 +16,16 @@ import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
+
+const generateDefaultProjectName = () => {
+  const now = new Date()
+  const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 16)
+  return `RecordSaaS-${timestamp}`
+}
 
 export function EditorPage() {
   const {
@@ -70,9 +77,31 @@ export function EditorPage() {
   const [updateInfo, setUpdateInfo] = useState<{ version: string; url: string } | null>(null)
   const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
   const [isExportingProject, setIsExportingProject] = useState(false)
+  const [isProjectNamePopupOpen, setProjectNamePopupOpen] = useState(false)
+  const [projectExportName, setProjectExportName] = useState(generateDefaultProjectName)
+  const [projectNameError, setProjectNameError] = useState<string | null>(null)
+  const [isProjectNameValid, setProjectNameValid] = useState(true)
   const isImportedProject = !!useEditorStore((state) => state.originalProjectPath)
 
-  const handleExportProject = useCallback(async () => {
+  useEffect(() => {
+    if (!isProjectNamePopupOpen) return
+
+    let cancelled = false
+    const validateProjectName = async () => {
+      const result = await window.electronAPI.validateProjectFolderName(projectExportName)
+      if (cancelled) return
+      setProjectNameValid(result.valid)
+      setProjectNameError(result.valid ? null : result.error || 'Invalid project name.')
+    }
+
+    void validateProjectName()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isProjectNamePopupOpen, projectExportName])
+
+  const handleExportProject = useCallback(async (projectName?: string) => {
     try {
       setIsExportingProject(true)
       const storeState = useEditorStore.getState()
@@ -86,18 +115,15 @@ export function EditorPage() {
       const filesToExport = mediaFiles
       
       if (!targetFolder) {
-        const defaultDocsPath = await window.electronAPI.getPath('documents')
-        const result = await window.electronAPI.showOpenDialog({
-          title: 'Select Export Directory',
-          defaultPath: defaultDocsPath,
-          properties: ['openDirectory', 'createDirectory']
-        })
-        
-        if (result.canceled || result.filePaths.length === 0) {
+        const resolvedProjectFolder = await window.electronAPI.resolveProjectFolder(projectName || projectExportName)
+        if (!resolvedProjectFolder.success || !resolvedProjectFolder.targetFolder) {
+          setProjectNameError(resolvedProjectFolder.error || 'Invalid project name.')
+          setProjectNameValid(false)
           return
         }
-        
-        targetFolder = result.filePaths[0]
+
+        targetFolder = resolvedProjectFolder.targetFolder
+        setProjectExportName(resolvedProjectFolder.normalizedName || projectName || projectExportName)
       }
       
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -128,6 +154,7 @@ export function EditorPage() {
           useEditorStore.getState().setOriginalProjectPath(targetFolder)
           window.electronAPI.showItemInFolder(targetFolder)
         }
+        setProjectNamePopupOpen(false)
       } else {
         alert(`Failed to export project: ${saveResult.error}`)
       }
@@ -138,7 +165,31 @@ export function EditorPage() {
     } finally {
       setIsExportingProject(false)
     }
-  }, [])
+  }, [projectExportName])
+
+  const handleExportProjectButtonClick = useCallback(() => {
+    const originalProjectPath = useEditorStore.getState().originalProjectPath
+    if (originalProjectPath) {
+      void handleExportProject()
+      return
+    }
+
+    setProjectExportName(generateDefaultProjectName())
+    setProjectNameError(null)
+    setProjectNameValid(true)
+    setProjectNamePopupOpen(true)
+  }, [handleExportProject])
+
+  const handleConfirmProjectExport = useCallback(async () => {
+    const validation = await window.electronAPI.validateProjectFolderName(projectExportName)
+    if (!validation.valid) {
+      setProjectNameValid(false)
+      setProjectNameError(validation.error || 'Invalid project name.')
+      return
+    }
+
+    await handleExportProject(validation.normalizedName || projectExportName)
+  }, [handleExportProject, projectExportName])
 
   const handleDeleteSelectedRegion = useCallback(() => {
     const currentSelectedId = useEditorStore.getState().selectedRegionId
@@ -270,7 +321,58 @@ export function EditorPage() {
 
   const renderHeaderActions = () => {
     const actions = [
-      <ExportProjectButton key="export-project" isImportedProject={isImportedProject} isExporting={isExportingProject} onClick={handleExportProject} disabled={duration <= 0} />,
+      <div key="export-project" className="relative z-[1100]">
+        <ExportProjectButton
+          isImportedProject={isImportedProject}
+          isExporting={isExportingProject}
+          onClick={handleExportProjectButtonClick}
+          disabled={duration <= 0}
+        />
+        {isProjectNamePopupOpen && !isImportedProject && (
+          <div className="absolute left-0 top-11 z-[1200] w-80 rounded-lg border border-border bg-background p-3 shadow-xl">
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground" htmlFor="project-export-name">
+                  Project name
+                </label>
+                <Input
+                  id="project-export-name"
+                  value={projectExportName}
+                  onChange={(event) => setProjectExportName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && isProjectNameValid && !isExportingProject) {
+                      void handleConfirmProjectExport()
+                    }
+                    if (event.key === 'Escape') {
+                      setProjectNamePopupOpen(false)
+                    }
+                  }}
+                  autoFocus
+                  className="mt-1 h-9"
+                />
+                {projectNameError && <p className="mt-1 text-xs text-red-500">{projectNameError}</p>}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setProjectNamePopupOpen(false)}
+                  disabled={isExportingProject}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => void handleConfirmProjectExport()}
+                  disabled={!isProjectNameValid || isExportingProject}
+                >
+                  Save Project
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>,
       <ExportButton key="export" isExporting={isExporting} onClick={openExportModal} disabled={duration <= 0} />,
       <Button
         key="presets"
@@ -327,7 +429,7 @@ export function EditorPage() {
         */}
         <header
           className={cn(
-            'relative h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
+            'relative z-[1000] h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
             isPreviewFullScreen && 'hidden', // Hide header in fullscreen
           )}
           style={{ WebkitAppRegion: 'drag' }}

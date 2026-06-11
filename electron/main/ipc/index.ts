@@ -60,6 +60,11 @@ export function registerIpcHandlers() {
   ipcMain.handle('fs:readFileBuffer', fsHandlers.handleReadFileBuffer)
   ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)
   ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)
+  ipcMain.handle('fs:getRecordSaaSRootPath', fsHandlers.handleGetRecordSaaSRootPath)
+  ipcMain.handle('fs:getDefaultRecordSaaSRootPath', fsHandlers.handleGetDefaultRecordSaaSRootPath)
+  ipcMain.handle('fs:validateProjectFolderName', fsHandlers.handleValidateProjectFolderName)
+  ipcMain.handle('fs:resolveProjectFolder', fsHandlers.handleResolveProjectFolder)
+  ipcMain.handle('fs:resolveExportOutputPath', fsHandlers.handleResolveExportOutputPath)
   ipcMain.handle('fs:saveProject', fsHandlers.handleSaveProject)
 
   // Settings & Presets

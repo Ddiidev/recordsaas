@@ -529,7 +529,7 @@ export const Preview = memo(
         timelineLanes,
         (r) => r.trimType === 'end',
       )
-      if (endTrimRegion && playbackTime >= endTrimRegion.startTime) {
+      if (isPlaying && endTrimRegion && playbackTime >= endTrimRegion.startTime) {
         playbackTime = endTrimRegion.startTime
         video.currentTime = playbackTime
         video.pause()

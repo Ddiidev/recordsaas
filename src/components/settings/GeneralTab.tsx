@@ -5,11 +5,14 @@ import { LINUX_CURSOR_SCALE_OPTIONS, isLinuxCursorScaleOption } from '../../lib/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
 import { Slider } from '../ui/slider'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
 import { useShallow } from 'zustand/react/shallow'
 
 const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
 const EXPORT_MEMORY_LIMIT_SETTING_KEY = 'export.memoryLimitPercent'
+const RECORDSAAS_ROOT_SETTING_KEY = 'storage.recordsaasRootPath'
 const DEFAULT_EXPORT_MEMORY_LIMIT_PERCENT = 50
 const EXPORT_MEMORY_HARD_CAP_FRACTION = 0.6
 
@@ -43,6 +46,8 @@ export function GeneralTab() {
   const [playExportCompletionSound, setPlayExportCompletionSound] = useState(true)
   const [exportMemoryLimitPercent, setExportMemoryLimitPercent] = useState(DEFAULT_EXPORT_MEMORY_LIMIT_PERCENT)
   const [totalMemoryBytes, setTotalMemoryBytes] = useState<number | null>(null)
+  const [recordSaaSRootPath, setRecordSaaSRootPath] = useState('')
+  const [defaultRecordSaaSRootPath, setDefaultRecordSaaSRootPath] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -57,6 +62,8 @@ export function GeneralTab() {
           savedCursorScale,
           savedExportMemoryLimitPercent,
           systemMemoryInfo,
+          configuredRecordSaaSRootPath,
+          defaultRootPath,
         ] = await Promise.all([
           window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
           window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
@@ -65,6 +72,8 @@ export function GeneralTab() {
           window.electronAPI.getSetting<number>('recorder.cursorScale'),
           window.electronAPI.getSetting<number>(EXPORT_MEMORY_LIMIT_SETTING_KEY),
           window.electronAPI.getSystemMemoryInfo(),
+          window.electronAPI.getRecordSaaSRootPath(),
+          window.electronAPI.getDefaultRecordSaaSRootPath(),
         ])
 
         if (typeof savedCountdown === 'number' && isPreparationCountdownOption(savedCountdown) && isMounted) {
@@ -95,6 +104,8 @@ export function GeneralTab() {
               ? systemMemoryInfo.totalMemoryBytes
               : null,
           )
+          setRecordSaaSRootPath(configuredRecordSaaSRootPath || defaultRootPath || '')
+          setDefaultRecordSaaSRootPath(defaultRootPath || '')
         }
       } catch (error) {
         console.error('Failed to load settings:', error)
@@ -139,6 +150,29 @@ export function GeneralTab() {
     const nextValue = sanitizeExportMemoryLimitPercent(value)
     setExportMemoryLimitPercent(nextValue)
     window.electronAPI.setSetting(EXPORT_MEMORY_LIMIT_SETTING_KEY, nextValue)
+  }
+
+  const persistRecordSaaSRootPath = (pathValue: string) => {
+    const nextPath = pathValue.trim() || defaultRecordSaaSRootPath
+    setRecordSaaSRootPath(nextPath)
+    window.electronAPI.setSetting(RECORDSAAS_ROOT_SETTING_KEY, nextPath)
+  }
+
+  const handleRecordSaaSRootBrowse = async () => {
+    const result = await window.electronAPI.showOpenDialog({
+      title: 'Select RecordSaaS Folder',
+      defaultPath: recordSaaSRootPath || defaultRecordSaaSRootPath,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+
+    if (!result.canceled && result.filePaths[0]) {
+      persistRecordSaaSRootPath(result.filePaths[0])
+    }
+  }
+
+  const handleResetRecordSaaSRootPath = () => {
+    if (!defaultRecordSaaSRootPath) return
+    persistRecordSaaSRootPath(defaultRecordSaaSRootPath)
   }
 
   const exportMemoryBudgetBytes = totalMemoryBytes
@@ -224,6 +258,27 @@ export function GeneralTab() {
             <p className="text-sm text-muted-foreground">Play a sound when export finishes with success or error.</p>
           </div>
           <Switch checked={playExportCompletionSound} onCheckedChange={handlePlayExportCompletionSoundChange} />
+        </div>
+
+        <div className="p-4 bg-muted/50 rounded-lg border border-border">
+          <div className="mb-4">
+            <h3 className="font-medium text-foreground">RecordSaaS Folder</h3>
+            <p className="text-sm text-muted-foreground">Default location for projects and renders.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              value={recordSaaSRootPath}
+              onChange={(event) => setRecordSaaSRootPath(event.target.value)}
+              onBlur={() => persistRecordSaaSRootPath(recordSaaSRootPath)}
+              className="h-10 min-w-0 flex-1 bg-background/50"
+            />
+            <Button variant="secondary" onClick={handleRecordSaaSRootBrowse} className="h-10 shrink-0">
+              Browse
+            </Button>
+            <Button variant="secondary" onClick={handleResetRecordSaaSRootPath} className="h-10 shrink-0">
+              Reset
+            </Button>
+          </div>
         </div>
 
         <div className="p-4 bg-muted/50 rounded-lg border border-border">
