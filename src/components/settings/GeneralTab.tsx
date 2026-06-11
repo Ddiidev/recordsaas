@@ -275,7 +275,7 @@ export function GeneralTab() {
             <Button variant="secondary" onClick={handleRecordSaaSRootBrowse} className="h-10 shrink-0">
               Browse
             </Button>
-            <Button variant="ghost" onClick={handleResetRecordSaaSRootPath} className="h-10 shrink-0">
+            <Button variant="secondary" onClick={handleResetRecordSaaSRootPath} className="h-10 shrink-0">
               Reset
             </Button>
           </div>
