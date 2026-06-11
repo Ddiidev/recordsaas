@@ -270,7 +270,7 @@ export function GeneralTab() {
               value={recordSaaSRootPath}
               onChange={(event) => setRecordSaaSRootPath(event.target.value)}
               onBlur={() => persistRecordSaaSRootPath(recordSaaSRootPath)}
-              className="h-10 bg-background/50"
+              className="h-10 min-w-0 flex-1 bg-background/50"
             />
             <Button variant="secondary" onClick={handleRecordSaaSRootBrowse} className="h-10 shrink-0">
               Browse
