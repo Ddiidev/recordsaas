@@ -412,9 +412,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       const clickX = event.clientX - rect.left
       updateVideoTime(trackPxToTime(clickX))
       setSelectedRegionId(null)
-      handlePlayheadMouseDown(event)
     },
-    [duration, handlePlayheadMouseDown, setSelectedRegionId, trackPxToTime, updateVideoTime],
+    [duration, setSelectedRegionId, trackPxToTime, updateVideoTime],
   )
 
   return (
