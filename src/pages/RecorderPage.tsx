@@ -11,7 +11,6 @@ import {
   X,
   Marquee2,
   FileImport,
-  Folder,
   IconShell,
   IconSwitch,
   MicrophoneSolid,
@@ -20,13 +19,23 @@ import {
   UserCircle,
 } from '@icons'
 import { Button } from '../components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../components/ui/select'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder-window'
 import { cn } from '../lib/utils'
 import type { AuthSession } from '../types/auth'
+import {
+  NATIVE_RECORDING_ANALYSIS_SETTING_KEY,
+  NATIVE_RECORDING_PROFILE_ID,
+  RECORDING_PROFILES_SETTING_KEY,
+  SELECTED_RECORDING_PROFILE_SETTING_KEY,
+  getRecordingProfileLabel,
+  normalizeRecordingProfiles,
+  type RecordingCapabilityAnalysis,
+  type RecordingProfile,
+} from '../lib/recording-profiles'
 import '../index.css'
 
 // --- Constants ---
@@ -34,6 +43,7 @@ const PREPARATION_COUNTDOWN_OPTIONS = [0, 2, 3, 5, 10] as const
 const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
 const WEBCAM_RELEASE_DELAY_MS = 1000
 const RECORDER_DEVICE_LABEL_MAX_LENGTH = 50
+const CREATE_RECORDING_PROFILE_ACTION = '__create_recording_profile__'
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -55,7 +65,7 @@ const truncateRecorderLabel = (value: string, maxLength = RECORDER_DEVICE_LABEL_
 type RecordingState = 'idle' | 'preparing' | 'recording'
 type ActionInProgress = 'none' | 'recording' | 'loading'
 type RecordingSource = 'area' | 'fullscreen' | 'window'
-type ToolbarSelectKey = 'display' | 'webcam' | 'mic'
+type ToolbarSelectKey = 'display' | 'webcam' | 'mic' | 'profile'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
 
 export function RecorderPage() {
@@ -68,10 +78,12 @@ export function RecorderPage() {
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
     mic: false,
+    profile: false,
   })
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
@@ -79,24 +91,31 @@ export function RecorderPage() {
   )
   const [preparationSecondsLeft, setPreparationSecondsLeft] = useState<number | null>(null)
   const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
+  const [recordingProfiles, setRecordingProfiles] = useState<RecordingProfile[]>(normalizeRecordingProfiles(null))
+  const [selectedRecordingProfileId, setSelectedRecordingProfileId] = useState<string>(NATIVE_RECORDING_PROFILE_ID)
 
   const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
-  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
-  const isWindowClickThroughSupported = platform === 'win32' || platform === 'darwin'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
     }
     return 'Not logged in'
   }, [authSession.isAuthenticated, authSession.user?.email, authSession.user?.name])
+  const selectedRecordingProfile = useMemo(
+    () =>
+      recordingProfiles.find((profile) => profile.id === selectedRecordingProfileId) ||
+      recordingProfiles[0] ||
+      normalizeRecordingProfiles(null)[0],
+    [recordingProfiles, selectedRecordingProfileId],
+  )
 
   const loadAuthSession = useCallback(async () => {
     try {
@@ -105,6 +124,26 @@ export function RecorderPage() {
     } catch (error) {
       console.error('Failed to load desktop auth session:', error)
       setAuthSession(EMPTY_AUTH_SESSION)
+    }
+  }, [])
+
+  const loadRecordingProfiles = useCallback(async () => {
+    try {
+      const [storedProfiles, selectedId, analysis] = await Promise.all([
+        window.electronAPI.getSetting<RecordingProfile[]>(RECORDING_PROFILES_SETTING_KEY),
+        window.electronAPI.getSetting<string>(SELECTED_RECORDING_PROFILE_SETTING_KEY),
+        window.electronAPI.getSetting<RecordingCapabilityAnalysis>(NATIVE_RECORDING_ANALYSIS_SETTING_KEY),
+      ])
+      const recommendedFps = analysis?.recommendedFps === 30 ? 30 : 60
+      const normalized = normalizeRecordingProfiles(storedProfiles, recommendedFps)
+      setRecordingProfiles(normalized)
+      setSelectedRecordingProfileId(
+        normalized.some((profile) => profile.id === selectedId) ? selectedId : NATIVE_RECORDING_PROFILE_ID,
+      )
+    } catch (error) {
+      console.error('Failed to load recording profiles:', error)
+      setRecordingProfiles(normalizeRecordingProfiles(null))
+      setSelectedRecordingProfileId(NATIVE_RECORDING_PROFILE_ID)
     }
   }, [])
 
@@ -154,6 +193,7 @@ export function RecorderPage() {
   const handleSettingsClose = () => {
     setSettingsModalOpen(false)
     setSettingsDefaultTab('general')
+    void loadRecordingProfiles()
   }
 
   const handleToolbarSelectOpenChange = useCallback(
@@ -206,8 +246,8 @@ export function RecorderPage() {
         console.error('Failed to initialize recorder settings:', error)
       }
     }
-    initialize()
-  }, [platform]) // Depend on platform to ensure correct logic is applied
+    void initialize().then(() => loadRecordingProfiles())
+  }, [loadRecordingProfiles, platform]) // Depend on platform to ensure correct logic is applied
 
   // Effect to validate saved settings against available devices after initialization
   useEffect(() => {
@@ -374,46 +414,18 @@ export function RecorderPage() {
     }
   }, [])
 
-  // Enable click-through only when Settings is closed
+  // Keep the recorder window interactive while its controls are visible.
   useEffect(() => {
-    if (isSettingsModalOpen || isAnyToolbarSelectOpen || !isWindowClickThroughSupported) {
+    if (platform === 'win32' || platform === 'darwin') {
       window.electronAPI.setRecorderIgnoreMouse(false)
-      return
-    }
-
-    const isInteractiveElement = (target: HTMLElement | null) =>
-      !!target?.closest('[data-interactive="true"], [data-radix-popper-content-wrapper], [role="listbox"]')
-
-    const syncIgnoreMouseState = (target: HTMLElement | null) => {
-      const interactive = isInteractiveElement(target)
-      window.electronAPI.setRecorderIgnoreMouse(!interactive)
-    }
-
-    const onMouseMove = (e: MouseEvent) => {
-      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY }
-      syncIgnoreMouseState(e.target as HTMLElement | null)
-    }
-
-    const onMouseLeave = () => {
-      window.electronAPI.setRecorderIgnoreMouse(true)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseleave', onMouseLeave)
-
-    const lastPointerPosition = lastPointerPositionRef.current
-    if (lastPointerPosition) {
-      syncIgnoreMouseState(document.elementFromPoint(lastPointerPosition.x, lastPointerPosition.y) as HTMLElement | null)
-    } else {
-      window.electronAPI.setRecorderIgnoreMouse(true)
     }
 
     return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseleave', onMouseLeave)
-      window.electronAPI.setRecorderIgnoreMouse(false)
+      if (platform === 'win32' || platform === 'darwin') {
+        window.electronAPI.setRecorderIgnoreMouse(false)
+      }
     }
-  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, isWindowClickThroughSupported])
+  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, platform])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {
@@ -486,6 +498,7 @@ export function RecorderPage() {
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
         webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
         mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
+        recordingProfile: selectedRecordingProfile,
       })
 
       if (result.canceled) {
@@ -544,17 +557,6 @@ export function RecorderPage() {
     window.electronAPI.stopRecording()
   }
 
-  const handleLoadVideo = async () => {
-    setActionInProgress('loading')
-    try {
-      const result = await window.electronAPI.loadVideoFromFile()
-      if (result.canceled) setActionInProgress('none')
-    } catch (error) {
-      console.error('Failed to load video from file:', error)
-      setActionInProgress('none')
-    }
-  }
-
   const handleImportProject = async () => {
     setActionInProgress('loading')
     try {
@@ -569,6 +571,18 @@ export function RecorderPage() {
   const handleSelectionChange = (setter: (id: string) => void, key: string) => (id: string) => {
     setter(id)
     window.electronAPI.setSetting(key, id)
+  }
+
+  const handleProfileChange = (id: string) => {
+    if (id === CREATE_RECORDING_PROFILE_ACTION) {
+      setRecordingProfileCreateRequestId((current) => current + 1)
+      setSettingsDefaultTab('recording')
+      setSettingsModalOpen(true)
+      return
+    }
+
+    setSelectedRecordingProfileId(id)
+    window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
 
   return (
@@ -627,7 +641,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select display"
                   >
                     <SelectValue asChild>
@@ -658,7 +672,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select webcam"
                   >
                     <SelectValue asChild>
@@ -703,7 +717,7 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[150px] h-9"
+                    className="w-auto min-w-[120px] max-w-[145px] h-9"
                     aria-label="Select microphone"
                   >
                     <SelectValue asChild>
@@ -732,6 +746,39 @@ export function RecorderPage() {
                         {truncateRecorderLabel(m.name)}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={selectedRecordingProfile.id}
+                  onValueChange={handleProfileChange}
+                  onOpenChange={handleToolbarSelectOpenChange('profile')}
+                  disabled={isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-auto min-w-[210px] max-w-[260px] h-9"
+                    aria-label="Select recording profile"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-2 text-xs">
+                        <IconShell active className="h-6 w-6 shrink-0">
+                          <Settings size={14} />
+                        </IconShell>
+                        <span className="truncate">{getRecordingProfileLabel(selectedRecordingProfile)}</span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent side="bottom" avoidCollisions={false}>
+                    {recordingProfiles.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {getRecordingProfileLabel(profile)}
+                      </SelectItem>
+                    ))}
+                    <SelectSeparator />
+                    <SelectItem value={CREATE_RECORDING_PROFILE_ACTION} className="font-medium text-primary">
+                      Create profile
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -781,26 +828,6 @@ export function RecorderPage() {
                       </TooltipContent>
                     </Tooltip>
                   )}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleLoadVideo}
-                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                        variant="secondary"
-                        size="icon"
-                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                      >
-                        <Folder size={18} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      sideOffset={12}
-                      className="px-3 py-1.5 text-xs font-medium rounded-md"
-                    >
-                      Load Local Video
-                    </TooltipContent>
-                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -912,6 +939,8 @@ export function RecorderPage() {
         onClose={handleSettingsClose}
         isTransparent
         defaultTab={settingsDefaultTab}
+        recordingProfileCreateRequestId={recordingProfileCreateRequestId}
+        onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
       />
     </TooltipProvider>
   )

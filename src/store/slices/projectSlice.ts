@@ -21,6 +21,7 @@ import { initialWebcamState } from './webcamSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
 import { createDefaultTimelineLane, getFallbackLaneId } from '../../lib/timeline-lanes'
 import { isWebcamShape, normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
+import { normalizeMediaPath, toMediaUrl } from '../../lib/media-url'
 
 export const initialProjectState: ProjectState = {
   videoPath: null,
@@ -41,13 +42,6 @@ export const initialProjectState: ProjectState = {
   platform: null,
   cursorTheme: null,
   hasAudioTrack: false,
-}
-
-const normalizeMediaPath = (filePath: string): string => filePath.replace(/^media:\/\//, '')
-
-const toMediaUrl = (path: string | null | undefined): string | null => {
-  if (!path) return null
-  return path.startsWith('media://') ? path : `media://${path}`
 }
 
 const clampToNonNegative = (value: number): number => Math.max(0, value)

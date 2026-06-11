@@ -16,6 +16,10 @@
   "type": "module",
   "scripts": {
     "setup:binaries": "node scripts/ensure-binaries.mjs",
+    "analyze:export-benchmark": "node scripts/analyze-export-benchmark.mjs",
+    "verify:export-startup": "node scripts/verify-export-startup.mjs",
+    "verify:video-chunked-reader": "node scripts/verify-video-chunked-reader.mjs",
+    "verify:webcodecs-decode": "electron scripts/verify-webcodecs-decode.cjs",
     "dev": "npm run setup:binaries && vite",
     "clean": "rimraf dist dist-electron",
     "build": "npm run clean && tsc && vite build",
@@ -77,8 +81,8 @@
     "@typescript-eslint/eslint-plugin": "^7.1.1",
     "@typescript-eslint/parser": "^7.1.1",
     "@vitejs/plugin-react": "^4.2.1",
-    "electron": "^30.0.1",
-    "electron-builder": "^24.13.3",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.9.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
@@ -91,7 +95,7 @@
     "sharp": "^0.34.5",
     "typescript": "^5.5.4",
     "vite": "^5.1.6",
-    "vite-plugin-electron": "^0.28.6",
+    "vite-plugin-electron": "^0.29.1",
     "vite-plugin-node-polyfills": "^0.24.0"
   },
   "optionalDependencies": {

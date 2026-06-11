@@ -14,6 +14,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('app:getPath', appHandlers.handleGetPath)
   ipcMain.handle('app:getVersion', appHandlers.handleGetVersion)
   ipcMain.handle('app:getPlatform', appHandlers.handleGetPlatform)
+  ipcMain.handle('app:getSystemMemoryInfo', appHandlers.handleGetSystemMemoryInfo)
   ipcMain.on('window:minimize', appHandlers.minimizeWindow)
   ipcMain.on('window:maximize', appHandlers.maximizeWindow)
   ipcMain.on('window:close', appHandlers.closeWindow)
@@ -21,6 +22,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('window:isMaximized', appHandlers.handleIsMaximized)
   ipcMain.on('window:update-title-bar-overlay', appHandlers.updateTitleBarOverlay)
   ipcMain.on('export-progress:set-collapsed', appHandlers.setExportProgressCollapsed)
+  ipcMain.handle('export-progress:get-state', appHandlers.handleGetExportProgressState)
 
   // Auth
   ipcMain.handle('auth:get-session', authHandlers.handleAuthGetSession)
@@ -42,6 +44,7 @@ export function registerIpcHandlers() {
 
   // Recording
   ipcMain.handle('recording:start', recordingHandlers.handleStartRecording)
+  ipcMain.handle('recording:analyze-capability', recordingHandlers.handleAnalyzeRecordingCapability)
   ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
@@ -50,10 +53,13 @@ export function registerIpcHandlers() {
 
   // Export
   ipcMain.handle('export:start', exportHandlers.handleStartExport)
+  ipcMain.handle('export:probe-source-video-info', exportHandlers.handleProbeSourceVideoInfo)
 
   // File System
   ipcMain.handle('fs:readFile', fsHandlers.handleReadFile)
   ipcMain.handle('fs:readFileBuffer', fsHandlers.handleReadFileBuffer)
+  ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)
+  ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)
   ipcMain.handle('fs:saveProject', fsHandlers.handleSaveProject)
 
   // Settings & Presets

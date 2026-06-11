@@ -32,12 +32,17 @@ const Ruler = memo(
     ticks,
     timeToPx,
     formatTime: formatTimeFunc,
+    onMouseDown,
   }: {
     ticks: { time: number; type: string }[]
     timeToPx: (time: number) => number
     formatTime: (seconds: number) => string
+    onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void
   }) => (
-    <div className="sticky top-0 left-0 right-0 z-10 h-12 overflow-hidden border-b border-border/30 bg-card/60 backdrop-blur-md">
+    <div
+      className="sticky top-0 left-0 right-0 z-[300] h-12 cursor-ew-resize overflow-hidden border-b border-border/30 bg-card/95 backdrop-blur-md"
+      onMouseDown={onMouseDown}
+    >
       <div className="relative h-full pt-2">
         {ticks.map(({ time, type }) => (
           <div key={`${type}-${time}`} className="absolute top-2 h-full" style={{ left: `${timeToPx(time)}px` }}>
@@ -184,6 +189,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     draggingRegionId,
     dragMovePreview,
     activeDropLaneId,
+    isDraggingPlayhead,
     handleRegionMouseDown,
     handlePlayheadMouseDown,
     handleLeftStripMouseDown,
@@ -397,6 +403,20 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     [addChangeSoundRegion, addMediaAudioRegion, mediaAudioClip, trackPxToTime],
   )
 
+  const handleRulerMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation()
+      if (duration === 0 || !timelineRef.current) return
+
+      const rect = timelineRef.current.getBoundingClientRect()
+      const clickX = event.clientX - rect.left
+      updateVideoTime(trackPxToTime(clickX))
+      setSelectedRegionId(null)
+      handlePlayheadMouseDown(event)
+    },
+    [duration, handlePlayheadMouseDown, setSelectedRegionId, trackPxToTime, updateVideoTime],
+  )
+
   return (
     <div className="flex flex-col bg-background/50 p-3 transition-all duration-300 ease-in-out">
       <div className="mb-2 flex items-center gap-3 px-1">
@@ -433,24 +453,21 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
           }}
           onMouseDown={(e) => {
             if (
-              duration === 0 ||
               (e.target as HTMLElement).closest('[data-region-id]') ||
-              (e.target as HTMLElement).closest('[data-lane-control]')
+              (e.target as HTMLElement).closest('[data-lane-control]') ||
+              (e.target as HTMLElement).closest('[data-playhead]')
             ) {
               return
             }
-            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect()
-            const clickX = e.clientX - rect.left + (e.currentTarget as HTMLDivElement).scrollLeft
-            updateVideoTime(trackPxToTime(clickX))
             setSelectedRegionId(null)
           }}
         >
           <div
             ref={timelineRef}
-            className="relative min-w-full overflow-hidden"
+            className="relative min-w-full overflow-visible"
             style={{ width: `${timelineStartOffsetPx + timeToPx(duration)}px`, height: `${timelineContentHeight}px` }}
           >
-            <Ruler ticks={rulerTicks} timeToPx={timeToTrackPx} formatTime={formatTime} />
+            <Ruler ticks={rulerTicks} timeToPx={timeToTrackPx} formatTime={formatTime} onMouseDown={handleRulerMouseDown} />
 
             <div
               ref={lanesContainerRef}
@@ -749,12 +766,13 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
             {duration > 0 && (
               <div
                 ref={playheadRef}
+                data-playhead
                 className="absolute top-0 bottom-0 pointer-events-auto cursor-ew-resize"
                 style={{ zIndex: 9999, transform: `translateX(${timeToTrackPx(currentTime)}px)` }}
               >
                 <Playhead
                   height={Math.max(80, Math.floor((timelineRef.current?.clientHeight ?? 0) * 0.9))}
-                  isDragging={false}
+                  isDragging={isDraggingPlayhead}
                   onMouseDown={handlePlayheadMouseDown}
                 />
               </div>

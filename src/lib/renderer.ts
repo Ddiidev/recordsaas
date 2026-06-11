@@ -21,6 +21,8 @@ type MediaRectConfig = Rect & {
   borderColor: string
   zIndex: number
 }
+
+type BackgroundImageSource = HTMLImageElement | ImageBitmap
 type ResolvedLayout = {
   mode: WebcamLayout['mode']
   desktopConfig: MediaRectConfig
@@ -30,15 +32,61 @@ type ResolvedLayout = {
 type WindowWithScreenCache = Window & {
   __screenCacheCanvas?: HTMLCanvasElement
   __screenCacheCtx?: CanvasRenderingContext2D | null
+  __backgroundCacheCanvas?: HTMLCanvasElement
+  __backgroundCacheCtx?: CanvasRenderingContext2D | null
+  __backgroundCacheKey?: string
+  __mediaLayerCacheCanvas?: HTMLCanvasElement
+  __mediaLayerCacheCtx?: CanvasRenderingContext2D | null
+  __mediaLayerCacheKey?: string
 }
 
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
 let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
+const roundedRectPathCache = new Map<string, Path2D>()
+const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+const objectValuesCache = new WeakMap<object, unknown[]>()
+
+const getObjectValuesCached = <T,>(source: Record<string, T> | null | undefined): T[] => {
+  if (!source) return []
+  const cached = objectValuesCache.get(source)
+  if (cached) return cached as T[]
+  const values = Object.values(source)
+  objectValuesCache.set(source, values)
+  return values
+}
+
+const getSourceFrameKey = (source: CanvasImageSource): string | null => {
+  if (typeof VideoFrame !== 'undefined' && source instanceof VideoFrame) {
+    return `vf:${source.timestamp ?? 'unknown'}:${source.displayWidth}x${source.displayHeight}`
+  }
+  return null
+}
+
+const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
+  const key = [
+    Math.round(rect.x * 100) / 100,
+    Math.round(rect.y * 100) / 100,
+    Math.round(rect.width * 100) / 100,
+    Math.round(rect.height * 100) / 100,
+    Math.round(radius * 100) / 100,
+  ].join(':')
+  const cached = roundedRectPathCache.get(key)
+  if (cached) return cached
+
+  const path = new Path2D()
+  path.roundRect(rect.x, rect.y, rect.width, rect.height, radius)
+  if (roundedRectPathCache.size >= ROUNDED_RECT_PATH_CACHE_LIMIT) {
+    const firstKey = roundedRectPathCache.keys().next().value
+    if (firstKey) roundedRectPathCache.delete(firstKey)
+  }
+  roundedRectPathCache.set(key, path)
+  return path
+}
 
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel' | 'screen',
+  kind: 'sample' | 'pixel' | 'screen' | 'background' | 'media-layer',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -64,6 +112,34 @@ const getOrCreateCanvas = (
     }
     const canvas = cacheWindow.__screenCacheCanvas
     const ctx = cacheWindow.__screenCacheCtx
+    if (!canvas || !ctx) return null
+    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
+    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
+    return { canvas, ctx }
+  }
+
+  if (kind === 'background') {
+    const cacheWindow = window as WindowWithScreenCache
+    if (!cacheWindow.__backgroundCacheCanvas) {
+      cacheWindow.__backgroundCacheCanvas = document.createElement('canvas')
+      cacheWindow.__backgroundCacheCtx = cacheWindow.__backgroundCacheCanvas.getContext('2d')
+    }
+    const canvas = cacheWindow.__backgroundCacheCanvas
+    const ctx = cacheWindow.__backgroundCacheCtx
+    if (!canvas || !ctx) return null
+    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
+    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
+    return { canvas, ctx }
+  }
+
+  if (kind === 'media-layer') {
+    const cacheWindow = window as WindowWithScreenCache
+    if (!cacheWindow.__mediaLayerCacheCanvas) {
+      cacheWindow.__mediaLayerCacheCanvas = document.createElement('canvas')
+      cacheWindow.__mediaLayerCacheCtx = cacheWindow.__mediaLayerCacheCanvas.getContext('2d')
+    }
+    const canvas = cacheWindow.__mediaLayerCacheCanvas
+    const ctx = cacheWindow.__mediaLayerCacheCtx
     if (!canvas || !ctx) return null
     if (canvas.width !== roundedWidth) canvas.width = roundedWidth
     if (canvas.height !== roundedHeight) canvas.height = roundedHeight
@@ -344,7 +420,8 @@ const resolveLayoutConfig = ({
   const { webcamLayout, webcamPosition, webcamStyles } = state
   const baseInset = Math.min(outputWidth, outputHeight) * 0.02
   const sidebarWidth = availableWidth * (webcamLayout.webcamWidthPercent / 100)
-  const gap = baseInset
+  const hasFramePadding = state.frameStyles.padding > 0
+  const gap = hasFramePadding ? baseInset : 0
   const sidebarOnLeft = webcamLayout.side === 'left'
   const availableArea: Rect = {
     x: outputWidth * (state.frameStyles.padding / 100),
@@ -400,8 +477,8 @@ const resolveLayoutConfig = ({
   const desktopRect = fitRectWithinBounds(desktopArea, state.videoDimensions.width / state.videoDimensions.height)
 
   if (webcamLayout.mode === 'side-by-side') {
-    const cameraBounds = insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75)
-    const cameraRect = fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+    const cameraBounds = hasFramePadding ? insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75) : sidebarArea
+    const cameraRect = hasFramePadding ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape)) : cameraBounds
     return {
       mode: 'side-by-side',
       desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),
@@ -426,14 +503,33 @@ const drawBackground = (
   width: number,
   height: number,
   backgroundState: EditorState['frameStyles']['background'],
-  preloadedImage: HTMLImageElement | null,
+  preloadedImage: BackgroundImageSource | null,
 ): void => {
-  ctx.clearRect(0, 0, width, height)
+  const imageReady = preloadedImage && ('complete' in preloadedImage ? preloadedImage.complete : true)
+  const imageKey =
+    preloadedImage && imageReady
+      ? `${preloadedImage.width}x${preloadedImage.height}`
+      : 'no-image'
+  const cacheKey = JSON.stringify({
+    width,
+    height,
+    backgroundState,
+    imageKey,
+  })
+  const cacheWindow = window as WindowWithScreenCache
+  const cachedBackground = getOrCreateCanvas('background', width, height)
+  if (cachedBackground && cacheWindow.__backgroundCacheKey === cacheKey) {
+    ctx.drawImage(cachedBackground.canvas, 0, 0)
+    return
+  }
+
+  const targetCtx = cachedBackground?.ctx ?? ctx
+  targetCtx.clearRect(0, 0, width, height)
 
   switch (backgroundState.type) {
     case 'color':
-      ctx.fillStyle = backgroundState.color || '#000000'
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = backgroundState.color || '#000000'
+      targetCtx.fillRect(0, 0, width, height)
       break
     case 'gradient': {
       const start = backgroundState.gradientStart || '#000000'
@@ -442,7 +538,7 @@ const drawBackground = (
       let gradient
 
       if (direction.startsWith('circle')) {
-        gradient = ctx.createRadialGradient(
+        gradient = targetCtx.createRadialGradient(
           width / 2,
           height / 2,
           0,
@@ -481,18 +577,18 @@ const drawBackground = (
           }
         }
         const coords = getCoords(direction)
-        gradient = ctx.createLinearGradient(coords[0], coords[1], coords[2], coords[3])
+        gradient = targetCtx.createLinearGradient(coords[0], coords[1], coords[2], coords[3])
         gradient.addColorStop(0, start)
         gradient.addColorStop(1, end)
       }
 
-      ctx.fillStyle = gradient
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = gradient
+      targetCtx.fillRect(0, 0, width, height)
       break
     }
     case 'image':
     case 'wallpaper': {
-      if (preloadedImage && preloadedImage.complete) {
+      if (preloadedImage && imageReady) {
         const img = preloadedImage
         const imgRatio = img.width / img.height
         const canvasRatio = width / height
@@ -509,16 +605,21 @@ const drawBackground = (
           sx = 0
           sy = (img.height - sHeight) / 2
         }
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height)
+        targetCtx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height)
       } else {
-        ctx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
-        ctx.fillRect(0, 0, width, height)
+        targetCtx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
+        targetCtx.fillRect(0, 0, width, height)
       }
       break
     }
     default:
-      ctx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
-      ctx.fillRect(0, 0, width, height)
+      targetCtx.fillStyle = 'oklch(0.2077 0.0398 265.7549)'
+      targetCtx.fillRect(0, 0, width, height)
+  }
+
+  if (cachedBackground) {
+    cacheWindow.__backgroundCacheKey = cacheKey
+    ctx.drawImage(cachedBackground.canvas, 0, 0)
   }
 }
 
@@ -533,20 +634,23 @@ export const drawScene = (
   currentTime: number,
   outputWidth: number,
   outputHeight: number,
-  preloadedBgImage: HTMLImageElement | null,
+  preloadedBgImage: BackgroundImageSource | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
   const laneContext = createLanePrecedenceContext(state.timelineLanes)
-  const swapRegions = Object.values(state.swapRegions || {})
-  const zoomRegions = Object.values(state.zoomRegions)
-  const blurRegions = Object.values(state.blurRegions)
-  const activeBlurRegions = sortRegionsByLanePrecedence(
-    blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
-    laneContext,
-  ).reverse()
+  const swapRegions = getObjectValuesCached(state.swapRegions)
+  const zoomRegions = getObjectValuesCached(state.zoomRegions)
+  const blurRegions = getObjectValuesCached(state.blurRegions)
+  const activeBlurRegions =
+    blurRegions.length > 0
+      ? sortRegionsByLanePrecedence(
+          blurRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+          laneContext,
+        ).reverse()
+      : []
 
   // Enable rendering - 'ultra high' uses bicubic interpolation, otherwise bilinear (faster)
   ctx.imageSmoothingEnabled = true
@@ -623,19 +727,30 @@ export const drawScene = (
 
     sCtx.drawImage(videoElement, 0, 0, frameContentWidth, frameContentHeight)
 
-    if (state.cursorStyles.clickRippleEffect && state.recordingGeometry) {
-      const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
-      const recentRippleClicks = []
-      const startIndex = findLastMetadataIndex(state.metadata, currentTime)
-      if (startIndex > -1) {
-        for (let i = startIndex; i >= 0; i--) {
-          const event = state.metadata[i]
-          if (currentTime - event.timestamp >= clickRippleDuration) break
-          if (event.type === 'click' && event.pressed && currentTime >= event.timestamp) {
-            recentRippleClicks.push(event)
-          }
+    const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
+    let mostRecentClick = undefined
+    const recentRippleClicks = []
+    const maxClickEffectDuration = Math.max(
+      state.cursorStyles.clickRippleEffect ? state.cursorStyles.clickRippleDuration : 0,
+      state.cursorStyles.clickScaleEffect ? state.cursorStyles.clickScaleDuration : 0,
+    )
+    if (state.recordingGeometry && lastEventIndex > -1 && maxClickEffectDuration > 0) {
+      for (let i = lastEventIndex; i >= 0; i--) {
+        const event = state.metadata[i]
+        const age = currentTime - event.timestamp
+        if (age >= maxClickEffectDuration) break
+        if (event.type !== 'click' || !event.pressed || currentTime < event.timestamp) continue
+        if (!mostRecentClick && state.cursorStyles.clickScaleEffect && age < state.cursorStyles.clickScaleDuration) {
+          mostRecentClick = event
+        }
+        if (state.cursorStyles.clickRippleEffect && age < state.cursorStyles.clickRippleDuration) {
+          recentRippleClicks.push(event)
         }
       }
+    }
+
+    if (state.cursorStyles.clickRippleEffect && state.recordingGeometry && recentRippleClicks.length > 0) {
+      const { clickRippleDuration, clickRippleSize, clickRippleColor } = state.cursorStyles
       for (const click of recentRippleClicks) {
         const progress = (currentTime - click.timestamp) / clickRippleDuration
         const easedProgress = EASING_MAP.Balanced(progress)
@@ -656,7 +771,6 @@ export const drawScene = (
       }
     }
 
-    const lastEventIndex = findLastMetadataIndex(state.metadata, currentTime)
     if (state.cursorStyles.showCursor && lastEventIndex > -1 && state.recordingGeometry) {
       const event = state.metadata[lastEventIndex]
       if (event && currentTime - event.timestamp < 0.1) {
@@ -681,17 +795,6 @@ export const drawScene = (
           let cursorScale = 1
           if (state.cursorStyles.clickScaleEffect) {
             const { clickScaleDuration, clickScaleAmount, clickScaleEasing } = state.cursorStyles
-            let mostRecentClick = undefined
-            if (lastEventIndex > -1) {
-              for (let i = lastEventIndex; i >= 0; i--) {
-                const e = state.metadata[i]
-                if (currentTime - e.timestamp >= clickScaleDuration) break
-                if (e.type === 'click' && e.pressed && e.timestamp <= currentTime) {
-                  mostRecentClick = e
-                  break
-                }
-              }
-            }
             if (mostRecentClick) {
               const progress = (currentTime - mostRecentClick.timestamp) / clickScaleDuration
               const easingFn = EASING_MAP[clickScaleEasing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
@@ -811,62 +914,111 @@ export const drawScene = (
     ctx.save()
     ctx.globalAlpha = globalAlpha
 
+    const mediaLayerWidth = Math.ceil(config.width)
+    const mediaLayerHeight = Math.ceil(config.height)
+    const sourceFrameKey = getSourceFrameKey(source)
+    const canUseMediaLayerCache =
+      sourceFrameKey !== null &&
+      globalAlpha === 1 &&
+      mediaLayerWidth > 0 &&
+      mediaLayerHeight > 0
+    const mediaLayerCacheKey = canUseMediaLayerCache
+      ? JSON.stringify({
+          sourceFrameKey,
+          width: mediaLayerWidth,
+          height: mediaLayerHeight,
+          radius: config.radius,
+          sW,
+          sH,
+          isFlipped,
+          crop,
+        })
+      : null
+    const cacheWindow = window as WindowWithScreenCache
+    const hasCachedMediaLayer =
+      Boolean(mediaLayerCacheKey && cacheWindow.__mediaLayerCacheKey === mediaLayerCacheKey && cacheWindow.__mediaLayerCacheCanvas)
+
     if (config.shadowBlur > 0) {
       ctx.save()
       ctx.shadowColor = config.shadowColor
       ctx.shadowBlur = config.shadowBlur
       ctx.shadowOffsetX = config.shadowOffsetX
       ctx.shadowOffsetY = config.shadowOffsetY
-      const shadowPath = new Path2D()
-      shadowPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
       // Use fill for shadow rendering to apply exactly behind the clip area
       ctx.fillStyle = 'black'
-      ctx.fill(shadowPath)
+      ctx.fill(getRoundedRectPath(config, config.radius))
       ctx.restore()
     }
 
-    ctx.save()
-    const clipPath = new Path2D()
-    clipPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
-    ctx.clip(clipPath)
-
-    const targetAR = config.width / config.height
-    const sourceX = crop ? sW * crop.left : 0
-    const sourceY = crop ? sH * crop.top : 0
-    const sourceWidth = crop ? sW * (1 - crop.left - crop.right) : sW
-    const sourceHeight = crop ? sH * (1 - crop.top - crop.bottom) : sH
-    if (sourceWidth <= 0 || sourceHeight <= 0) {
-      ctx.restore()
-      ctx.restore()
-      return
-    }
-
-    const sourceAR = sourceWidth / sourceHeight
-    let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
-
-    if (sourceAR > targetAR) {
-      drawW = sourceHeight * targetAR
-      sx = sourceX + (sourceWidth - drawW) / 2
+    if (hasCachedMediaLayer && cacheWindow.__mediaLayerCacheCanvas) {
+      ctx.drawImage(cacheWindow.__mediaLayerCacheCanvas, config.x, config.y, config.width, config.height)
     } else {
-      drawH = sourceWidth / targetAR
-      sy = sourceY + (sourceHeight - drawH) / 2
-    }
+      const targetCtx = mediaLayerCacheKey ? getOrCreateCanvas('media-layer', mediaLayerWidth, mediaLayerHeight)?.ctx : null
+      if (targetCtx) {
+        targetCtx.clearRect(0, 0, mediaLayerWidth, mediaLayerHeight)
+        targetCtx.save()
+        targetCtx.imageSmoothingEnabled = ctx.imageSmoothingEnabled
+        targetCtx.imageSmoothingQuality = ctx.imageSmoothingQuality
+        targetCtx.clip(getRoundedRectPath({ x: 0, y: 0, width: mediaLayerWidth, height: mediaLayerHeight }, config.radius))
+      } else {
+        ctx.save()
+        ctx.clip(getRoundedRectPath(config, config.radius))
+      }
 
-    if (isFlipped) {
-      ctx.translate(config.x * 2 + config.width, 0)
-      ctx.scale(-1, 1)
-    }
+      const targetAR = config.width / config.height
+      const sourceX = crop ? sW * crop.left : 0
+      const sourceY = crop ? sH * crop.top : 0
+      const sourceWidth = crop ? sW * (1 - crop.left - crop.right) : sW
+      const sourceHeight = crop ? sH * (1 - crop.top - crop.bottom) : sH
+      if (sourceWidth <= 0 || sourceHeight <= 0) {
+        if (targetCtx) {
+          targetCtx.restore()
+        } else {
+          ctx.restore()
+        }
+        ctx.restore()
+        return
+      }
 
-    ctx.drawImage(source, sx, sy, drawW, drawH, config.x, config.y, config.width, config.height)
-    ctx.restore()
+      const sourceAR = sourceWidth / sourceHeight
+      let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
+
+      if (sourceAR > targetAR) {
+        drawW = sourceHeight * targetAR
+        sx = sourceX + (sourceWidth - drawW) / 2
+      } else {
+        drawH = sourceWidth / targetAR
+        sy = sourceY + (sourceHeight - drawH) / 2
+      }
+
+      if (isFlipped) {
+        if (targetCtx) {
+          targetCtx.translate(mediaLayerWidth, 0)
+          targetCtx.scale(-1, 1)
+        } else {
+          ctx.translate(config.x * 2 + config.width, 0)
+          ctx.scale(-1, 1)
+        }
+      }
+
+      if (targetCtx) {
+        targetCtx.drawImage(source, sx, sy, drawW, drawH, 0, 0, mediaLayerWidth, mediaLayerHeight)
+        targetCtx.restore()
+        if (mediaLayerCacheKey) cacheWindow.__mediaLayerCacheKey = mediaLayerCacheKey
+        if (cacheWindow.__mediaLayerCacheCanvas) {
+          ctx.drawImage(cacheWindow.__mediaLayerCacheCanvas, config.x, config.y, config.width, config.height)
+        }
+      } else {
+        ctx.drawImage(source, sx, sy, drawW, drawH, config.x, config.y, config.width, config.height)
+        ctx.restore()
+      }
+    }
 
     if (config.borderWidth > 0) {
       ctx.save()
-      const borderPath = new Path2D()
-      borderPath.roundRect(config.x, config.y, config.width, config.height, config.radius)
       ctx.strokeStyle = config.borderColor
       ctx.lineWidth = config.borderWidth * 2
-      ctx.stroke(borderPath)
+      ctx.stroke(getRoundedRectPath(config, config.radius))
       ctx.restore()
     }
     ctx.restore()

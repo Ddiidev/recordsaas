@@ -1,7 +1,7 @@
 // Logic to create and manage the editor window.
 
 import log from 'electron-log/main'
-import { BrowserWindow, nativeTheme } from 'electron'
+import { BrowserWindow, IpcMainEvent, ipcMain, nativeTheme } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
@@ -15,6 +15,14 @@ import { createEditorMenu, clearMenu } from '../features/app-menu'
 import { RecordingGeometry } from '../state'
 
 const store = new Store() // Can be configured with schema if needed
+
+type ProjectOpenPayload = {
+  videoPath: string
+  metadataPath: string
+  webcamVideoPath?: string
+  audioPath?: string
+  originalProjectPath?: string
+}
 
 export function createEditorWindow(
   videoPath: string,
@@ -44,6 +52,14 @@ export function createEditorWindow(
     originalProjectPath,
   }
   log.info('[EditorWindow] Stored session files for cleanup:', appState.currentEditorSessionFiles)
+
+  const projectPayload: ProjectOpenPayload = {
+    videoPath,
+    metadataPath,
+    webcamVideoPath,
+    audioPath,
+    originalProjectPath: appState.currentEditorSessionFiles.originalProjectPath,
+  }
 
   const isWindows = process.platform === 'win32'
   let titleBarOptions = {}
@@ -78,10 +94,50 @@ export function createEditorWindow(
     },
   })
 
+  const sendProjectPayload = (reason: string) => {
+    const editorWin = appState.editorWin
+    if (!editorWin || editorWin.isDestroyed()) return
+    log.info(`[EditorWindow] Sending project data (${reason}).`, projectPayload)
+    editorWin.webContents.send('project:open', projectPayload)
+  }
+
+  const handleEditorReadyForProject = (event: IpcMainEvent) => {
+    if (event.sender !== appState.editorWin?.webContents) return
+    log.info('[EditorWindow] Received editor:ready-for-project.')
+    sendProjectPayload('renderer-ready')
+  }
+
+  ipcMain.on('editor:ready-for-project', handleEditorReadyForProject)
+
   appState.editorWin.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
       event.preventDefault()
+    }
+  })
+
+  appState.editorWin.webContents.on('preload-error', (_event, preloadPath, error) => {
+    log.error(`[EditorWindow] Preload failed: ${preloadPath}`, error)
+  })
+
+  appState.editorWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log.error(`[EditorWindow] Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
+  })
+
+  appState.editorWin.webContents.on('render-process-gone', (_event, details) => {
+    log.error('[EditorWindow] Render process gone:', details)
+  })
+
+  appState.editorWin.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level < 2 && !message.startsWith('[Editor') && !message.startsWith('[Preview]')) return
+
+    const logMessage = `[EditorWindow] Renderer console (${sourceId}:${line}): ${message}`
+    if (level >= 3) {
+      log.error(logMessage)
+    } else if (level >= 2) {
+      log.warn(logMessage)
+    } else {
+      log.info(logMessage)
     }
   })
 
@@ -121,6 +177,7 @@ export function createEditorWindow(
   // }
 
   appState.editorWin.on('closed', () => {
+    ipcMain.removeListener('editor:ready-for-project', handleEditorReadyForProject)
     // Clear the application menu when the editor window is closed
     clearMenu()
     if (appState.currentEditorSessionFiles) {
@@ -140,8 +197,7 @@ export function createEditorWindow(
   appState.editorWin.loadURL(editorUrl)
 
   appState.editorWin.webContents.on('did-finish-load', () => {
-    log.info(`[EditorWindow] Finished loading. Sending project data.`)
-    appState.editorWin?.webContents.send('project:open', { videoPath, metadataPath, webcamVideoPath, audioPath, originalProjectPath: appState.currentEditorSessionFiles?.originalProjectPath })
+    log.info('[EditorWindow] Finished loading. Waiting for renderer project-ready handshake.')
     checkForUpdates(appState.editorWin)
   })
 }

@@ -15,10 +15,33 @@ type ProjectPayload = {
   originalProjectPath?: string
 }
 
+let latestProjectPayload: ProjectPayload | null = null
+const projectPayloadListeners = new Set<(payload: ProjectPayload) => void>()
+
+ipcRenderer.on('project:open', (_event: IpcRendererEvent, payload: ProjectPayload) => {
+  latestProjectPayload = payload
+  projectPayloadListeners.forEach((listener) => listener(payload))
+})
+
 type ExportPayload = {
   projectState: any
   exportSettings: any
   outputPath: string
+}
+type SourceVideoInfo = {
+  width: number
+  height: number
+  fps: number | null
+  averageFps: number | null
+  nominalFps: number | null
+}
+type SystemMemoryInfo = {
+  totalMemoryBytes: number
+}
+type CurrentProcessMemoryInfo = {
+  private: number
+  residentSet?: number
+  shared: number
 }
 
 type MediaAudioImportResult = {
@@ -28,10 +51,20 @@ type MediaAudioImportResult = {
     name: string
   }
 }
+type FileStatResult = {
+  size: number
+  isFile: boolean
+}
+type ReadFileChunkPayload = {
+  filePath: string
+  offset: number
+  length: number
+}
 // Payload received from process
 type ProgressPayload = {
   progress: number // 0-100
   stage: string
+  exportSessionId?: string
 }
 // Payload when completed
 type CompletePayload = {
@@ -41,10 +74,13 @@ type CompletePayload = {
   duration?: number
 }
 
+let lastPreloadRenderProgressLogBucket = -1
+
 // Payload for worker render
 type RenderStartPayload = {
   projectState: any
   exportSettings: any
+  exportSessionId?: string
 }
 
 type WindowSource = {
@@ -137,6 +173,7 @@ export const electronAPI = {
     displayId?: number
     webcam?: { deviceId: string; deviceLabel: string; index: number }
     mic?: { deviceId: string; deviceLabel: string; index: number }
+    recordingProfile?: unknown
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
   selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
@@ -149,6 +186,12 @@ export const electronAPI = {
   getDisplays: (): Promise<DisplayInfo[]> => ipcRenderer.invoke('desktop:get-displays'),
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
+  analyzeRecordingCapability: (): Promise<{
+    recommendedFps: 30 | 60
+    canRecord60Fps: boolean
+    reason: string
+    measuredFps?: number
+  }> => ipcRenderer.invoke('recording:analyze-capability'),
 
   onRecordingStarted: (callback: () => void) => {
     const listener = () => callback()
@@ -177,19 +220,30 @@ export const electronAPI = {
 
   // --- Editor window ---
   onProjectOpen: (callback: (payload: ProjectPayload) => void) => {
-    const listener = (_event: IpcRendererEvent, payload: ProjectPayload) => callback(payload)
-    ipcRenderer.on('project:open', listener)
+    projectPayloadListeners.add(callback)
+    if (latestProjectPayload) {
+      queueMicrotask(() => {
+        if (latestProjectPayload && projectPayloadListeners.has(callback)) {
+          callback(latestProjectPayload)
+        }
+      })
+    }
 
     return () => {
-      ipcRenderer.removeListener('project:open', listener)
+      projectPayloadListeners.delete(callback)
     }
   },
+  editorReadyForProject: (): void => ipcRenderer.send('editor:ready-for-project'),
 
   readFile: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readFile', filePath),
   readFileBuffer: (filePath: string): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileBuffer', filePath),
+  statFile: (filePath: string): Promise<FileStatResult> => ipcRenderer.invoke('fs:statFile', filePath),
+  readFileChunk: (payload: ReadFileChunkPayload): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileChunk', payload),
 
   // --- Export ---
   startExport: (payload: ExportPayload): Promise<void> => ipcRenderer.invoke('export:start', payload),
+  probeExportSourceVideoInfo: (videoPath: string | null | undefined): Promise<SourceVideoInfo | null> =>
+    ipcRenderer.invoke('export:probe-source-video-info', videoPath),
   cancelExport: (): void => ipcRenderer.send('export:cancel'),
 
   onExportProgress: (callback: (payload: ProgressPayload) => void) => {
@@ -231,6 +285,8 @@ export const electronAPI = {
   },
   openExternal: (url: string): void => ipcRenderer.send('shell:openExternal', url),
   getAuthSession: (): Promise<AuthSession> => ipcRenderer.invoke('auth:get-session'),
+  getSystemMemoryInfo: (): Promise<SystemMemoryInfo> => ipcRenderer.invoke('app:getSystemMemoryInfo'),
+  getCurrentProcessMemoryInfo: (): Promise<CurrentProcessMemoryInfo> => process.getProcessMemoryInfo(),
   startAuthLogin: (): Promise<{ success: boolean }> => ipcRenderer.invoke('auth:start-login'),
   logoutAuth: (): Promise<AuthSession> => ipcRenderer.invoke('auth:logout'),
   onAuthDeepLink: (callback: (payload: AuthDeepLinkPayload) => void) => {
@@ -261,6 +317,15 @@ export const electronAPI = {
   },
   sendFrameToMain: (payload: { frame: Buffer; progress: number }) => {
     ipcRenderer.send('export:frame-data', payload)
+  },
+  sendRenderProgress: (payload: { progress: number }) => {
+    const safeProgress = Math.max(0, Math.min(100, Number.isFinite(payload.progress) ? payload.progress : 0))
+    const bucket = Math.floor(safeProgress / 5)
+    if (bucket !== lastPreloadRenderProgressLogBucket) {
+      lastPreloadRenderProgressLogBucket = bucket
+      console.info(`[Preload][Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
+    }
+    ipcRenderer.send('export:render-progress', payload)
   },
   finishRender: () => {
     ipcRenderer.send('export:render-finished')

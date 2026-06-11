@@ -1,29 +1,40 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
+import { AdjustmentsHorizontal, IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
 import { AccountTab } from './AccountTab'
+import { RecordingProfilesTab } from './RecordingProfilesTab'
 
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
   isTransparent?: boolean
   defaultTab?: SettingsTab
+  recordingProfileCreateRequestId?: number
+  onRecordingProfileCreateRequestHandled?: () => void
 }
 
-export type SettingsTab = 'general' | 'shortcuts' | 'account' | 'about'
+export type SettingsTab = 'general' | 'recording' | 'shortcuts' | 'account' | 'about'
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconComponent; solid?: IconComponent }> = [
   { id: 'general', label: 'General', icon: Settings },
+  { id: 'recording', label: 'Recording', icon: AdjustmentsHorizontal },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'account', label: 'Account', icon: UserCircle },
   { id: 'about', label: 'About', icon: InfoCircle, solid: InfoCircleSolid },
 ]
 
-export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultTab = 'general' }: SettingsModalProps) {
+export function SettingsModal({
+  isOpen,
+  onClose,
+  isTransparent = false,
+  defaultTab = 'general',
+  recordingProfileCreateRequestId = 0,
+  onRecordingProfileCreateRequestHandled,
+}: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab)
 
   useEffect(() => {
@@ -38,6 +49,13 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
     switch (activeTab) {
       case 'general':
         return <GeneralTab />
+      case 'recording':
+        return (
+          <RecordingProfilesTab
+            createProfileRequestId={recordingProfileCreateRequestId}
+            onCreateProfileRequestHandled={onRecordingProfileCreateRequestHandled}
+          />
+        )
       case 'shortcuts':
         return <ShortcutsTab />
       case 'account':
@@ -61,7 +79,7 @@ export function SettingsModal({ isOpen, onClose, isTransparent = false, defaultT
       <div
         data-interactive="true"
         className={cn(
-          'relative m-4 flex h-[60vh] max-h-[500px] w-full max-w-3xl flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
+          'relative m-3 flex h-[calc(100vh-1.5rem)] max-h-[780px] w-full max-w-[1320px] flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
           isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'
         )}
         onClick={(e) => e.stopPropagation()}

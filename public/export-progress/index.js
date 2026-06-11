@@ -1,4 +1,6 @@
-const { ipcRenderer } = require('electron')
+// Uses window.tempAPI exposed by electron/temp-preload.ts
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+/* eslint-env browser */
 
 const progressFillEl = document.getElementById('progress-fill')
 const progressInlineTextEl = document.getElementById('progress-inline-text')
@@ -7,11 +9,40 @@ const collapseButtonEl = document.getElementById('collapse-btn')
 const windowEl = document.querySelector('.window')
 const progressTrackEl = document.querySelector('.progress-track')
 
+/** @type {any} */
+const tempAPI = (window).tempAPI
+if (!tempAPI) {
+  console.error('[ExportProgress] window.tempAPI is missing. Progress IPC bridge is not available.')
+}
+
 let isFinished = false
 let mediaThemeQuery = null
 let mediaThemeListener = null
 let isCollapsed = false
 let lastRenderedProgress = 0
+let lastAppliedProgressLogBucket = -1
+let lastPolledProgressLogBucket = -1
+let lastPushedProgressLogBucket = -1
+let pollCount = 0
+let progressPollTimer = null
+
+const logProgressDiagnostic = (message, payload) => {
+  if (typeof payload === 'undefined') {
+    console.info(`[ExportProgress] ${message}`)
+    return
+  }
+  console.info(`[ExportProgress] ${message}`, payload)
+}
+
+const getProgressLogBucket = (progress) => Math.floor(clampProgress(progress) / 5)
+
+const shouldLogProgress = (progress, lastBucket) => {
+  const bucket = getProgressLogBucket(progress)
+  return {
+    bucket,
+    shouldLog: bucket !== lastBucket,
+  }
+}
 
 const applyThemeClass = (resolvedTheme) => {
   const nextTheme = resolvedTheme === 'dark' ? 'dark' : 'light'
@@ -30,7 +61,7 @@ const setupTheme = async () => {
   let appearanceMode = 'system'
 
   try {
-    const rawModeFromSetting = await ipcRenderer.invoke('settings:get', 'appearance.mode')
+    const rawModeFromSetting = await tempAPI.invoke('settings:get', 'appearance.mode')
     if (
       rawModeFromSetting === 'light' ||
       rawModeFromSetting === 'dark' ||
@@ -39,7 +70,7 @@ const setupTheme = async () => {
     ) {
       appearanceMode = rawModeFromSetting
     } else {
-      const appearanceObj = await ipcRenderer.invoke('settings:get', 'appearance')
+      const appearanceObj = await tempAPI.invoke('settings:get', 'appearance')
       if (appearanceObj && typeof appearanceObj.mode === 'string') {
         appearanceMode = resolveThemeValue(appearanceObj.mode)
       }
@@ -80,13 +111,51 @@ const clampProgress = (progress) => {
   return Math.max(0, Math.min(100, progress))
 }
 
-const applyProgress = (progress, stage) => {
+const applyProgress = (progress, stage, source = 'unknown') => {
   const safeProgress = Math.max(lastRenderedProgress, clampProgress(progress))
   lastRenderedProgress = safeProgress
   progressFillEl.style.transform = `scaleX(${safeProgress / 100})`
   const stageText = typeof stage === 'string' && stage.trim().length > 0 ? stage.trim() : 'Rendering'
   progressInlineTextEl.textContent = `${stageText} ${Math.round(safeProgress)}%`
   progressTrackEl?.setAttribute('aria-valuenow', `${Math.round(safeProgress)}`)
+
+  const progressLog = shouldLogProgress(safeProgress, lastAppliedProgressLogBucket)
+  if (progressLog.shouldLog) {
+    lastAppliedProgressLogBucket = progressLog.bucket
+    logProgressDiagnostic('Applied progress to DOM.', {
+      source,
+      progress: Number(safeProgress.toFixed(2)),
+      stage: stageText,
+      text: progressInlineTextEl.textContent,
+      fillTransform: progressFillEl.style.transform,
+    })
+  }
+}
+
+const readLatestProgress = async () => {
+  if (isFinished || !tempAPI?.invoke) return
+  pollCount += 1
+  try {
+    const payload = await tempAPI.invoke('export-progress:get-state')
+    if (!payload) {
+      if (pollCount === 1 || pollCount % 20 === 0) {
+        logProgressDiagnostic('Polled progress state but main returned null.', { pollCount })
+      }
+      return
+    }
+    const progressLog = shouldLogProgress(payload.progress, lastPolledProgressLogBucket)
+    if (progressLog.shouldLog) {
+      lastPolledProgressLogBucket = progressLog.bucket
+      logProgressDiagnostic('Polled progress state from main.', {
+        pollCount,
+        progress: Number(clampProgress(payload.progress).toFixed(2)),
+        stage: payload.stage || 'Rendering...',
+      })
+    }
+    applyProgress(payload.progress, payload.stage || 'Rendering...', 'poll')
+  } catch (error) {
+    console.error('[ExportProgress] Failed to poll export progress state:', error)
+  }
 }
 
 const applyCollapsedVisualState = (collapsed) => {
@@ -109,25 +178,34 @@ minimizeButtonEl?.addEventListener('click', () => {
   if (!shouldMinimize) {
     return
   }
-  ipcRenderer.send('window:minimize')
+  tempAPI?.send?.('window:minimize')
 })
 
 collapseButtonEl?.addEventListener('click', () => {
   const nextCollapsed = !isCollapsed
   applyCollapsedVisualState(nextCollapsed)
-  ipcRenderer.send('export-progress:set-collapsed', { collapsed: nextCollapsed })
+  tempAPI?.send?.('export-progress:set-collapsed', { collapsed: nextCollapsed })
 })
 
-ipcRenderer.on('export:progress', (_event, payload) => {
+const cleanupExportProgress = tempAPI?.on?.('export:progress', (payload) => {
   if (!payload) return
-  applyProgress(payload.progress, payload.stage || 'Rendering...')
+  const progressLog = shouldLogProgress(payload.progress, lastPushedProgressLogBucket)
+  if (progressLog.shouldLog) {
+    lastPushedProgressLogBucket = progressLog.bucket
+    logProgressDiagnostic('Received export:progress push event.', {
+      progress: Number(clampProgress(payload.progress).toFixed(2)),
+      stage: payload.stage || 'Rendering...',
+    })
+  }
+  applyProgress(payload.progress, payload.stage || 'Rendering...', 'push')
 })
 
-ipcRenderer.on('export:complete', (_event, payload) => {
+const cleanupExportComplete = tempAPI?.on?.('export:complete', (payload) => {
   isFinished = true
+  logProgressDiagnostic('Received export:complete event.', payload)
 
   if (payload?.success) {
-    applyProgress(100, 'Export completed')
+    applyProgress(100, 'Export completed', 'complete')
     minimizeButtonEl.disabled = true
     return
   }
@@ -139,11 +217,24 @@ ipcRenderer.on('export:complete', (_event, payload) => {
 })
 
 void setupTheme()
+logProgressDiagnostic('Script booted.', {
+  hasTempAPI: Boolean(tempAPI),
+  hasInvoke: Boolean(tempAPI?.invoke),
+  hasOn: Boolean(tempAPI?.on),
+  hasProgressFill: Boolean(progressFillEl),
+  hasProgressText: Boolean(progressInlineTextEl),
+  hasProgressTrack: Boolean(progressTrackEl),
+})
 applyCollapsedVisualState(false)
+void readLatestProgress()
+progressPollTimer = window.setInterval(readLatestProgress, 250)
+logProgressDiagnostic('Started progress polling interval.', { intervalMs: 250 })
 
 window.addEventListener('beforeunload', () => {
-  ipcRenderer.removeAllListeners('export:progress')
-  ipcRenderer.removeAllListeners('export:complete')
+  logProgressDiagnostic('Window unloading. Cleaning listeners and polling interval.')
+  if (progressPollTimer) window.clearInterval(progressPollTimer)
+  if (typeof cleanupExportProgress === 'function') cleanupExportProgress()
+  if (typeof cleanupExportComplete === 'function') cleanupExportComplete()
   if (mediaThemeQuery && mediaThemeListener) {
     if (typeof mediaThemeQuery.removeEventListener === 'function') {
       mediaThemeQuery.removeEventListener('change', mediaThemeListener)

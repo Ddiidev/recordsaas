@@ -1,9 +1,10 @@
 // Modal for configuring export settings and showing export progress
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Upload, Loader2, CircleCheck, CircleX, Folder, Ban } from '@icons'
 import { Input } from '../ui/input'
+import { Switch } from '../ui/switch'
 import { cn } from '../../lib/utils'
 import { useEditorStore } from '../../store/editorStore'
 import { formatTime } from '../../lib/utils'
@@ -14,6 +15,10 @@ export type ExportSettings = {
   resolution: '480p' | '576p' | '720p' | '1080p' | '2k'
   fps: 30 | 60
   quality: 'low' | 'medium' | 'high' | 'ultra high'
+  adaptiveRender: boolean
+  effectiveWidth?: number
+  effectiveHeight?: number
+  effectiveFps?: number
 }
 
 interface ExportModalProps {
@@ -50,6 +55,7 @@ const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   resolution: '720p',
   fps: 30,
   quality: 'medium',
+  adaptiveRender: true,
 }
 
 const FREE_COST_UNITS: Record<ExportSettings['resolution'], Record<ExportSettings['fps'], number>> = {
@@ -113,6 +119,7 @@ const sanitizeExportSettings = (value: Partial<ExportSettings> | null | undefine
       settings.quality === 'ultra high'
         ? settings.quality
         : 'medium',
+    adaptiveRender: settings.adaptiveRender !== false,
   }
 }
 
@@ -127,6 +134,7 @@ const SettingsView = ({
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS)
   const [isGpuEnabled, setIsGpuEnabled] = useState(true)
   const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
+  const sourceProbeKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -161,11 +169,13 @@ const SettingsView = ({
   }, [])
 
   const [outputPath, setOutputPath] = useState('')
-  const { originalProjectPath, duration, cutRegions, speedRegions } = useEditorStore((state) => ({
+  const { originalProjectPath, duration, cutRegions, speedRegions, videoDimensions, videoPath } = useEditorStore((state) => ({
     originalProjectPath: state.originalProjectPath,
     duration: state.duration,
     cutRegions: state.cutRegions,
     speedRegions: state.speedRegions,
+    videoDimensions: state.videoDimensions,
+    videoPath: state.videoPath,
   }))
 
   const estimatedDuration = useMemo(() => {
@@ -196,6 +206,46 @@ const SettingsView = ({
       return updated
     })
   }
+
+  useEffect(() => {
+    if (!settings.adaptiveRender) {
+      sourceProbeKeyRef.current = null
+      return
+    }
+    if (!videoPath || sourceProbeKeyRef.current === videoPath) return
+
+    let cancelled = false
+    sourceProbeKeyRef.current = videoPath
+
+    const probeSource = async () => {
+      try {
+        const sourceInfo = await window.electronAPI.probeExportSourceVideoInfo(videoPath)
+        if (cancelled || !sourceInfo?.fps) return
+
+        const effectiveFps: ExportSettings['fps'] = sourceInfo.fps > 30.5 ? 60 : 30
+        setSettings((prev) => {
+          if (!prev.adaptiveRender) return prev
+          const next = {
+            ...prev,
+            fps: effectiveFps,
+            effectiveWidth: sourceInfo.width || prev.effectiveWidth,
+            effectiveHeight: sourceInfo.height || prev.effectiveHeight,
+            effectiveFps: sourceInfo.fps ?? prev.effectiveFps,
+          }
+          window.electronAPI.setSetting('exportSettings', next)
+          return next
+        })
+      } catch (error) {
+        console.error('Failed to probe export source video info:', error)
+      }
+    }
+
+    void probeSource()
+
+    return () => {
+      cancelled = true
+    }
+  }, [settings.adaptiveRender, videoPath])
 
   const handleBrowse = async () => {
     const result = await window.electronAPI.showSaveDialog({
@@ -242,6 +292,10 @@ const SettingsView = ({
   const balanceUnits = isFreeUser ? authSession.credits?.balanceUnits ?? 0 : 0
   const selectedCostUnits = isFreeUser ? getFreeCostUnits(settings.resolution, settings.fps) : 0
   const hasEnoughCredits = !isFreeUser || selectedCostUnits <= balanceUnits
+  const adaptiveResolutionLabel =
+    videoDimensions.width > 0 && videoDimensions.height > 0
+      ? `${videoDimensions.width}x${videoDimensions.height}`
+      : 'source size'
 
   const canAffordSelection = (resolution: ExportSettings['resolution'], fps: ExportSettings['fps']) => {
     if (!isFreeUser) return true
@@ -298,10 +352,27 @@ const SettingsView = ({
               </SelectContent>
             </Select>
           </SettingRow>
+          <SettingRow label="Adaptive Render">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">Use recorded size and FPS</p>
+                <p className="text-xs text-muted-foreground">
+                  {settings.adaptiveRender
+                    ? `Export at ${adaptiveResolutionLabel}; quality remains configurable.`
+                    : 'Resolution and FPS are controlled manually below.'}
+                </p>
+              </div>
+              <Switch
+                checked={settings.adaptiveRender}
+                onCheckedChange={(checked) => handleValueChange('adaptiveRender', checked)}
+              />
+            </div>
+          </SettingRow>
           <SettingRow label="Resolution">
             <Select
               value={settings.resolution}
               onValueChange={(value) => handleValueChange('resolution', value as ExportSettings['resolution'])}
+              disabled={settings.adaptiveRender}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -348,6 +419,7 @@ const SettingsView = ({
             <Select 
               value={String(settings.fps)} 
               onValueChange={(value) => handleValueChange('fps', Number(value) as 30 | 60)}
+              disabled={settings.adaptiveRender}
             >
               <SelectTrigger>
                 <SelectValue />

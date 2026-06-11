@@ -42,8 +42,8 @@ export function createRecorderWindow() {
     resizable: false,
     useContentSize: true,
     webPreferences: {
-      nodeIntegration: true,
       preload: PRELOAD_SCRIPT,
+      nodeIntegration: false,
     },
   })
 
@@ -52,6 +52,27 @@ export function createRecorderWindow() {
     if (input.key.toLowerCase() === 'w' && (input.control || input.meta)) {
       event.preventDefault()
     }
+  })
+
+  appState.recorderWin.webContents.on('preload-error', (_event, preloadPath, error) => {
+    log.error(`[RecorderWindow] Preload failed: ${preloadPath}`, error)
+  })
+
+  appState.recorderWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    log.error(`[RecorderWindow] Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
+  })
+
+  appState.recorderWin.webContents.on('did-finish-load', () => {
+    log.info('[RecorderWindow] Finished loading renderer.')
+  })
+
+  appState.recorderWin.webContents.on('render-process-gone', (_event, details) => {
+    log.error('[RecorderWindow] Render process gone:', details)
+  })
+
+  appState.recorderWin.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level < 2) return
+    log.warn(`[RecorderWindow] Renderer console (${sourceId}:${line}): ${message}`)
   })
 
   if (VITE_DEV_SERVER_URL) {

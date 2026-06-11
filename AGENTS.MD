@@ -42,6 +42,9 @@ Responsibility boundaries:
 - Main process owns file system access, native dialogs, shell integration, recording orchestration, export orchestration, and runtime session file handling.
 - Renderer owns UI state, timeline interactions, preview composition, and payload assembly for export/import flows.
 - Preload is strict contract glue. Any renderer-to-main capability must be mirrored in both `ipc/index.ts` and `preload.ts`.
+- Electron 41+ preloads must be emitted as CommonJS `.cjs` files; do not let `vite-plugin-electron` emit ESM preload files for `BrowserWindow.webPreferences.preload`.
+- In `vite.config.ts`, preload builds must use `build.rollupOptions.input` plus CommonJS `output.format`; do not use the top-level `entry` shortcut for preloads because package `"type": "module"` makes `vite-plugin-electron` add an ES-module output.
+- Renderer code must use `window.electronAPI` only; do not depend on a raw `window.ipcRenderer` global.
 
 Project/runtime flow:
 1. Session assets are created/copied into runtime storage (`~/.recordsaas`).
@@ -49,6 +52,26 @@ Project/runtime flow:
 3. Editing and preview happen entirely in renderer state.
 4. Export payload is sent to main process for final processing.
 5. Session cleanup is triggered on editor closure per runtime policy.
+
+Recorder-to-editor handoff invariant:
+- Main process stores the current session payload and sends `project:open` only after the editor renderer has registered its listener and emitted `editor:ready-for-project`; do not rely on `did-finish-load` alone for project delivery.
+
+Recording profile invariant:
+- Recorder startup must offer a recording profile dropdown in place of the old local-video load button. The default profile is `Native Adaptive (Recommended)`.
+- The recording profile dropdown includes profile items first, then a separator and a `Create profile` action that opens `Settings > Recording` and starts a new editable profile.
+- Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
+- The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution.
+- The 60fps capability analysis tool should run a 5-second screen capture probe and show an in-button countdown/spinner while it is measuring so users understand the wait is intentional. On Windows, prefer FFmpeg `ddagrab`/Desktop Duplication for this probe and fall back to `gdigrab` only if Desktop Duplication fails to produce a measurable result.
+- The recorder control window should stay interactive instead of using click-through behavior that sends clicks to the app behind it on Windows/macOS. Transparent chrome is fine; pointer input should land on the recorder controls.
+- On Windows, webcam capture options must be probed before recording when an explicit size is requested. If DShow rejects the target size, fall back to a supported common size or device default instead of aborting the recording.
+- Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.
+- Saved screen MP4 output must preserve the requested profile FPS as CFR on the output side. Capture inputs such as Windows `gdigrab` can expose sparse/VFR average FPS even when requested at 30fps; do not let new recordings persist as low-FPS screen files when the profile requested 30/60/120fps.
+- Webcam capture size/FPS remain profile-controlled, but the saved webcam MP4 must use controlled `libx264` CRF/VBV settings instead of mirroring the high-quality screen encoder. Keep webcam bitrate bounded for long/noisy recordings so camera files do not grow into multi-GB artifacts.
+
+Media URL invariant:
+- Absolute local media paths exposed to renderer media elements use `media://file?path=<encoded absolute path>`.
+- The `media` scheme must be registered with streaming privileges before app `ready`, and served through `protocol.handle`/`net.fetch(file://...)` so Chromium's media pipeline can read MP4 range/stream requests.
+- The `media` protocol and project import/export normalization must remain backward compatible with legacy `media://...` paths and must not serialize `media://file?path=...` as a real project path.
 
 ## 3. Source-of-Truth Code Map (Where to Read First)
 
@@ -124,6 +147,39 @@ Core business rules:
 5. Final mix includes recording + media when both are present.
 6. Image/video media categories can remain placeholder if no render/export behavior is implemented.
 
+Export startup invariant:
+- The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
+- Renderer video export must not load full local MP4 files into a single renderer/main-process buffer. Screen and webcam video decoding should stream chunks through `fs:statFile` and `fs:readFileChunk` into MP4Box/WebCodecs so projects with files larger than 2GiB remain exportable.
+- Chunked MP4 pumps must respect the next offset returned by `MP4Box.appendBuffer` and call `MP4Box.seek(0, true)` after extraction starts; many recordings keep `moov` at EOF, and linear chunk feeding can reach `onReady` without extracting any main-video samples.
+- Chunked MP4/WebCodecs export must release MP4Box samples after they are submitted to the decoder and must size chunk, decode, frame, and encoder queues from the configured export RAM budget. The user-facing RAM setting is stored as `export.memoryLimitPercent`; `100%` maps to a process budget below 70% of physical RAM, not to all installed memory. The renderer should pause MP4 pumping/rendering under memory pressure and fail with a clear budget error instead of continuing to grow unbounded.
+- Export startup must clear stale `render:ready` listeners before registering the current one-shot worker listener; a single export must send `render:start` only once.
+- Render progress must be emitted from the renderer loop through `export:render-progress`; do not rely only on encoded frame/chunk delivery because `VideoEncoder` can batch output and hide 0-100% progress.
+- Renderer-loop progress IPC and diagnostics must stay throttled/bucketed; never log or send redundant progress for every frame on long exports.
+- Render performance diagnostics should be aggregate periodic metrics (decode, draw, encoder backpressure, encode), not per-frame logs.
+- Export diagnostics must carry an `exportSessionId` generated by the main process and forwarded to the render worker/progress payloads so main, renderer, progress-window, FFmpeg, and completion logs can be correlated for one export run.
+- Long-export benchmark reviews should use `npm run analyze:export-benchmark -- [logPath]` after the run to summarize startup, adaptive/effective export settings, render loop, finalization, encoder config, and renderer perf samples.
+- Export benchmark analysis must report both the latest started export and the last completed export so interrupted/stalled runs are not hidden by older successful runs.
+- Chunked MP4 parser regressions can be checked with `npm run verify:video-chunked-reader -- <absolute-video-path>`; use this for projects with screen or webcam files larger than 2GiB before relying on a full UI export run.
+- Electron WebCodecs decode regressions can be checked with `npm run verify:webcodecs-decode -- <absolute-video-path>`; use this when export fails with missing decoded frames even though MP4Box metadata is available.
+- Renderer performance metric logs must serialize payloads inline as JSON strings; Electron console forwarding may collapse object arguments to `[object Object]`.
+- WebCodecs export should prefer hardware acceleration for decode and encode where Chromium supports it; do not remove this preference without benchmark evidence.
+- WebCodecs H.264 export should prefer Baseline Profile for throughput on current benchmark hardware; High Profile may be tried only as a fallback or with benchmark evidence that it improves completion time.
+- Adaptive export mode is the default user-facing export mode: it must preserve the recorded screen video's source dimensions and measured average source FPS while keeping quality configurable. If the measured average FPS is implausibly low but FFmpeg reports a sane nominal `tbr` such as 30/60/120, use the nominal FPS so export does not propagate sparse/VFR capture metadata as a 3-4fps output. Export FPS remains capped to the currently supported export tiers, max 60fps, until UI/API authorization explicitly support 120fps. Manual resolution/FPS controls are available only when adaptive mode is disabled.
+- Export settings UI in adaptive mode should probe the loaded source video and reflect the real source FPS in the disabled FPS field instead of leaving the last persisted default `30fps` on screen. The modal should not mislead the user when the source video is actually 60fps.
+- Webcam export timing must stay aligned to the same source timeline as the main recording. Do not rescale webcam timestamps by the duration ratio between files to "fit" the main track; the output FPS already determines final cadence, and webcam frames should repeat or hold naturally when their own source FPS is lower.
+- Adaptive export authorization must map the measured source height/FPS to the nearest supported billing tier without changing the renderer payload contract used for manual exports.
+- Adaptive source probing in the main process should use FFmpeg metadata probing, not full-file MP4 parsing, so long recordings do not add a new pre-render I/O stall.
+- The hidden export renderer canvas should request a non-alpha, desynchronized 2D context to reduce compositor synchronization overhead during long renders.
+- Renderer canvas composition may cache frame-invariant background, geometry primitives, and repeated media-frame layers, but caches must be keyed by output dimensions, source frame timestamp, and visual state so edits/export settings cannot reuse stale visuals.
+- Renderer export helpers may cache `Object.values` for region maps by object identity to avoid per-frame allocations; never mutate cached region arrays in place.
+- Cursor rendering should derive ripple and click-scale state from a single backward metadata scan per frame; avoid separate metadata scans for each cursor effect.
+- Zoom/cursor transform helpers may memoize metadata-derived calculations by metadata array identity and exact timestamp; do not approximate cursor/zoom math unless the visual tolerance is explicitly defined.
+- The export progress window must also be able to poll `export-progress:get-state` from main state, so delayed temp-window loading or missed push events cannot leave the widget stuck at `0%`.
+- The main process must keep a direct DOM sync fallback for the export progress window after each accepted progress update; the tiny temporary window must not depend solely on its preload listener/polling JavaScript to render 0-100% progress.
+- Recording audio with no cuts, speed regions, or `change-sound` edits must reuse the original audio file instead of pre-rendering a full-length processed track.
+- Audio preparation that must render temporary tracks should run through cancellable asynchronous FFmpeg processes, not blocking `spawnSync` calls on the main process.
+- Final MP4 muxing should copy already-AAC audio inputs (`.aac`, `.m4a`, `.mp4`) instead of re-encoding them; only fall back to AAC encoding for unknown audio containers/codecs.
+
 IPC contract baseline (media import):
 - Channel: `media:import-audio`
 - Return union:
@@ -160,6 +216,7 @@ Webcam layout contract baseline:
 - `webcamStyles.crop`: normalized `{ top, right, bottom, left }` source crop, default all `0`
 - `overlay` keeps current PiP camera behavior, honors position/size/zoom controls, and now supports the vertical `phone` shape.
 - `side-by-side` reserves a side column using the split control, keeps webcam shape/border/shadow/flip/crop styling active, and ignores overlay size/position/smart-position controls.
+- With frame padding set to `0`, `side-by-side` must not add an extra internal camera inset or gap; camera and desktop areas should be able to reach the frame edges.
 - `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
 - New recordings/projects without serialized webcam layout or visibility must inherit those values from the active preset before falling back to app defaults.
 
@@ -260,6 +317,8 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - `TIMELINE_MAX_VISIBLE_LANES = 3`
 - `LANE_ACTION_STRIP_WIDTH_PX = 28`
 - Timeline lane controls use a reserved start gutter in the temporal axis; regions/ticks/playhead must not render into this protected area.
+- Timeline empty lane space is selection-only; playhead seeking/dragging belongs to the playhead itself or the sticky temporal ruler above the lanes.
+- The temporal ruler above lanes must stay sticky while the timeline scrolls vertically.
 - Viewport buffer `+14px` to avoid unintended vertical scroll for 2 lanes.
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
 - Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
@@ -272,7 +331,7 @@ Toolbar and preview control sizing:
 - Timeline zoom slider wrapper width: `w-24`.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
-- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 980x200`, `preview 980x420`, `settings 980x700`.
+- Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 1220x200`, `preview 1220x420`, `settings 1380x820`.
 - Recorder toolbar parity rule: Linux and macOS must match the Windows control order and close-button position; Linux-only cursor scale controls belong in `Settings > General`, not in the main recorder toolbar.
 - Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive. Opening any recorder toolbar dropdown temporarily disables click-through until the menu closes.
 - Recorder interactive-surface invariant: on `win32`/`darwin`, controls, select triggers, and open recorder dropdowns must never leave the recorder in click-through mode while the pointer is still over the toolbar. Switching directly between recorder dropdowns, or clicking the toolbar after a menu closes, must not focus the background window.
@@ -423,7 +482,7 @@ Escalation path:
 | UI tweak in side panel/tokens | `src/index.css`, `src/components/editor/SidePanel.tsx`, relevant `src/components/editor/sidepanel/*.tsx` | Medium | Visual check in light/dark + ensure tab flow unchanged |
 | Media-audio insertion/region behavior bug | `src/types/index.ts`, `src/store/slices/timelineSlice.ts`, `src/components/editor/timeline/MediaAudioRegionBlock.tsx`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Region creation/move behavior + playback sync |
 | IPC media import issue | `electron/main/ipc/index.ts`, `electron/main/ipc/handlers/media.ts`, `electron/preload.ts`, `src/components/editor/sidepanel/MediaAssetsPanel.tsx` | High | Import dialog path + runtime copy rule + renderer response handling |
-| Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | Export output has expected mix and region effects |
+| Export mix regression (recording + media) | `src/hooks/useExportProcess.ts`, `src/store/slices/projectSlice.ts`, `electron/main/ipc/handlers/export.ts`, `src/components/editor/ExportModal.tsx` | Critical | `npm run verify:export-startup`; progress appears before heavy work; cancel works during auth/audio/render/finalize; output has expected mix and region effects |
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |

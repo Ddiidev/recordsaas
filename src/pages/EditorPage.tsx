@@ -18,6 +18,7 @@ import { useExportProcess } from '../hooks/useExportProcess'
 import { Button } from '../components/ui/button'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
+import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
 
 export function EditorPage() {
   const {
@@ -62,6 +63,8 @@ export function EditorPage() {
   )
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  const readyForProjectSentRef = useRef(false)
+  const lastProjectPayloadKeyRef = useRef<string | null>(null)
   const [isPresetModalOpen, setPresetModalOpen] = useState(false)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<{ version: string; url: string } | null>(null)
@@ -75,16 +78,12 @@ export function EditorPage() {
       const storeState = useEditorStore.getState()
       const { videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip, originalProjectPath } = storeState
       
-      const mediaFiles = [
-        videoPath?.replace('media://', ''),
-        metadataPath?.replace('media://', ''),
-        audioPath?.replace('media://', ''),
-        webcamVideoPath?.replace('media://', ''),
-        mediaAudioClip?.path?.replace('media://', ''),
-      ].filter(Boolean) as string[]
+      const mediaFiles = [videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip?.path]
+        .map((filePath) => normalizeMediaPath(filePath))
+        .filter((filePath): filePath is string => Boolean(filePath))
       
-      let targetFolder = originalProjectPath;
-      const filesToExport = mediaFiles;
+      let targetFolder = originalProjectPath
+      const filesToExport = mediaFiles
       
       if (!targetFolder) {
         const defaultDocsPath = await window.electronAPI.getPath('documents')
@@ -107,14 +106,12 @@ export function EditorPage() {
       stateToSave.events = storeState.metadata
       delete stateToSave.metadata
       
-      const getBasename = (p: string) => p.split(/[/\\]/).pop() || p
-
-      if (stateToSave.videoPath) stateToSave.videoPath = getBasename(stateToSave.videoPath.replace('media://', ''))
-      if (stateToSave.metadataPath) stateToSave.metadataPath = getBasename(stateToSave.metadataPath.replace('media://', ''))
-      if (stateToSave.audioPath) stateToSave.audioPath = getBasename(stateToSave.audioPath.replace('media://', ''))
-      if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getBasename(stateToSave.webcamVideoPath.replace('media://', ''))
+      if (stateToSave.videoPath) stateToSave.videoPath = getMediaPathBasename(stateToSave.videoPath)
+      if (stateToSave.metadataPath) stateToSave.metadataPath = getMediaPathBasename(stateToSave.metadataPath)
+      if (stateToSave.audioPath) stateToSave.audioPath = getMediaPathBasename(stateToSave.audioPath)
+      if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getMediaPathBasename(stateToSave.webcamVideoPath)
       if (stateToSave.mediaAudioClip?.path) {
-        const serializedMediaPath = getBasename(stateToSave.mediaAudioClip.path.replace('media://', ''))
+        const serializedMediaPath = getMediaPathBasename(stateToSave.mediaAudioClip.path)
         stateToSave.mediaAudioClip = {
           ...stateToSave.mediaAudioClip,
           path: serializedMediaPath,
@@ -230,10 +227,21 @@ export function EditorPage() {
     window.electronAPI.getPlatform().then(setPlatform)
     initializeSettings()
     const cleanup = window.electronAPI.onProjectOpen(async (payload) => {
+      const payloadKey = [payload.videoPath, payload.metadataPath, payload.webcamVideoPath, payload.audioPath, payload.originalProjectPath].join('\0')
+      if (lastProjectPayloadKeyRef.current === payloadKey) {
+        console.info(`[EditorPage] Ignoring duplicate project payload: ${payload.videoPath}`)
+        return
+      }
+      lastProjectPayloadKeyRef.current = payloadKey
+      console.info(`[EditorPage] Received project payload: ${payload.videoPath}`)
       await initializePresets()
       await loadProject(payload)
       useEditorStore.temporal.getState().clear()
     })
+    if (!readyForProjectSentRef.current) {
+      readyForProjectSentRef.current = true
+      window.electronAPI.editorReadyForProject()
+    }
     return () => cleanup()
   }, [loadProject, initializePresets, initializeSettings])
 
