@@ -70,7 +70,7 @@ Recording profile invariant:
 
 Media URL invariant:
 - Absolute local media paths exposed to renderer media elements use `media://file?path=<encoded absolute path>`.
-- The `media` scheme must be registered with streaming privileges before app `ready`, and served through `protocol.handle`/`net.fetch(file://...)` so Chromium's media pipeline can read MP4 range/stream requests.
+- The `media` scheme must be registered with streaming privileges before app `ready`, and served through `protocol.handle` with direct file streaming plus HTTP `Range`/`206 Partial Content` support so Chromium's media pipeline can seek MP4/audio sources reliably.
 - The `media` protocol and project import/export normalization must remain backward compatible with legacy `media://...` paths and must not serialize `media://file?path=...` as a real project path.
 
 ## 3. Source-of-Truth Code Map (Where to Read First)

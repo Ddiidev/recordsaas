@@ -1,10 +1,10 @@
 // Entry point of the Electron application.
 
-import { app, BrowserWindow, protocol, Menu, screen, dialog, net } from 'electron'
+import { app, BrowserWindow, protocol, Menu, screen, dialog } from 'electron'
 import log from 'electron-log/main'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import fsSync from 'node:fs'
+import { Readable } from 'node:stream'
 import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
 import { setupLogging } from './lib/logging'
@@ -58,6 +58,109 @@ function registerCustomProtocolClient() {
 
 let pendingDeepLinkUrl: string | null = process.platform === 'darwin' ? null : getDeepLinkFromArgv(process.argv)
 const loggedMediaRequestPaths = new Set<string>()
+
+type ByteRange = {
+  start: number
+  end: number
+}
+
+const getMediaContentType = (filePath: string): string => {
+  const extension = path.extname(filePath).toLowerCase()
+  switch (extension) {
+    case '.mp4':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mov':
+      return 'video/quicktime'
+    case '.aac':
+      return 'audio/aac'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.wav':
+      return 'audio/wav'
+    case '.json':
+      return 'application/json'
+    case '.png':
+      return 'image/png'
+    case '.jpg':
+    case '.jpeg':
+      return 'image/jpeg'
+    case '.webp':
+      return 'image/webp'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
+const parseByteRange = (rangeHeader: string | null, fileSize: number): ByteRange | null => {
+  if (!rangeHeader) return null
+
+  const match = rangeHeader.trim().match(/^bytes=(\d*)-(\d*)$/)
+  if (!match) return null
+
+  const [, rawStart, rawEnd] = match
+  if (!rawStart && !rawEnd) return null
+
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd)
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return null
+    return {
+      start: Math.max(0, fileSize - suffixLength),
+      end: fileSize - 1,
+    }
+  }
+
+  const start = Number(rawStart)
+  const end = rawEnd ? Number(rawEnd) : fileSize - 1
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= fileSize) {
+    return null
+  }
+
+  return {
+    start,
+    end: Math.min(end, fileSize - 1),
+  }
+}
+
+const createFileResponse = (request: Request, filePath: string): Response => {
+  const stat = fsSync.statSync(filePath)
+  const fileSize = stat.size
+  const contentType = getMediaContentType(filePath)
+  const range = parseByteRange(request.headers.get('range'), fileSize)
+
+  if (request.headers.has('range') && !range) {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        'Accept-Ranges': 'bytes',
+        'Content-Range': `bytes */${fileSize}`,
+      },
+    })
+  }
+
+  const start = range?.start ?? 0
+  const end = range?.end ?? Math.max(0, fileSize - 1)
+  const contentLength = Math.max(0, end - start + 1)
+  const body = request.method === 'HEAD'
+    ? null
+    : Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>
+
+  const headers: Record<string, string> = {
+    'Accept-Ranges': 'bytes',
+    'Content-Length': String(contentLength),
+    'Content-Type': contentType,
+  }
+
+  if (range) {
+    headers['Content-Range'] = `bytes ${start}-${end}/${fileSize}`
+  }
+
+  return new Response(body, {
+    status: range ? 206 : 200,
+    headers,
+  })
+}
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -179,7 +282,7 @@ app.whenReady().then(async () => {
         loggedMediaRequestPaths.add(resourcePath)
         log.info(`[Protocol] Serving media file: ${request.url} -> ${resourcePath} range=${request.headers.get('range') || 'none'}`)
       }
-      return net.fetch(pathToFileURL(resourcePath).toString(), { headers: request.headers })
+      return createFileResponse(request, resourcePath)
     }
 
     log.error(`[Protocol] Could not find file for media request: ${request.url}`)
