@@ -247,36 +247,20 @@ const SettingsView = ({
     }
   }, [settings.adaptiveRender, videoPath])
 
-  const handleBrowse = async () => {
-    const result = await window.electronAPI.showSaveDialog({
-      title: 'Save Video',
-      defaultPath: outputPath,
-      filters:
-        settings.format === 'mp4'
-          ? [{ name: 'MP4 Video', extensions: ['mp4'] }]
-          : [{ name: 'GIF Animation', extensions: ['gif'] }],
-    })
-
-    if (!result.canceled && result.filePath) {
-      setOutputPath(result.filePath)
-    }
-  }
-
   useEffect(() => {
     const setDefaultPath = async () => {
       try {
-        let basePath = originalProjectPath
-        if (!basePath) {
-          basePath = await window.electronAPI.getPath('documents')
-        }
-        
         const filename = generateFilename(settings.format)
-        
-        if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
-          basePath = basePath.split('/').join('\\')
-          setOutputPath(`${basePath}\\renderized\\${filename}`)
+
+        const resolvedPath = await window.electronAPI.resolveExportOutputPath({
+          projectFolder: originalProjectPath || null,
+          filename,
+        })
+
+        if (resolvedPath.success && resolvedPath.outputPath) {
+          setOutputPath(resolvedPath.outputPath)
         } else {
-          setOutputPath(`${basePath}/renderized/${filename}`)
+          setOutputPath(filename)
         }
       } catch (error) {
         console.error('Failed to get path, falling back to relative path.', error)
@@ -310,6 +294,22 @@ const SettingsView = ({
     }
 
     return formatCostLabel(getFreeCostUnits(resolution, 30))
+  }
+
+  const handleStartClick = async () => {
+    const currentFilename = outputPath.split(/[\\/]/).pop() || generateFilename(settings.format)
+    let nextOutputPath = outputPath
+    try {
+      const resolvedPath = await window.electronAPI.resolveExportOutputPath({
+        projectFolder: originalProjectPath || null,
+        filename: currentFilename,
+      })
+      nextOutputPath = resolvedPath.success && resolvedPath.outputPath ? resolvedPath.outputPath : outputPath
+    } catch (error) {
+      console.error('Failed to refresh export output path:', error)
+    }
+    setOutputPath(nextOutputPath)
+    onStartExport(settings, nextOutputPath)
   }
 
   return (
@@ -472,14 +472,11 @@ const SettingsView = ({
               <div className="flex-1 min-w-0">
                 <Input
                   value={outputPath}
-                  onChange={(e) => setOutputPath(e.target.value)}
+                  readOnly
                   placeholder="Loading default path..."
                   className="w-full h-9 bg-background text-foreground"
                 />
               </div>
-              <Button variant="secondary" size="sm" onClick={handleBrowse} className="h-9 whitespace-nowrap shadow-sm">
-                Browse
-              </Button>
             </div>
           </SettingRow>
           <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg border border-border mt-4">
@@ -494,13 +491,7 @@ const SettingsView = ({
         <Button variant="secondary" onClick={onClose} className="shadow-sm">
           Cancel
         </Button>
-        <Button onClick={() => {
-          let fixedOutputPath = outputPath
-          if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
-            fixedOutputPath = outputPath.split('/').join('\\')
-          }
-          onStartExport(settings, fixedOutputPath)
-        }} disabled={!outputPath || !hasEnoughCredits} className="shadow-sm">
+        <Button onClick={() => void handleStartClick()} disabled={!outputPath || !hasEnoughCredits} className="shadow-sm">
           Start Export
         </Button>
       </div>

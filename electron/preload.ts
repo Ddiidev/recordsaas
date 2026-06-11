@@ -60,6 +60,22 @@ type ReadFileChunkPayload = {
   offset: number
   length: number
 }
+type FolderNameValidationResult = {
+  valid: boolean
+  normalizedName?: string
+  error?: string
+}
+type ResolveProjectFolderResult = {
+  success: boolean
+  targetFolder?: string
+  normalizedName?: string
+  error?: string
+}
+type ResolveExportOutputPathResult = {
+  success: boolean
+  outputPath?: string
+  error?: string
+}
 // Payload received from process
 type ProgressPayload = {
   progress: number // 0-100
@@ -239,6 +255,16 @@ export const electronAPI = {
   readFileBuffer: (filePath: string): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileBuffer', filePath),
   statFile: (filePath: string): Promise<FileStatResult> => ipcRenderer.invoke('fs:statFile', filePath),
   readFileChunk: (payload: ReadFileChunkPayload): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileChunk', payload),
+  getRecordSaaSRootPath: (): Promise<string> => ipcRenderer.invoke('fs:getRecordSaaSRootPath'),
+  getDefaultRecordSaaSRootPath: (): Promise<string> => ipcRenderer.invoke('fs:getDefaultRecordSaaSRootPath'),
+  validateProjectFolderName: (projectName: string): Promise<FolderNameValidationResult> =>
+    ipcRenderer.invoke('fs:validateProjectFolderName', projectName),
+  resolveProjectFolder: (projectName: string): Promise<ResolveProjectFolderResult> =>
+    ipcRenderer.invoke('fs:resolveProjectFolder', projectName),
+  resolveExportOutputPath: (payload: {
+    projectFolder?: string | null
+    filename: string
+  }): Promise<ResolveExportOutputPathResult> => ipcRenderer.invoke('fs:resolveExportOutputPath', payload),
 
   // --- Export ---
   startExport: (payload: ExportPayload): Promise<void> => ipcRenderer.invoke('export:start', payload),

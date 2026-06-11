@@ -47,7 +47,7 @@ Responsibility boundaries:
 - Renderer code must use `window.electronAPI` only; do not depend on a raw `window.ipcRenderer` global.
 
 Project/runtime flow:
-1. Session assets are created/copied into runtime storage (`~/.recordsaas`).
+1. Session assets are created/copied into a timestamped runtime storage subfolder (`~/.recordsaas/recording-YYYY-MM-DD_HH-mm-ss-*`). Do not place new recording files loose in the root `~/.recordsaas` directory.
 2. Renderer loads project payload and hydrates store state.
 3. Editing and preview happen entirely in renderer state.
 4. Export payload is sent to main process for final processing.
@@ -149,6 +149,10 @@ Core business rules:
 
 Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
+- The default RecordSaaS library root is stored in `storage.recordsaasRootPath` and defaults to the user Documents folder plus `RecordSaaS`. Project export and render path resolution must use main-process helpers rather than hard-coded renderer path assembly.
+- When rendering without an active project folder, the output path must resolve under `<RecordSaaS root>/General/`. When rendering from an active project, the active project folder remains the output base.
+- Exporting a new project must not show a folder picker. The renderer should request a project name, validate it through the main process, and save to `<RecordSaaS root>/<validated project name>/`.
+- Project folder names must be validated against the current OS folder-name rules before saving; do not accept path separators, reserved Windows device names, trailing Windows dots/spaces, control characters, or empty names.
 - Renderer video export must not load full local MP4 files into a single renderer/main-process buffer. Screen and webcam video decoding should stream chunks through `fs:statFile` and `fs:readFileChunk` into MP4Box/WebCodecs so projects with files larger than 2GiB remain exportable.
 - Chunked MP4 pumps must respect the next offset returned by `MP4Box.appendBuffer` and call `MP4Box.seek(0, true)` after extraction starts; many recordings keep `moov` at EOF, and linear chunk feeding can reach `onReady` without extracting any main-video samples.
 - Chunked MP4/WebCodecs export must release MP4Box samples after they are submitted to the decoder and must size chunk, decode, frame, and encoder queues from the configured export RAM budget. The user-facing RAM setting is stored as `export.memoryLimitPercent`; `100%` maps to a process budget below 70% of physical RAM, not to all installed memory. The renderer should pause MP4 pumping/rendering under memory pressure and fail with a clear budget error instead of continuing to grow unbounded.

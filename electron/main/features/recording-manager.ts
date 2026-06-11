@@ -167,6 +167,35 @@ const RECORDING_RESOLUTION_HEIGHTS: Record<Exclude<RecordingResolution, 'native'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+const getRecordingRootDir = () => path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
+
+const formatRecordingSessionFolderName = () => {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 23)
+  return `recording-${timestamp}`
+}
+
+const createRecordingSessionDir = async (): Promise<string> => {
+  const recordingRoot = getRecordingRootDir()
+  await ensureDirectoryExists(recordingRoot)
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const suffix = attempt === 0 ? '' : `-${attempt + 1}`
+    const recordingDir = path.join(recordingRoot, `${formatRecordingSessionFolderName()}${suffix}`)
+    try {
+      await fsPromises.mkdir(recordingDir, { recursive: false })
+      return recordingDir
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error
+      }
+    }
+  }
+
+  const fallbackDir = path.join(recordingRoot, `recording-${Date.now()}`)
+  await ensureDirectoryExists(fallbackDir)
+  return fallbackDir
+}
+
 const normalizeRecordingFps = (value: unknown, fallback: RecordingScreenFps): RecordingScreenFps => {
   if (value === 30 || value === 60 || value === 120) return value
   return fallback
@@ -864,8 +893,7 @@ async function startActualRecording(
   scaleFactor: number = 1,
   outputOptions: RecordingOutputOptions = {},
 ) {
-  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
-  await ensureDirectoryExists(recordingDir)
+  const recordingDir = await createRecordingSessionDir()
   const baseName = `RecordSaaS-recording-${Date.now()}`
 
   const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
@@ -1909,7 +1937,7 @@ export async function cleanupAndDiscard() {
  */
 export async function cleanupOrphanedRecordings() {
   log.info('[Cleanup] Starting orphaned recording cleanup...')
-  const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
+  const recordingDir = getRecordingRootDir()
   const protectedFiles = new Set<string>()
 
   // Protect files from the currently active editor or recording session
@@ -1989,8 +2017,7 @@ export async function loadVideoFromFile() {
   createSavingWindow()
 
   try {
-    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
-    await ensureDirectoryExists(recordingDir)
+    const recordingDir = await createRecordingSessionDir()
     const baseName = `RecordSaaS-recording-${Date.now()}`
     const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
     const metadataPath = path.join(recordingDir, `${baseName}.json`)
@@ -2067,8 +2094,7 @@ export async function importProjectFromFile() {
   createSavingWindow()
 
   try {
-    const recordingDir = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
-    await ensureDirectoryExists(recordingDir)
+    const recordingDir = await createRecordingSessionDir()
 
     // Read project configuration
     const rawData = await fsPromises.readFile(sourceProjectPath, 'utf-8')
