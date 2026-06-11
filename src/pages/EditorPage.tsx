@@ -321,7 +321,7 @@ export function EditorPage() {
 
   const renderHeaderActions = () => {
     const actions = [
-      <div key="export-project" className="relative">
+      <div key="export-project" className="relative z-[1100]">
         <ExportProjectButton
           isImportedProject={isImportedProject}
           isExporting={isExportingProject}
@@ -329,7 +329,7 @@ export function EditorPage() {
           disabled={duration <= 0}
         />
         {isProjectNamePopupOpen && !isImportedProject && (
-          <div className="absolute left-0 top-11 z-50 w-80 rounded-lg border border-border bg-background p-3 shadow-xl">
+          <div className="absolute left-0 top-11 z-[1200] w-80 rounded-lg border border-border bg-background p-3 shadow-xl">
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="project-export-name">
@@ -429,7 +429,7 @@ export function EditorPage() {
         */}
         <header
           className={cn(
-            'relative h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
+            'relative z-[1000] h-12 flex-shrink-0 border-b border-border/50 bg-card/80 backdrop-blur-xl flex items-center justify-between px-3 shadow-xs',
             isPreviewFullScreen && 'hidden', // Hide header in fullscreen
           )}
           style={{ WebkitAppRegion: 'drag' }}
