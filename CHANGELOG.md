@@ -1,3 +1,10 @@
+## [2.5.6](https://github.com/Ddiidev/recordsaas/compare/v2.5.5...v2.5.6) (2026-06-11)
+
+
+### Bug Fixes
+
+* publish Windows recording and timeline seeking fixes ([7a1e2b1](https://github.com/Ddiidev/recordsaas/commit/7a1e2b1b0f14f70651f5e508748a365e6118c43a))
+
 ## [2.5.5](https://github.com/Ddiidev/recordsaas/compare/v2.5.4...v2.5.5) (2026-03-12)
 
 
