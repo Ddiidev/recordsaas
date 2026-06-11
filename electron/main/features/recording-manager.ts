@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { cpus } from 'node:os'
-import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences } from 'electron'
+import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
@@ -129,6 +129,12 @@ type WebcamInputContext = {
 type WebcamInputOptions = {
   fps: 30 | 60
   size?: { width: number; height: number }
+}
+type PhysicalCaptureRect = {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
@@ -394,6 +400,84 @@ function getLinuxScaledOffset(value: number, scaleFactor: number): number {
   }
 
   return Math.floor(value * scaleFactor)
+}
+
+function toEvenPhysicalDimension(value: number): number {
+  return Math.max(2, Math.floor(value / 2) * 2)
+}
+
+function getPlatformPhysicalDimension(value: number, scaleFactor: number): number {
+  if (process.platform === 'win32') {
+    return toEvenPhysicalDimension(value * scaleFactor)
+  }
+  if (process.platform === 'linux') {
+    return getLinuxScaledDimension(value, scaleFactor)
+  }
+  return Math.floor(value / 2) * 2
+}
+
+function getPlatformPhysicalOffset(value: number, scaleFactor: number): number {
+  if (process.platform === 'win32') {
+    return Math.floor(value * scaleFactor)
+  }
+  if (process.platform === 'linux') {
+    return getLinuxScaledOffset(value, scaleFactor)
+  }
+  return value
+}
+
+function getWindowsPhysicalDisplayRect(display: Display): PhysicalCaptureRect {
+  const scaleFactor = display.scaleFactor || 1
+  const { x, y, width, height } = display.bounds
+  return {
+    x: Math.floor(x * scaleFactor),
+    y: Math.floor(y * scaleFactor),
+    width: toEvenPhysicalDimension(width * scaleFactor),
+    height: toEvenPhysicalDimension(height * scaleFactor),
+  }
+}
+
+function getWindowsGdigrabVirtualOrigin(displays: Display[]): { x: number; y: number } {
+  if (displays.length === 0) {
+    return { x: 0, y: 0 }
+  }
+
+  const rects = displays.map(getWindowsPhysicalDisplayRect)
+  return {
+    x: Math.min(...rects.map((rect) => rect.x)),
+    y: Math.min(...rects.map((rect) => rect.y)),
+  }
+}
+
+function normalizeWindowsGdigrabOffset(value: number, origin: number): number {
+  return value < 0 ? value - origin : value
+}
+
+function getWindowsGdigrabDisplayRect(display: Display, displays: Display[]): PhysicalCaptureRect {
+  const rect = getWindowsPhysicalDisplayRect(display)
+  const origin = getWindowsGdigrabVirtualOrigin(displays)
+  return {
+    ...rect,
+    x: normalizeWindowsGdigrabOffset(rect.x, origin.x),
+    y: normalizeWindowsGdigrabOffset(rect.y, origin.y),
+  }
+}
+
+function getWindowsGdigrabAreaRect(
+  geometry: RecordingGeometry,
+  containingDisplay: Display,
+  displays: Display[],
+): PhysicalCaptureRect {
+  const scaleFactor = containingDisplay.scaleFactor || 1
+  const origin = getWindowsGdigrabVirtualOrigin(displays)
+  const physicalX = Math.floor(geometry.x * scaleFactor)
+  const physicalY = Math.floor(geometry.y * scaleFactor)
+  return {
+    x: normalizeWindowsGdigrabOffset(physicalX, origin.x),
+    y: normalizeWindowsGdigrabOffset(physicalY, origin.y),
+    width: toEvenPhysicalDimension(geometry.width * scaleFactor),
+    height: toEvenPhysicalDimension(geometry.height * scaleFactor),
+  }
 }
 
 function isFFmpegRecordingReadyMessage(message: string): boolean {
@@ -1140,18 +1224,8 @@ export async function startRecording(options: any) {
     const { width, height } = targetDisplay.bounds
     const scaleFactor = targetDisplay.scaleFactor || 1
     webcamInputContext = {
-      screenWidth:
-        process.platform === 'win32'
-          ? Math.floor((width * scaleFactor) / 2) * 2
-          : process.platform === 'linux'
-            ? getLinuxScaledDimension(width, scaleFactor)
-            : Math.floor(width / 2) * 2,
-      screenHeight:
-        process.platform === 'win32'
-          ? Math.floor((height * scaleFactor) / 2) * 2
-          : process.platform === 'linux'
-            ? getLinuxScaledDimension(height, scaleFactor)
-            : Math.floor(height / 2) * 2,
+      screenWidth: getPlatformPhysicalDimension(width, scaleFactor),
+      screenHeight: getPlatformPhysicalDimension(height, scaleFactor),
     }
   } else if (source === 'area' && options.geometry) {
     const selectedGeometry = options.geometry
@@ -1169,18 +1243,8 @@ export async function startRecording(options: any) {
       }) || screen.getPrimaryDisplay()
     const scaleFactor = containingDisplay.scaleFactor || 1
     webcamInputContext = {
-      screenWidth:
-        process.platform === 'win32'
-          ? Math.floor((safeWidth * scaleFactor) / 2) * 2
-          : process.platform === 'linux'
-            ? getLinuxScaledDimension(safeWidth, scaleFactor)
-            : safeWidth,
-      screenHeight:
-        process.platform === 'win32'
-          ? Math.floor((safeHeight * scaleFactor) / 2) * 2
-          : process.platform === 'linux'
-            ? getLinuxScaledDimension(safeHeight, scaleFactor)
-            : safeHeight,
+      screenWidth: getPlatformPhysicalDimension(safeWidth, scaleFactor),
+      screenHeight: getPlatformPhysicalDimension(safeHeight, scaleFactor),
     }
   }
 
@@ -1235,25 +1299,15 @@ export async function startRecording(options: any) {
     const targetDisplay = allDisplays.find((d) => d.id === displayId) || screen.getPrimaryDisplay()
     const { x, y, width, height } = targetDisplay.bounds
     const scaleFactor = targetDisplay.scaleFactor || 1
+    const windowsCaptureRect =
+      process.platform === 'win32' ? getWindowsGdigrabDisplayRect(targetDisplay, allDisplays) : null
     recordingScaleFactor = scaleFactor  // Store for metadata processing
     
     // For Windows, we need to use physical pixels for gdigrab
-    const physicalWidth =
-      process.platform === 'win32'
-        ? Math.floor((width * scaleFactor) / 2) * 2
-        : process.platform === 'linux'
-          ? getLinuxScaledDimension(width, scaleFactor)
-          : Math.floor(width / 2) * 2
-    const physicalHeight =
-      process.platform === 'win32'
-        ? Math.floor((height * scaleFactor) / 2) * 2
-        : process.platform === 'linux'
-          ? getLinuxScaledDimension(height, scaleFactor)
-          : Math.floor(height / 2) * 2
-    const physicalX =
-      process.platform === 'win32' ? Math.floor(x * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(x, scaleFactor) : x
-    const physicalY =
-      process.platform === 'win32' ? Math.floor(y * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(y, scaleFactor) : y
+    const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor)
+    const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(height, scaleFactor)
+    const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(x, scaleFactor)
+    const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(y, scaleFactor)
     
     // Store the logical dimensions for mouse tracking
     const safeWidth = Math.floor(width / 2) * 2
@@ -1320,33 +1374,21 @@ export async function startRecording(options: any) {
              selectedGeometry.y + selectedGeometry.height <= b.y + b.height
     }) || screen.getPrimaryDisplay()
     const scaleFactor = containingDisplay.scaleFactor || 1
+    const windowsCaptureRect =
+      process.platform === 'win32'
+        ? getWindowsGdigrabAreaRect(
+            { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight },
+            containingDisplay,
+            allDisplays,
+          )
+        : null
     recordingScaleFactor = scaleFactor  // Store for metadata processing
 
     // For Windows, convert to physical pixels
-    const physicalWidth =
-      process.platform === 'win32'
-        ? Math.floor((safeWidth * scaleFactor) / 2) * 2
-        : process.platform === 'linux'
-          ? getLinuxScaledDimension(safeWidth, scaleFactor)
-          : safeWidth
-    const physicalHeight =
-      process.platform === 'win32'
-        ? Math.floor((safeHeight * scaleFactor) / 2) * 2
-        : process.platform === 'linux'
-          ? getLinuxScaledDimension(safeHeight, scaleFactor)
-          : safeHeight
-    const physicalX =
-      process.platform === 'win32'
-        ? Math.floor(selectedGeometry.x * scaleFactor)
-        : process.platform === 'linux'
-          ? getLinuxScaledOffset(selectedGeometry.x, scaleFactor)
-          : selectedGeometry.x
-    const physicalY =
-      process.platform === 'win32'
-        ? Math.floor(selectedGeometry.y * scaleFactor)
-        : process.platform === 'linux'
-          ? getLinuxScaledOffset(selectedGeometry.y, scaleFactor)
-          : selectedGeometry.y
+    const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(safeWidth, scaleFactor)
+    const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor)
+    const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(selectedGeometry.x, scaleFactor)
+    const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(selectedGeometry.y, scaleFactor)
 
     switch (process.platform) {
       case 'linux':
@@ -1422,22 +1464,12 @@ export async function analyzeRecordingCapability(): Promise<{
   const targetDisplayIndex = Math.max(0, allDisplays.findIndex((display) => display.id === targetDisplay.id))
   const scaleFactor = targetDisplay.scaleFactor || 1
   const { x, y, width, height } = targetDisplay.bounds
-  const physicalWidth =
-    process.platform === 'win32'
-      ? Math.floor((width * scaleFactor) / 2) * 2
-      : process.platform === 'linux'
-        ? getLinuxScaledDimension(width, scaleFactor)
-        : Math.floor(width / 2) * 2
-  const physicalHeight =
-    process.platform === 'win32'
-      ? Math.floor((height * scaleFactor) / 2) * 2
-      : process.platform === 'linux'
-        ? getLinuxScaledDimension(height, scaleFactor)
-        : Math.floor(height / 2) * 2
-  const physicalX =
-    process.platform === 'win32' ? Math.floor(x * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(x, scaleFactor) : x
-  const physicalY =
-    process.platform === 'win32' ? Math.floor(y * scaleFactor) : process.platform === 'linux' ? getLinuxScaledOffset(y, scaleFactor) : y
+  const windowsCaptureRect =
+    process.platform === 'win32' ? getWindowsGdigrabDisplayRect(targetDisplay, allDisplays) : null
+  const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor)
+  const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(height, scaleFactor)
+  const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(x, scaleFactor)
+  const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(y, scaleFactor)
 
   const ddagrabInput = [
     `ddagrab=output_idx=${targetDisplayIndex}`,
