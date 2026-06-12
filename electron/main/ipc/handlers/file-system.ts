@@ -2,13 +2,19 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import type { Dirent, Stats } from 'node:fs'
 import { app } from 'electron'
 import Store from 'electron-store'
-import { normalizeMediaPath } from '../../lib/media-url'
+import { normalizeMediaPath, toMediaUrl } from '../../lib/media-url'
+import { getFFmpegPath } from '../../lib/utils'
 
 const MAX_FILE_CHUNK_SIZE_BYTES = 64 * 1024 * 1024
 const RECORDSAAS_ROOT_SETTING_KEY = 'storage.recordsaasRootPath'
 const DEFAULT_GENERAL_PROJECT_FOLDER = 'General'
+const PROJECT_FILE_NAME = 'project.rsproj'
+const PROJECT_THUMBNAIL_FILE_NAME = '.thumbnail.png'
 const WINDOWS_RESERVED_FOLDER_NAMES = new Set([
   'CON',
   'PRN',
@@ -35,6 +41,7 @@ const WINDOWS_RESERVED_FOLDER_NAMES = new Set([
 ])
 
 const store = new Store()
+const execFileAsync = promisify(execFile)
 
 type FileStatResult = {
   size: number
@@ -51,6 +58,32 @@ type FolderNameValidationResult = {
   valid: boolean
   normalizedName?: string
   error?: string
+}
+
+type SavedProjectListItem = {
+  name: string
+  folderPath: string
+  projectFilePath: string
+  thumbnailPath?: string
+  thumbnailUrl?: string
+  recordedAt: string
+  sizeBytes: number
+  isLegacy: boolean
+}
+
+type ListSavedProjectsResult = {
+  success: boolean
+  rootPath?: string
+  projects?: SavedProjectListItem[]
+  error?: string
+}
+
+type SaveProjectPayload = {
+  targetFolder: string
+  projectData: string
+  mediaFiles: string[]
+  thumbnailSourcePath?: string | null
+  thumbnailTimeSeconds?: number | null
 }
 
 const resolveFilePath = (filePath: string): string => normalizeMediaPath(filePath) || filePath
@@ -114,7 +147,9 @@ const validateFolderName = (rawName: unknown): FolderNameValidationResult => {
   return { valid: true, normalizedName }
 }
 
-const resolveProjectFolderPath = (projectName: string): { success: true; targetFolder: string; normalizedName: string } | { success: false; error: string } => {
+const resolveProjectFolderPath = (
+  projectName: string,
+): { success: true; targetFolder: string; normalizedName: string } | { success: false; error: string } => {
   const validation = validateFolderName(projectName)
   if (!validation.valid || !validation.normalizedName) {
     return { success: false, error: validation.error || 'Invalid project name.' }
@@ -124,6 +159,209 @@ const resolveProjectFolderPath = (projectName: string): { success: true; targetF
     success: true,
     normalizedName: validation.normalizedName,
     targetFolder: path.join(getConfiguredRecordSaaSRootPath(), validation.normalizedName),
+  }
+}
+
+const pathExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getDirectorySize = async (directoryPath: string): Promise<number> => {
+  let totalSize = 0
+  let entries: Dirent[]
+
+  try {
+    entries = await fs.readdir(directoryPath, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue
+
+    const entryPath = path.join(directoryPath, entry.name)
+    if (entry.isDirectory()) {
+      totalSize += await getDirectorySize(entryPath)
+      continue
+    }
+
+    if (entry.isFile()) {
+      try {
+        const stat = await fs.stat(entryPath)
+        totalSize += stat.size
+      } catch {
+        // Keep project listing available even if one file is unavailable.
+      }
+    }
+  }
+
+  return totalSize
+}
+
+const readProjectJson = async (projectFilePath: string): Promise<Record<string, unknown> | null> => {
+  try {
+    const rawData = await fs.readFile(projectFilePath, 'utf-8')
+    const parsed = JSON.parse(rawData)
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
+  } catch (error) {
+    console.error(`Failed to read project metadata from ${projectFilePath}:`, error)
+    return null
+  }
+}
+
+const parseProjectDate = (value: unknown): Date | null => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+
+  const parsedDate = new Date(value)
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate
+}
+
+const extractProjectDate = (projectData: Record<string, unknown> | null): Date | null => {
+  if (!projectData) return null
+
+  for (const key of ['recordedAt', 'recordingStartedAt', 'createdAt', 'createdOn', 'date']) {
+    const parsedDate = parseProjectDate(projectData[key])
+    if (parsedDate) return parsedDate
+  }
+
+  return null
+}
+
+const extractProjectName = (projectData: Record<string, unknown> | null, folderPath: string): string => {
+  if (projectData) {
+    for (const key of ['projectName', 'name', 'title']) {
+      const value = projectData[key]
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value.trim()
+      }
+    }
+  }
+
+  return path.basename(folderPath)
+}
+
+const getProjectFallbackDate = (projectFileStat: Stats, folderStat: Stats): Date =>
+  projectFileStat.birthtime.getTime() > 0
+    ? projectFileStat.birthtime
+    : folderStat.birthtime.getTime() > 0
+      ? folderStat.birthtime
+      : projectFileStat.mtime.getTime() > 0
+        ? projectFileStat.mtime
+        : folderStat.mtime
+
+const runThumbnailExtraction = async (
+  sourcePath: string,
+  thumbnailPath: string,
+  timeSeconds: number,
+): Promise<void> => {
+  const safeTime = Number.isFinite(timeSeconds) ? Math.max(0, timeSeconds) : 0
+  const args = [
+    '-y',
+    '-ss',
+    safeTime.toFixed(3),
+    '-i',
+    sourcePath,
+    '-frames:v',
+    '1',
+    '-vf',
+    'scale=480:-2',
+    thumbnailPath,
+  ]
+
+  await execFileAsync(getFFmpegPath(), args, { windowsHide: true, maxBuffer: 10 * 1024 * 1024 })
+}
+
+const generateProjectThumbnail = async (
+  sourcePath: string,
+  thumbnailPath: string,
+  timeSeconds: number | null | undefined,
+): Promise<void> => {
+  const resolvedSourcePath = resolveFilePath(sourcePath)
+  await fs.access(resolvedSourcePath)
+
+  const safeTime = typeof timeSeconds === 'number' && Number.isFinite(timeSeconds) ? timeSeconds : 0
+  try {
+    await runThumbnailExtraction(resolvedSourcePath, thumbnailPath, safeTime)
+  } catch (error) {
+    if (safeTime <= 0) throw error
+    await runThumbnailExtraction(resolvedSourcePath, thumbnailPath, 0)
+  }
+}
+
+const hideProjectThumbnailFile = async (thumbnailPath: string): Promise<void> => {
+  if (process.platform !== 'win32') return
+
+  try {
+    await execFileAsync('attrib', ['+h', thumbnailPath], { windowsHide: true })
+  } catch (error) {
+    console.error(`Failed to hide project thumbnail ${thumbnailPath}:`, error)
+  }
+}
+
+export async function handleListSavedProjects(): Promise<ListSavedProjectsResult> {
+  const rootPath = getConfiguredRecordSaaSRootPath()
+
+  try {
+    let entries: Dirent[]
+    try {
+      entries = await fs.readdir(rootPath, { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { success: true, rootPath, projects: [] }
+      }
+      throw error
+    }
+
+    const projectItems = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry): Promise<SavedProjectListItem | null> => {
+          const folderPath = path.join(rootPath, entry.name)
+          const projectFilePath = path.join(folderPath, PROJECT_FILE_NAME)
+
+          let projectFileStat: Stats
+          try {
+            projectFileStat = await fs.stat(projectFilePath)
+          } catch {
+            return null
+          }
+
+          if (!projectFileStat.isFile()) return null
+
+          const [folderStat, projectData] = await Promise.all([fs.stat(folderPath), readProjectJson(projectFilePath)])
+          const explicitProjectDate = extractProjectDate(projectData)
+          const recordedAt = (explicitProjectDate || getProjectFallbackDate(projectFileStat, folderStat)).toISOString()
+          const thumbnailPath = path.join(folderPath, PROJECT_THUMBNAIL_FILE_NAME)
+          const hasThumbnail = await pathExists(thumbnailPath)
+          const thumbnailUrl = hasThumbnail ? toMediaUrl(thumbnailPath) || undefined : undefined
+          const sizeBytes = await getDirectorySize(folderPath)
+
+          return {
+            name: extractProjectName(projectData, folderPath),
+            folderPath,
+            projectFilePath,
+            thumbnailPath: hasThumbnail ? thumbnailPath : undefined,
+            thumbnailUrl,
+            recordedAt,
+            sizeBytes,
+            isLegacy: !hasThumbnail || !explicitProjectDate,
+          }
+        }),
+    )
+
+    const projects = projectItems
+      .filter((projectItem): projectItem is SavedProjectListItem => Boolean(projectItem))
+      .sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime())
+
+    return { success: true, rootPath, projects }
+  } catch (error: unknown) {
+    console.error('Error listing saved projects:', error)
+    return { success: false, rootPath, error: error instanceof Error ? error.message : 'Unknown list error' }
   }
 }
 
@@ -178,7 +416,10 @@ export function handleValidateProjectFolderName(_event: unknown, projectName: st
   return validateFolderName(projectName)
 }
 
-export function handleResolveProjectFolder(_event: unknown, projectName: string): { success: boolean; targetFolder?: string; normalizedName?: string; error?: string } {
+export function handleResolveProjectFolder(
+  _event: unknown,
+  projectName: string,
+): { success: boolean; targetFolder?: string; normalizedName?: string; error?: string } {
   return resolveProjectFolderPath(projectName)
 }
 
@@ -203,23 +444,23 @@ export function handleResolveExportOutputPath(
 
 export async function handleSaveProject(
   _event: unknown,
-  payload: { targetFolder: string; projectData: string; mediaFiles: string[] }
+  payload: SaveProjectPayload,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const { targetFolder, projectData, mediaFiles } = payload
-    
+    const { targetFolder, projectData, mediaFiles, thumbnailSourcePath, thumbnailTimeSeconds } = payload
+
     // 1. Ensure target folder exists
     await fs.mkdir(targetFolder, { recursive: true })
 
     // 2. Write project.rsproj (JSON content with custom extension)
-    const projectFilePath = path.join(targetFolder, 'project.rsproj')
+    const projectFilePath = path.join(targetFolder, PROJECT_FILE_NAME)
     await fs.writeFile(projectFilePath, projectData, 'utf-8')
 
     // 3. Copy media files to the target folder
     for (const file of mediaFiles) {
       if (file) {
         const sourcePath = resolveFilePath(file)
-        
+
         const fileName = path.basename(sourcePath)
         const destPath = path.join(targetFolder, fileName)
 
@@ -231,6 +472,20 @@ export async function handleSaveProject(
             console.error(`Failed to copy ${sourcePath} to ${destPath}:`, copyErr)
           }
         }
+      }
+    }
+
+    if (thumbnailSourcePath) {
+      const sourcePath = resolveFilePath(thumbnailSourcePath)
+      const copiedSourcePath = path.join(targetFolder, path.basename(sourcePath))
+      const thumbnailInputPath = (await pathExists(copiedSourcePath)) ? copiedSourcePath : sourcePath
+      const thumbnailPath = path.join(targetFolder, PROJECT_THUMBNAIL_FILE_NAME)
+
+      try {
+        await generateProjectThumbnail(thumbnailInputPath, thumbnailPath, thumbnailTimeSeconds)
+        await hideProjectThumbnailFile(thumbnailPath)
+      } catch (thumbnailError) {
+        console.error(`Failed to create project thumbnail from ${thumbnailInputPath}:`, thumbnailError)
       }
     }
 

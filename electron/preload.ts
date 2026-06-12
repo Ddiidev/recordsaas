@@ -76,6 +76,26 @@ type ResolveExportOutputPathResult = {
   outputPath?: string
   error?: string
 }
+type SavedProjectListItem = {
+  name: string
+  folderPath: string
+  projectFilePath: string
+  thumbnailPath?: string
+  thumbnailUrl?: string
+  recordedAt: string
+  sizeBytes: number
+  isLegacy: boolean
+}
+type ListSavedProjectsResult = {
+  success: boolean
+  rootPath?: string
+  projects?: SavedProjectListItem[]
+  error?: string
+}
+type SaveProjectOptions = {
+  thumbnailSourcePath?: string | null
+  thumbnailTimeSeconds?: number | null
+}
 // Payload received from process
 type ProgressPayload = {
   progress: number // 0-100
@@ -195,6 +215,8 @@ export const electronAPI = {
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
   loadVideoFromFile: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:load-from-file'),
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),
+  importProjectFile: (projectFilePath: string): Promise<RecordingResult> =>
+    ipcRenderer.invoke('recording:import-project-file', projectFilePath),
   importMediaAudioAsset: (): Promise<MediaAudioImportResult> => ipcRenderer.invoke('media:import-audio'),
   getCursorScale: (): Promise<number> => ipcRenderer.invoke('desktop:get-cursor-scale'),
   setCursorScale: (scale: number): void => ipcRenderer.send('desktop:set-cursor-scale', scale),
@@ -254,9 +276,11 @@ export const electronAPI = {
   readFile: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:readFile', filePath),
   readFileBuffer: (filePath: string): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileBuffer', filePath),
   statFile: (filePath: string): Promise<FileStatResult> => ipcRenderer.invoke('fs:statFile', filePath),
-  readFileChunk: (payload: ReadFileChunkPayload): Promise<Uint8Array> => ipcRenderer.invoke('fs:readFileChunk', payload),
+  readFileChunk: (payload: ReadFileChunkPayload): Promise<Uint8Array> =>
+    ipcRenderer.invoke('fs:readFileChunk', payload),
   getRecordSaaSRootPath: (): Promise<string> => ipcRenderer.invoke('fs:getRecordSaaSRootPath'),
   getDefaultRecordSaaSRootPath: (): Promise<string> => ipcRenderer.invoke('fs:getDefaultRecordSaaSRootPath'),
+  listSavedProjects: (): Promise<ListSavedProjectsResult> => ipcRenderer.invoke('fs:listSavedProjects'),
   validateProjectFolderName: (projectName: string): Promise<FolderNameValidationResult> =>
     ipcRenderer.invoke('fs:validateProjectFolderName', projectName),
   resolveProjectFolder: (projectName: string): Promise<ResolveProjectFolderResult> =>
@@ -296,8 +320,13 @@ export const electronAPI = {
     return ipcRenderer.invoke('dialog:showOpenDialog', options)
   },
 
-  saveProject: (targetFolder: string, projectData: string, mediaFiles: string[]): Promise<{ success: boolean; error?: string }> => {
-    return ipcRenderer.invoke('fs:saveProject', { targetFolder, projectData, mediaFiles })
+  saveProject: (
+    targetFolder: string,
+    projectData: string,
+    mediaFiles: string[],
+    options: SaveProjectOptions = {},
+  ): Promise<{ success: boolean; error?: string }> => {
+    return ipcRenderer.invoke('fs:saveProject', { targetFolder, projectData, mediaFiles, ...options })
   },
 
   showItemInFolder: (path: string): void => ipcRenderer.send('shell:showItemInFolder', path),
@@ -366,7 +395,8 @@ export const electronAPI = {
     ipcRenderer.invoke('presets:save', presets),
   getSetting: <T = any>(key: string): Promise<T> => ipcRenderer.invoke('settings:get', key),
   setSetting: (key: string, value: unknown): void => ipcRenderer.send('settings:set', key, value),
-  getPath: (name: 'home' | 'userData' | 'desktop' | 'documents'): Promise<string> => ipcRenderer.invoke('app:getPath', name),
+  getPath: (name: 'home' | 'userData' | 'desktop' | 'documents'): Promise<string> =>
+    ipcRenderer.invoke('app:getPath', name),
   getCursorThemes: (): Promise<string[]> => ipcRenderer.invoke('desktop:get-cursor-themes'),
   loadCursorTheme: (themeName?: string): Promise<CursorTheme | null> =>
     ipcRenderer.invoke('desktop:load-cursor-theme', themeName),

@@ -21,6 +21,7 @@ import {
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../components/ui/select'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
+import { ImportProjectModal } from '../components/recorder/ImportProjectModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder-window'
@@ -32,6 +33,7 @@ import {
   RECORDING_PROFILES_SETTING_KEY,
   SELECTED_RECORDING_PROFILE_SETTING_KEY,
   getRecordingProfileLabel,
+  isRecordingCapabilityAnalysis,
   normalizeRecordingProfiles,
   type RecordingCapabilityAnalysis,
   type RecordingProfile,
@@ -78,7 +80,9 @@ export function RecorderPage() {
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
+  const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
@@ -99,10 +103,12 @@ export function RecorderPage() {
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
+  const hasRequestedInitialRecordingAnalysisRef = useRef(false)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
-  const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+  const recorderWindowPreset =
+    isSettingsModalOpen || isImportProjectModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -134,12 +140,19 @@ export function RecorderPage() {
         window.electronAPI.getSetting<string>(SELECTED_RECORDING_PROFILE_SETTING_KEY),
         window.electronAPI.getSetting<RecordingCapabilityAnalysis>(NATIVE_RECORDING_ANALYSIS_SETTING_KEY),
       ])
-      const recommendedFps = analysis?.recommendedFps === 30 ? 30 : 60
+      const validAnalysis = isRecordingCapabilityAnalysis(analysis) ? analysis : null
+      const recommendedFps = validAnalysis?.recommendedFps === 60 ? 60 : 30
       const normalized = normalizeRecordingProfiles(storedProfiles, recommendedFps)
       setRecordingProfiles(normalized)
       setSelectedRecordingProfileId(
         normalized.some((profile) => profile.id === selectedId) ? selectedId : NATIVE_RECORDING_PROFILE_ID,
       )
+      if (!validAnalysis && !hasRequestedInitialRecordingAnalysisRef.current) {
+        hasRequestedInitialRecordingAnalysisRef.current = true
+        setSettingsDefaultTab('recording')
+        setSettingsModalOpen(true)
+        setRecordingProfileAnalyzeRequestId((current) => current + 1)
+      }
     } catch (error) {
       console.error('Failed to load recording profiles:', error)
       setRecordingProfiles(normalizeRecordingProfiles(null))
@@ -557,15 +570,35 @@ export function RecorderPage() {
     window.electronAPI.stopRecording()
   }
 
-  const handleImportProject = async () => {
+  const handleImportProject = () => {
+    setImportProjectModalOpen(true)
+  }
+
+  const handleImportProjectFile = async (projectFilePath: string) => {
+    setActionInProgress('loading')
+    try {
+      const result = await window.electronAPI.importProjectFile(projectFilePath)
+      if (result.canceled) setActionInProgress('none')
+    } catch (error) {
+      console.error('Failed to import project from library:', error)
+      setActionInProgress('none')
+    }
+  }
+
+  const handleImportProjectManually = async () => {
     setActionInProgress('loading')
     try {
       const result = await window.electronAPI.importProject()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to import project from file:', error)
+      console.error('Failed to import project manually:', error)
       setActionInProgress('none')
     }
+  }
+
+  const handleCloseImportProjectModal = () => {
+    if (actionInProgress === 'loading') return
+    setImportProjectModalOpen(false)
   }
 
   const handleSelectionChange = (setter: (id: string) => void, key: string) => (id: string) => {
@@ -650,7 +683,9 @@ export function RecorderPage() {
                           <DeviceDesktop size={14} />
                         </IconShell>
                         <span className="truncate">
-                          {truncateRecorderLabel(displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...')}
+                          {truncateRecorderLabel(
+                            displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...',
+                          )}
                         </span>
                       </div>
                     </SelectValue>
@@ -934,13 +969,30 @@ export function RecorderPage() {
         </div>
       )}
 
+      <ImportProjectModal
+        isOpen={isImportProjectModalOpen}
+        isImporting={actionInProgress === 'loading'}
+        onClose={handleCloseImportProjectModal}
+        onImportProject={(projectFilePath) => {
+          void handleImportProjectFile(projectFilePath)
+        }}
+        onImportManually={() => {
+          void handleImportProjectManually()
+        }}
+      />
+
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={handleSettingsClose}
         isTransparent
         defaultTab={settingsDefaultTab}
         recordingProfileCreateRequestId={recordingProfileCreateRequestId}
+        recordingProfileAnalyzeRequestId={recordingProfileAnalyzeRequestId}
         onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
+        onRecordingProfileAnalyzeRequestHandled={() => {
+          setRecordingProfileAnalyzeRequestId(0)
+          void loadRecordingProfiles()
+        }}
       />
     </TooltipProvider>
   )

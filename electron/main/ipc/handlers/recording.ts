@@ -5,6 +5,7 @@ import {
   loadVideoFromFile,
   stopRecording,
   importProjectFromFile,
+  importProjectFromPath,
   selectRecordingArea,
   analyzeRecordingCapability,
 } from '../../features/recording-manager'
@@ -24,6 +25,10 @@ export function handleLoadVideoFromFile() {
 
 export function handleImportProject() {
   return importProjectFromFile()
+}
+
+export function handleImportProjectFile(_event: unknown, projectFilePath: string) {
+  return importProjectFromPath(projectFilePath)
 }
 
 export function handleSelectArea() {
