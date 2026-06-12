@@ -1,7 +1,17 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { AdjustmentsHorizontal, IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
+import {
+  AdjustmentsHorizontal,
+  IconSwitch,
+  InfoCircle,
+  InfoCircleSolid,
+  Keyboard,
+  Settings,
+  UserCircle,
+  X,
+  type IconComponent,
+} from '@icons'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
@@ -14,7 +24,9 @@ interface SettingsModalProps {
   isTransparent?: boolean
   defaultTab?: SettingsTab
   recordingProfileCreateRequestId?: number
+  recordingProfileAnalyzeRequestId?: number
   onRecordingProfileCreateRequestHandled?: () => void
+  onRecordingProfileAnalyzeRequestHandled?: () => void
 }
 
 export type SettingsTab = 'general' | 'recording' | 'shortcuts' | 'account' | 'about'
@@ -33,7 +45,9 @@ export function SettingsModal({
   isTransparent = false,
   defaultTab = 'general',
   recordingProfileCreateRequestId = 0,
+  recordingProfileAnalyzeRequestId = 0,
   onRecordingProfileCreateRequestHandled,
+  onRecordingProfileAnalyzeRequestHandled,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab)
 
@@ -53,7 +67,9 @@ export function SettingsModal({
         return (
           <RecordingProfilesTab
             createProfileRequestId={recordingProfileCreateRequestId}
+            analyzeRequestId={recordingProfileAnalyzeRequestId}
             onCreateProfileRequestHandled={onRecordingProfileCreateRequestHandled}
+            onAnalyzeRequestHandled={onRecordingProfileAnalyzeRequestHandled}
           />
         )
       case 'shortcuts':
@@ -72,7 +88,7 @@ export function SettingsModal({
       data-interactive="true"
       className={cn(
         'fixed inset-0 z-50 flex items-center justify-center',
-        isTransparent ? 'bg-transparent' : 'bg-background/80 backdrop-blur-[2px]'
+        isTransparent ? 'bg-transparent' : 'bg-background/80 backdrop-blur-[2px]',
       )}
       onClick={onClose}
     >
@@ -80,7 +96,7 @@ export function SettingsModal({
         data-interactive="true"
         className={cn(
           'relative m-3 flex h-[calc(100vh-1.5rem)] max-h-[780px] w-full max-w-[1320px] flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
-          isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'
+          isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border',
         )}
         onClick={(e) => e.stopPropagation()}
       >

@@ -36,7 +36,7 @@ export const SCREEN_FPS_OPTIONS: RecordingScreenFps[] = [30, 60, 120]
 export const WEBCAM_FPS_OPTIONS: RecordingWebcamFps[] = ['synced', 30, 60]
 export const RESOLUTION_OPTIONS: RecordingResolution[] = ['native', 'sd', 'hd', 'full-hd', '2k']
 
-export const createNativeRecordingProfile = (recommendedFps: 30 | 60 = 60): RecordingProfile => ({
+export const createNativeRecordingProfile = (recommendedFps: 30 | 60 = 30): RecordingProfile => ({
   id: NATIVE_RECORDING_PROFILE_ID,
   name: 'Native Adaptive (Recommended)',
   isNative: true,
@@ -46,6 +46,22 @@ export const createNativeRecordingProfile = (recommendedFps: 30 | 60 = 60): Reco
   webcamFps: 30,
 })
 
+export const isRecordingCapabilityAnalysis = (value: unknown): value is RecordingCapabilityAnalysis => {
+  if (!value || typeof value !== 'object') return false
+
+  const source = value as Partial<RecordingCapabilityAnalysis>
+  const hasMeasuredFps =
+    source.measuredFps === undefined || (typeof source.measuredFps === 'number' && Number.isFinite(source.measuredFps))
+
+  return (
+    (source.recommendedFps === 30 || source.recommendedFps === 60) &&
+    typeof source.canRecord60Fps === 'boolean' &&
+    typeof source.reason === 'string' &&
+    source.reason.trim().length > 0 &&
+    hasMeasuredFps
+  )
+}
+
 export const normalizeRecordingProfile = (
   value: Partial<RecordingProfile> | null | undefined,
   fallback: RecordingProfile,
@@ -54,7 +70,12 @@ export const normalizeRecordingProfile = (
   const isNative = source.id === NATIVE_RECORDING_PROFILE_ID || source.isNative === true
 
   if (isNative) {
-    return createNativeRecordingProfile(source.screenFps === 30 ? 30 : fallback.screenFps === 30 ? 30 : 60)
+    return {
+      ...createNativeRecordingProfile(),
+      screenFps: SCREEN_FPS_OPTIONS.includes(source.screenFps as RecordingScreenFps)
+        ? (source.screenFps as RecordingScreenFps)
+        : fallback.screenFps,
+    }
   }
 
   const screenResolution = RESOLUTION_OPTIONS.includes(source.screenResolution as RecordingResolution)
@@ -80,10 +101,7 @@ export const normalizeRecordingProfile = (
   }
 }
 
-export const normalizeRecordingProfiles = (
-  value: unknown,
-  nativeRecommendedFps: 30 | 60 = 60,
-): RecordingProfile[] => {
+export const normalizeRecordingProfiles = (value: unknown, nativeRecommendedFps: 30 | 60 = 30): RecordingProfile[] => {
   const nativeProfile = createNativeRecordingProfile(nativeRecommendedFps)
   const customProfiles = Array.isArray(value)
     ? value
@@ -93,7 +111,7 @@ export const normalizeRecordingProfiles = (
             id: `recording-profile-${index + 1}`,
             name: `Profile ${index + 1}`,
             screenResolution: 'native',
-            screenFps: 60,
+            screenFps: 30,
             webcamResolution: 'native',
             webcamFps: 'synced',
           }),

@@ -20,7 +20,9 @@ export interface RecordingSession {
   audioPath?: string
   mediaAudioPath?: string
   recordingGeometry: RecordingGeometry
-  scaleFactor: number  // Display scale factor (for Windows DPI scaling)
+  scaleFactor: number // Display scale factor (for Windows DPI scaling)
+  screenCaptureBackend?: string
+  requestedScreenFps?: number
   originalProjectPath?: string
 }
 
@@ -40,6 +42,7 @@ interface AppState {
 
   // Processes & Streams
   ffmpegProcess: ChildProcessWithoutNullStreams | null
+  ffmpegProcesses: ChildProcessWithoutNullStreams[]
   mouseTracker: IMouseTracker | null
 
   // In-memory recording data
@@ -67,6 +70,7 @@ export const appState: AppState = {
   tray: null,
   exportTray: null,
   ffmpegProcess: null,
+  ffmpegProcesses: [],
   mouseTracker: null,
   recordedMouseEvents: [],
   runtimeCursorImageMap: new Map(),

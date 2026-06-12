@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Input } from '../ui/input'
@@ -15,6 +15,7 @@ import {
   SELECTED_RECORDING_PROFILE_SETTING_KEY,
   WEBCAM_FPS_OPTIONS,
   createNativeRecordingProfile,
+  isRecordingCapabilityAnalysis,
   normalizeRecordingProfiles,
   type RecordingCapabilityAnalysis,
   type RecordingProfile,
@@ -42,10 +43,14 @@ const persistProfiles = (profiles: RecordingProfile[]) => {
 
 export function RecordingProfilesTab({
   createProfileRequestId = 0,
+  analyzeRequestId = 0,
   onCreateProfileRequestHandled,
+  onAnalyzeRequestHandled,
 }: {
   createProfileRequestId?: number
+  analyzeRequestId?: number
   onCreateProfileRequestHandled?: () => void
+  onAnalyzeRequestHandled?: () => void
 }) {
   const [profiles, setProfiles] = useState<RecordingProfile[]>([createNativeRecordingProfile()])
   const [selectedProfileId, setSelectedProfileId] = useState(NATIVE_RECORDING_PROFILE_ID)
@@ -55,6 +60,7 @@ export function RecordingProfilesTab({
   const [analysisCountdown, setAnalysisCountdown] = useState(ANALYSIS_DURATION_SECONDS)
   const [isLoaded, setIsLoaded] = useState(false)
   const handledCreateRequestIdRef = useRef(0)
+  const handledAnalyzeRequestIdRef = useRef(0)
 
   useEffect(() => {
     let isMounted = true
@@ -67,11 +73,14 @@ export function RecordingProfilesTab({
       ])
       if (!isMounted) return
 
-      const recommendedFps = storedAnalysis?.recommendedFps === 30 ? 30 : 60
+      const validAnalysis = isRecordingCapabilityAnalysis(storedAnalysis) ? storedAnalysis : null
+      const recommendedFps = validAnalysis?.recommendedFps === 60 ? 60 : 30
       const normalized = normalizeRecordingProfiles(storedProfiles, recommendedFps)
       setProfiles(normalized)
-      setSelectedProfileId(normalized.some((profile) => profile.id === storedSelectedId) ? storedSelectedId : NATIVE_RECORDING_PROFILE_ID)
-      setAnalysis(storedAnalysis || null)
+      setSelectedProfileId(
+        normalized.some((profile) => profile.id === storedSelectedId) ? storedSelectedId : NATIVE_RECORDING_PROFILE_ID,
+      )
+      setAnalysis(validAnalysis)
       setIsLoaded(true)
     }
 
@@ -106,27 +115,30 @@ export function RecordingProfilesTab({
     }
   }, [isAnalyzing])
 
-  const updateProfiles = (updater: (current: RecordingProfile[]) => RecordingProfile[]) => {
+  const updateProfiles = useCallback((updater: (current: RecordingProfile[]) => RecordingProfile[]) => {
     setProfiles((current) => {
       const next = updater(current)
       persistProfiles(next)
       return next
     })
-  }
+  }, [])
 
-  const updateSelectedProfile = (patch: Partial<RecordingProfile>) => {
-    if (isNativeProfile) return
-    updateProfiles((current) =>
-      current.map((profile) => (profile.id === selectedProfile.id ? { ...profile, ...patch } : profile)),
-    )
-  }
+  const updateSelectedProfile = useCallback(
+    (patch: Partial<RecordingProfile>) => {
+      if (isNativeProfile) return
+      updateProfiles((current) =>
+        current.map((profile) => (profile.id === selectedProfile.id ? { ...profile, ...patch } : profile)),
+      )
+    },
+    [isNativeProfile, selectedProfile.id, updateProfiles],
+  )
 
-  const handleAddProfile = () => {
+  const handleAddProfile = useCallback(() => {
     const profile = createCustomProfile()
     updateProfiles((current) => [...current, profile])
     setSelectedProfileId(profile.id)
     setIsEditing(true)
-  }
+  }, [updateProfiles])
 
   useEffect(() => {
     if (!isLoaded || createProfileRequestId <= 0 || handledCreateRequestIdRef.current === createProfileRequestId) return
@@ -134,7 +146,7 @@ export function RecordingProfilesTab({
     handledCreateRequestIdRef.current = createProfileRequestId
     handleAddProfile()
     onCreateProfileRequestHandled?.()
-  }, [createProfileRequestId, isLoaded, onCreateProfileRequestHandled])
+  }, [createProfileRequestId, handleAddProfile, isLoaded, onCreateProfileRequestHandled])
 
   const handleDeleteProfile = () => {
     if (isNativeProfile) return
@@ -144,7 +156,7 @@ export function RecordingProfilesTab({
     setIsEditing(false)
   }
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = useCallback(async () => {
     setIsAnalyzing(true)
     setAnalysisCountdown(ANALYSIS_DURATION_SECONDS)
     try {
@@ -166,7 +178,17 @@ export function RecordingProfilesTab({
     } finally {
       setIsAnalyzing(false)
     }
-  }
+  }, [isNativeProfile, updateSelectedProfile])
+
+  useEffect(() => {
+    if (!isLoaded || analyzeRequestId <= 0 || handledAnalyzeRequestIdRef.current === analyzeRequestId) return
+    if (analysis || isAnalyzing) return
+
+    handledAnalyzeRequestIdRef.current = analyzeRequestId
+    void handleAnalyze().finally(() => {
+      onAnalyzeRequestHandled?.()
+    })
+  }, [analysis, analyzeRequestId, handleAnalyze, isAnalyzing, isLoaded, onAnalyzeRequestHandled])
 
   const handleSelectedProfileChange = (id: string) => {
     setSelectedProfileId(id)
@@ -216,9 +238,9 @@ export function RecordingProfilesTab({
               <div className="rounded-lg border border-primary/30 bg-primary/10 p-5">
                 <h3 className="text-sm font-semibold text-foreground">Native Adaptive profile</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Uses the selected screen's native resolution. Screen FPS is selected by the performance analysis
-                  tool, targeting 60fps when the PC can sustain it and falling back to 30fps when needed. Webcam stays
-                  at 30fps and requests the same capture resolution as the selected screen or area.
+                  Uses the selected screen's native resolution. Screen FPS is selected by the performance analysis tool,
+                  targeting 60fps when the PC can sustain it and falling back to 30fps when needed. Webcam stays at
+                  30fps and requests the same capture resolution as the selected screen or area.
                 </p>
               </div>
             )}
@@ -315,6 +337,15 @@ export function RecordingProfilesTab({
                     </SelectContent>
                   </Select>
                 </Field>
+                {isNativeProfile && (
+                  <div className="grid grid-cols-[10rem_1fr] items-start gap-3">
+                    <div />
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      Este perfil padrão é definido pela análise. Para ajustar FPS, resolução e webcam manualmente, crie
+                      um perfil customizado.
+                    </p>
+                  </div>
+                )}
 
                 <Field label="Webcam resolution">
                   <Select

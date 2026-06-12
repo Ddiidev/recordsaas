@@ -2,7 +2,7 @@
 // Contains core business logic for recording, stopping, and cleanup.
 
 import log from 'electron-log/main'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { cpus } from 'node:os'
@@ -18,6 +18,19 @@ import { createSavingWindow, createSelectionWindow } from '../windows/temporary-
 import type { RecordingSession, RecordingGeometry } from '../state'
 
 const FFMPEG_PATH = getFFmpegPath()
+
+const getFFmpegVersionLine = (): string | undefined => {
+  const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-version'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+
+  if (result.error || result.status !== 0) return undefined
+  return (result.stdout || result.stderr)
+    .split(/\r?\n/)
+    .find((line) => line.trim().length > 0)
+    ?.trim()
+}
 
 type ImportedProjectPayload = {
   videoPath?: string | null
@@ -114,6 +127,18 @@ type RecordingProfileRuntime = {
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
   screenFps?: RecordingScreenFps
+  screenNeedsHwDownload?: boolean
+  screenCaptureBackend?: string
+}
+type FfmpegProcessRole = 'main' | 'webcam'
+type FfmpegProcessSpec = {
+  role: FfmpegProcessRole
+  args: string[]
+}
+type SplitRecordingInputArgs = {
+  micInputArgs: string[]
+  webcamInputArgs: string[]
+  screenInputArgs: string[]
 }
 type RecordingCapabilityProbeBackend = 'ddagrab' | 'gdigrab' | 'x11grab'
 type RecordingCapabilityProbeResult = {
@@ -150,6 +175,8 @@ const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
 const RECORDING_CAPABILITY_PROBE_SECONDS = 5
 const RECORDING_CAPABILITY_PROBE_TIMEOUT_MS = 8000
+const WIN32_DSHOW_WEBCAM_THREAD_QUEUE_SIZE = '1024'
+const WIN32_DSHOW_WEBCAM_RTBUF_SIZE = '512M'
 const WEBCAM_RECORDING_ENCODING_CONFIG = {
   codec: 'libx264',
   preset: 'ultrafast',
@@ -217,7 +244,7 @@ const normalizeRecordingProfile = (value: RecordingProfile | null | undefined): 
     return {
       isNative: true,
       screenResolution: 'native',
-      screenFps: normalizeRecordingFps(value?.screenFps, 60) === 120 ? 60 : normalizeRecordingFps(value?.screenFps, 60),
+      screenFps: normalizeRecordingFps(value?.screenFps, 30),
       webcamResolution: 'native',
       webcamFps: 30,
     }
@@ -226,13 +253,17 @@ const normalizeRecordingProfile = (value: RecordingProfile | null | undefined): 
   return {
     isNative: false,
     screenResolution: normalizeRecordingResolution(value?.screenResolution, 'native'),
-    screenFps: normalizeRecordingFps(value?.screenFps, 60),
+    screenFps: normalizeRecordingFps(value?.screenFps, 30),
     webcamResolution: normalizeRecordingResolution(value?.webcamResolution, 'native'),
     webcamFps: normalizeWebcamFps(value?.webcamFps, 'synced'),
   }
 }
 
-const resolveScaledDimensions = (width: number, height: number, resolution: RecordingResolution): { width: number; height: number } | null => {
+const resolveScaledDimensions = (
+  width: number,
+  height: number,
+  resolution: RecordingResolution,
+): { width: number; height: number } | null => {
   if (resolution === 'native') return null
   const targetHeight = RECORDING_RESOLUTION_HEIGHTS[resolution]
   if (!targetHeight || height <= 0 || width <= 0) return null
@@ -249,9 +280,10 @@ const resolveDesiredWebcamSize = (
   profile: RecordingProfileRuntime,
   context: WebcamInputContext = {},
 ): { width: number; height: number } | undefined => {
-  const webcamSize = profile.isNative && context.screenWidth && context.screenHeight
-    ? { width: context.screenWidth, height: context.screenHeight }
-    : resolveScaledDimensions(16, 9, profile.webcamResolution)
+  const webcamSize =
+    profile.isNative && context.screenWidth && context.screenHeight
+      ? { width: context.screenWidth, height: context.screenHeight }
+      : resolveScaledDimensions(16, 9, profile.webcamResolution)
 
   return webcamSize || undefined
 }
@@ -261,6 +293,10 @@ const appendWebcamInputOptions = (args: string[], options: WebcamInputOptions) =
   if (options.size) {
     args.push('-video_size', `${options.size.width}x${options.size.height}`)
   }
+}
+
+const appendWin32DshowWebcamBufferOptions = (args: string[]) => {
+  args.push('-thread_queue_size', WIN32_DSHOW_WEBCAM_THREAD_QUEUE_SIZE, '-rtbufsize', WIN32_DSHOW_WEBCAM_RTBUF_SIZE)
 }
 
 const isSameWebcamSize = (
@@ -286,13 +322,17 @@ const getWin32WebcamFallbackSizes = (
   return candidates
 }
 
+const getWin32WebcamFallbackFps = (desiredFps: 30 | 60): Array<30 | 60> => (desiredFps === 60 ? [60, 30] : [30])
+
 const probeWin32DshowWebcamInput = (
   deviceLabel: string,
   fps: 30 | 60,
   size: { width: number; height: number } | undefined,
 ): Promise<boolean> =>
   new Promise((resolve) => {
-    const args = ['-hide_banner', '-f', 'dshow', '-framerate', String(fps)]
+    const args = ['-hide_banner', '-f', 'dshow']
+    appendWin32DshowWebcamBufferOptions(args)
+    args.push('-framerate', String(fps))
     if (size) {
       args.push('-video_size', `${size.width}x${size.height}`)
     }
@@ -333,22 +373,30 @@ const resolveWebcamInputOptions = async (
     return { fps, size: desiredSize }
   }
 
-  for (const candidate of getWin32WebcamFallbackSizes(desiredSize)) {
-    const canOpen = await probeWin32DshowWebcamInput(webcam.deviceLabel, fps, candidate)
-    if (canOpen) {
-      if (!isSameWebcamSize(candidate, desiredSize)) {
-        log.warn(
-          `[RecordingManager] Webcam rejected requested capture size ${desiredSize ? `${desiredSize.width}x${desiredSize.height}` : 'native/default'}; using ${
-            candidate ? `${candidate.width}x${candidate.height}` : 'device default'
-          } instead.`,
-        )
+  for (const candidateFps of getWin32WebcamFallbackFps(fps)) {
+    for (const candidateSize of getWin32WebcamFallbackSizes(desiredSize)) {
+      const canOpen = await probeWin32DshowWebcamInput(webcam.deviceLabel, candidateFps, candidateSize)
+      if (canOpen) {
+        if (candidateFps !== fps) {
+          log.warn(`[RecordingManager] Webcam rejected requested ${fps}fps; using ${candidateFps}fps instead.`)
+        }
+        if (!isSameWebcamSize(candidateSize, desiredSize)) {
+          log.warn(
+            `[RecordingManager] Webcam rejected requested capture size ${desiredSize ? `${desiredSize.width}x${desiredSize.height}` : 'native/default'}; using ${
+              candidateSize ? `${candidateSize.width}x${candidateSize.height}` : 'device default'
+            } instead.`,
+          )
+        }
+        return { fps: candidateFps, size: candidateSize }
       }
-      return { fps, size: candidate }
     }
   }
 
-  log.warn('[RecordingManager] Webcam probe failed for all explicit sizes; falling back to DShow device default.')
-  return { fps }
+  const fallbackFps = fps === 60 ? 30 : fps
+  log.warn(
+    `[RecordingManager] Webcam probe failed for all explicit FPS/size combinations; falling back to DShow device default at ${fallbackFps}fps.`,
+  )
+  return { fps: fallbackFps }
 }
 
 const parseProbeTimeSeconds = (value: string): number | null => {
@@ -370,10 +418,7 @@ const parseRecordingCapabilityProbeFps = (stderr: string): number | null => {
   const lastProgress = progressMatches.length > 0 ? progressMatches[progressMatches.length - 1] : null
   const frameCount = lastProgress ? Number(lastProgress[1]) : null
   const durationSeconds = lastProgress ? parseProbeTimeSeconds(lastProgress[2]) : null
-  const frameDerivedFps =
-    frameCount && durationSeconds && durationSeconds > 0
-      ? frameCount / durationSeconds
-      : null
+  const frameDerivedFps = frameCount && durationSeconds && durationSeconds > 0 ? frameCount / durationSeconds : null
 
   if (frameDerivedFps && lastReportedFps) return Math.max(frameDerivedFps, lastReportedFps)
   return frameDerivedFps || lastReportedFps
@@ -412,7 +457,9 @@ const runRecordingCapabilityProbe = async (
   })
 
 function shouldApplyLinuxDisplayScale(scaleFactor: number): boolean {
-  return process.platform === 'linux' && Number.isFinite(scaleFactor) && scaleFactor > 0 && Math.abs(scaleFactor - 1) > 0.001
+  return (
+    process.platform === 'linux' && Number.isFinite(scaleFactor) && scaleFactor > 0 && Math.abs(scaleFactor - 1) > 0.001
+  )
 }
 
 function getLinuxScaledDimension(value: number, scaleFactor: number): number {
@@ -492,29 +539,54 @@ function getWindowsGdigrabDisplayRect(display: Display, displays: Display[]): Ph
   }
 }
 
-function getWindowsGdigrabAreaRect(
-  geometry: RecordingGeometry,
-  containingDisplay: Display,
-  displays: Display[],
-): PhysicalCaptureRect {
-  const scaleFactor = containingDisplay.scaleFactor || 1
-  const origin = getWindowsGdigrabVirtualOrigin(displays)
-  const physicalX = Math.floor(geometry.x * scaleFactor)
-  const physicalY = Math.floor(geometry.y * scaleFactor)
+function getDisplayIndex(display: Display, displays: Display[]): number {
+  return Math.max(
+    0,
+    displays.findIndex((item) => item.id === display.id),
+  )
+}
+
+function buildWindowsDdagrabInput(displayIndex: number, fps: RecordingScreenFps, rect: PhysicalCaptureRect): string {
+  return [
+    `ddagrab=output_idx=${displayIndex}`,
+    `framerate=${fps}`,
+    'draw_mouse=0',
+    `video_size=${rect.width}x${rect.height}`,
+    `offset_x=${Math.max(0, rect.x)}`,
+    `offset_y=${Math.max(0, rect.y)}`,
+    'dup_frames=1',
+  ].join(':')
+}
+
+function getWindowsDdagrabDisplayRect(display: Display): PhysicalCaptureRect {
+  const rect = getWindowsPhysicalDisplayRect(display)
   return {
-    x: normalizeWindowsGdigrabOffset(physicalX, origin.x),
-    y: normalizeWindowsGdigrabOffset(physicalY, origin.y),
-    width: toEvenPhysicalDimension(geometry.width * scaleFactor),
-    height: toEvenPhysicalDimension(geometry.height * scaleFactor),
+    ...rect,
+    x: 0,
+    y: 0,
+  }
+}
+
+function getWindowsDdagrabAreaRect(geometry: RecordingGeometry, containingDisplay: Display): PhysicalCaptureRect {
+  const scaleFactor = containingDisplay.scaleFactor || 1
+  const displayRect = getWindowsPhysicalDisplayRect(containingDisplay)
+  const relativeX = Math.floor((geometry.x - containingDisplay.bounds.x) * scaleFactor)
+  const relativeY = Math.floor((geometry.y - containingDisplay.bounds.y) * scaleFactor)
+  const x = Math.max(0, relativeX)
+  const y = Math.max(0, relativeY)
+  const maxWidth = Math.max(2, displayRect.width - x)
+  const maxHeight = Math.max(2, displayRect.height - y)
+
+  return {
+    x,
+    y,
+    width: Math.min(toEvenPhysicalDimension(geometry.width * scaleFactor), maxWidth),
+    height: Math.min(toEvenPhysicalDimension(geometry.height * scaleFactor), maxHeight),
   }
 }
 
 function isFFmpegRecordingReadyMessage(message: string): boolean {
-  return (
-    message.includes('Press [q] to stop') ||
-    message.includes('Output #0,') ||
-    message.includes('frame=')
-  )
+  return message.includes('Press [q] to stop') || message.includes('Output #0,') || message.includes('frame=')
 }
 
 async function requestRecorderWebcamRelease(): Promise<void> {
@@ -696,8 +768,7 @@ async function waitForLinuxWebcamRelease(devicePath: string): Promise<{ availabl
   }
 
   const finalProbe = probeLinuxWebcamInput(devicePath)
-  const detail =
-    finalProbe.detail || `${devicePath} remained busy after ${LINUX_WEBCAM_RELEASE_PROBE_TIMEOUT_MS}ms.`
+  const detail = finalProbe.detail || `${devicePath} remained busy after ${LINUX_WEBCAM_RELEASE_PROBE_TIMEOUT_MS}ms.`
   log.error(`[LinuxWebcam] Timed out waiting for ${devicePath} to become available: ${detail}`)
   return { available: false, detail }
 }
@@ -835,16 +906,7 @@ async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<
   log.info(`[AudioTrim] Trimming ${trimMs}ms from beginning of ${audioPath}`)
 
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = [
-      '-y',
-      '-ss',
-      trimSeconds.toString(),
-      '-i',
-      audioPath,
-      '-c:a',
-      'copy',
-      trimmedPath,
-    ]
+    const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, '-c:a', 'copy', trimmedPath]
 
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
@@ -892,6 +954,7 @@ async function startActualRecording(
   recordingGeometry: RecordingGeometry,
   scaleFactor: number = 1,
   outputOptions: RecordingOutputOptions = {},
+  splitInputArgs?: SplitRecordingInputArgs,
 ) {
   const recordingDir = await createRecordingSessionDir()
   const baseName = `RecordSaaS-recording-${Date.now()}`
@@ -902,7 +965,16 @@ async function startActualRecording(
   const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
   // Store recordingGeometry and scaleFactor in the session
-  appState.currentRecordingSession = { screenVideoPath, webcamVideoPath, audioPath, metadataPath, recordingGeometry, scaleFactor }
+  appState.currentRecordingSession = {
+    screenVideoPath,
+    webcamVideoPath,
+    audioPath,
+    metadataPath,
+    recordingGeometry,
+    scaleFactor,
+    screenCaptureBackend: outputOptions.screenCaptureBackend,
+    requestedScreenFps: outputOptions.screenFps,
+  }
   appState.recorderWin?.minimize()
 
   // Reset state for the new session
@@ -918,7 +990,7 @@ async function startActualRecording(
       // On other platforms, they're in logical pixels
       let normalizedX = data.x
       let normalizedY = data.y
-      
+
       if (process.platform === 'win32') {
         normalizedX = data.x / scaleFactor
         normalizedY = data.y / scaleFactor
@@ -926,7 +998,7 @@ async function startActualRecording(
         normalizedX = data.x / scaleFactor
         normalizedY = data.y / scaleFactor
       }
-      
+
       // Check if the mouse event is within the recording geometry bounds
       if (
         normalizedX >= recordingGeometry.x &&
@@ -953,15 +1025,50 @@ async function startActualRecording(
     }
   }
 
-  const finalArgs = buildFfmpegArgs(inputArgs, hasWebcam, hasMic, screenVideoPath, webcamVideoPath, audioPath, outputOptions)
-  log.info(`[FFMPEG] Starting FFmpeg with args: ${finalArgs.join(' ')}`)
-  const ffmpeg = spawn(FFMPEG_PATH, finalArgs)
-  appState.ffmpegProcess = ffmpeg
+  const shouldSplitWin32WebcamProcess = Boolean(
+    process.platform === 'win32' && hasWebcam && webcamVideoPath && splitInputArgs,
+  )
+  const ffmpegSpecs =
+    shouldSplitWin32WebcamProcess && splitInputArgs && webcamVideoPath
+      ? buildWin32SplitWebcamFfmpegSpecs(
+          splitInputArgs,
+          hasMic,
+          screenVideoPath,
+          webcamVideoPath,
+          audioPath,
+          outputOptions,
+        )
+      : [
+          {
+            role: 'main' as const,
+            args: buildFfmpegArgs(
+              inputArgs,
+              hasWebcam,
+              hasMic,
+              screenVideoPath,
+              webcamVideoPath,
+              audioPath,
+              outputOptions,
+            ),
+          },
+        ]
+
+  if (shouldSplitWin32WebcamProcess) {
+    log.info('[FFMPEG] Windows webcam capture will run in a separate FFmpeg process.')
+  }
+
+  const ffmpegRuns = ffmpegSpecs.map((spec) => {
+    log.info(`[FFMPEG:${spec.role}] Starting FFmpeg with args: ${spec.args.join(' ')}`)
+    return { ...spec, process: spawn(FFMPEG_PATH, spec.args) }
+  })
+  appState.ffmpegProcess = ffmpegRuns.find((run) => run.role === 'main')?.process || ffmpegRuns[0]?.process || null
+  appState.ffmpegProcesses = ffmpegRuns.map((run) => run.process)
 
   return new Promise((resolve) => {
     let startResolved = false
     let fatalStartupHandled = false
     let recordingReady = false
+    const readyRoles = new Set<FfmpegProcessRole>()
     let startupErrorText = ''
     let startupTimeout: NodeJS.Timeout | null = setTimeout(() => {
       if (recordingReady || fatalStartupHandled) return
@@ -984,8 +1091,11 @@ async function startActualRecording(
       resolve(value)
     }
 
-    const markRecordingReady = () => {
+    const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
+      readyRoles.add(role)
+      if (readyRoles.size < ffmpegRuns.length) return
+
       recordingReady = true
       const session = appState.currentRecordingSession
       if (!session) {
@@ -1018,75 +1128,142 @@ async function startActualRecording(
       }, 100)
     }
 
-    ffmpeg.once('spawn', () => {
-      log.info('[FFMPEG] Process spawned, waiting for recording pipeline to become ready...')
-    })
+    for (const run of ffmpegRuns) {
+      const ffmpeg = run.process
 
-    ffmpeg.once('error', (error: NodeJS.ErrnoException) => {
-      appState.ffmpegProcess = null
-      log.error('[FFMPEG] Failed to start FFmpeg process:', error)
-      dialog.showErrorBox('Recording Failed', getFFmpegSpawnErrorMessage(error))
-      setTimeout(() => {
-        cleanupAndDiscard().catch((cleanupError) => {
-          log.error('[FFMPEG] Failed to cleanup after spawn error:', cleanupError)
-        })
-      }, 0)
-      resolveOnce({ canceled: true })
-    })
+      ffmpeg.once('spawn', () => {
+        log.info(`[FFMPEG:${run.role}] Process spawned, waiting for recording pipeline to become ready...`)
+      })
 
-    ffmpeg.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      if (recordingReady || fatalStartupHandled) {
-        return
-      }
+      ffmpeg.once('error', (error: NodeJS.ErrnoException) => {
+        log.error(`[FFMPEG:${run.role}] Failed to start FFmpeg process:`, error)
+        dialog.showErrorBox('Recording Failed', getFFmpegSpawnErrorMessage(error))
+        setTimeout(() => {
+          cleanupAndDiscard().catch((cleanupError) => {
+            log.error('[FFMPEG] Failed to cleanup after spawn error:', cleanupError)
+          })
+        }, 0)
+        resolveOnce({ canceled: true })
+      })
 
-      log.error(`[FFMPEG] Process exited before recording became ready. code=${code} signal=${signal}`)
-      const startupDetail = startupErrorText.trim()
-      const errorMessage = startupDetail.includes('Device or resource busy')
-        ? `The selected recording device is busy.\n\n${startupDetail}\n\nClose any app that is using the webcam or microphone and try again.`
-        : startupDetail.length > 0
-          ? `FFmpeg exited before the recording could start.\n\n${startupDetail}`
-          : `FFmpeg exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
-      dialog.showErrorBox(
-        'Recording Failed',
-        errorMessage,
-      )
-      cleanupFailedRecordingStart()
-      resolveOnce({ canceled: true })
-    })
+      ffmpeg.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (recordingReady || fatalStartupHandled) {
+          return
+        }
 
-    // Monitor FFmpeg's stderr for progress, errors, and sync timing
-    ffmpeg.stderr.on('data', (data: any) => {
-      const message = data.toString()
-      startupErrorText = message
-      log.warn(`[FFMPEG stderr]: ${message}`)
-
-      if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
-        markRecordingReady()
-      }
-
-      // Early detection of fatal errors to provide immediate feedback
-      const fatalErrorKeywords = [
-        'Cannot open display',
-        'Invalid argument',
-        'Device not found',
-        'Unknown input format',
-        'error opening device',
-      ]
-      if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
-        log.error(`[FFMPEG] Fatal error detected: ${message}`)
-        dialog.showErrorBox(
-          'Recording Failed',
-          `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
-        )
+        log.error(`[FFMPEG:${run.role}] Process exited before recording became ready. code=${code} signal=${signal}`)
+        const startupDetail = startupErrorText.trim()
+        const errorMessage = startupDetail.includes('Device or resource busy')
+          ? `The selected recording device is busy.\n\n${startupDetail}\n\nClose any app that is using the webcam or microphone and try again.`
+          : startupDetail.length > 0
+            ? `FFmpeg exited before the recording could start.\n\n${startupDetail}`
+            : `FFmpeg exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
+        dialog.showErrorBox('Recording Failed', errorMessage)
         cleanupFailedRecordingStart()
-      }
-    })
+        resolveOnce({ canceled: true })
+      })
+
+      // Monitor FFmpeg's stderr for progress, errors, and sync timing
+      ffmpeg.stderr.on('data', (data: any) => {
+        const message = data.toString()
+        startupErrorText = `[${run.role}] ${message}`
+        log.warn(`[FFMPEG:${run.role} stderr]: ${message}`)
+
+        if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
+          markRecordingReady(run.role)
+        }
+
+        // Early detection of fatal errors to provide immediate feedback
+        const fatalErrorKeywords = [
+          'Cannot open display',
+          'Invalid argument',
+          'Device not found',
+          'Unknown input format',
+          'error opening device',
+        ]
+        if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
+          log.error(`[FFMPEG:${run.role}] Fatal error detected: ${message}`)
+          dialog.showErrorBox(
+            'Recording Failed',
+            `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
+          )
+          cleanupFailedRecordingStart()
+        }
+      })
+    }
   })
 }
 
 /**
  * Constructs the final FFmpeg command arguments by mapping input streams to output files.
  */
+function appendScreenOutputArgs(
+  args: string[],
+  screenIndex: number,
+  screenOut: string,
+  outputOptions: RecordingOutputOptions = {},
+): void {
+  log.info(
+    `[RecordingManager] Screen recording encode config: output=${screenOut} codec=libx264 preset=ultrafast crf=18 fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
+  )
+  args.push(
+    '-map',
+    `${screenIndex}:v`,
+    '-c:v',
+    'libx264',
+    '-preset',
+    'ultrafast', // Lowest CPU usage
+    '-crf',
+    '18', // Good quality
+    '-tune',
+    'zerolatency', // Optimize for real-time
+    '-profile:v',
+    'high',
+    '-level',
+    '5.1',
+    '-pix_fmt',
+    'yuv420p',
+  )
+  if (outputOptions.screenScale) {
+    const screenFilters = outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : []
+    screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
+    args.push('-vf', screenFilters.join(','))
+  } else if (outputOptions.screenNeedsHwDownload) {
+    args.push('-vf', 'hwdownload,format=bgra')
+  }
+  if (outputOptions.screenFps) {
+    args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
+  }
+  args.push(screenOut)
+}
+
+function appendAudioOutputArgs(args: string[], micIndex: number, audioOut: string): void {
+  args.push('-map', `${micIndex}:a`, '-c:a', 'aac', '-b:a', '192k', audioOut)
+}
+
+function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string): void {
+  log.info(
+    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt}`,
+  )
+  args.push(
+    '-map',
+    `${webcamIndex}:v`,
+    '-c:v',
+    WEBCAM_RECORDING_ENCODING_CONFIG.codec,
+    '-preset',
+    WEBCAM_RECORDING_ENCODING_CONFIG.preset,
+    '-crf',
+    WEBCAM_RECORDING_ENCODING_CONFIG.crf,
+    '-maxrate',
+    WEBCAM_RECORDING_ENCODING_CONFIG.maxrate,
+    '-bufsize',
+    WEBCAM_RECORDING_ENCODING_CONFIG.bufsize,
+    '-pix_fmt',
+    WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
+    webcamOut,
+  )
+}
+
 function buildFfmpegArgs(
   inputArgs: string[],
   hasWebcam: boolean,
@@ -1097,69 +1274,36 @@ function buildFfmpegArgs(
   outputOptions: RecordingOutputOptions = {},
 ): string[] {
   const finalArgs = [...inputArgs]
-  // Determine the index of each input stream (mic, webcam, screen)
   const micIndex = hasMic ? 0 : -1
   const webcamIndex = hasMic ? (hasWebcam ? 1 : -1) : hasWebcam ? 0 : -1
   const screenIndex = (hasMic ? 1 : 0) + (hasWebcam ? 1 : 0)
 
-  // Map screen video stream (video only, no audio)
-  log.info(
-    `[RecordingManager] Screen recording encode config: output=${screenOut} codec=libx264 preset=ultrafast crf=18 fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
-  )
-  finalArgs.push(
-    '-map',
-    `${screenIndex}:v`,
-    '-c:v',
-    'libx264',
-    '-preset',
-    'ultrafast', // Lowest CPU usage
-    '-crf', '18', // Good quality
-    '-tune', 'zerolatency', // Optimize for real-time
-    '-profile:v',
-    'high',
-    '-level',
-    '5.1',
-    '-pix_fmt',
-    'yuv420p',
-  )
-  if (outputOptions.screenScale) {
-    finalArgs.push('-vf', `scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
-  }
-  if (outputOptions.screenFps) {
-    finalArgs.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
-  }
-  finalArgs.push(screenOut)
-
-  // Map audio stream to separate file if present
-  if (hasMic && audioOut) {
-    finalArgs.push('-map', `${micIndex}:a`, '-c:a', 'aac', '-b:a', '192k', audioOut)
-  }
-
-  // Map webcam video stream if present
-  if (hasWebcam && webcamOut) {
-    log.info(
-      `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt}`,
-    )
-    finalArgs.push(
-      '-map',
-      `${webcamIndex}:v`,
-      '-c:v',
-      WEBCAM_RECORDING_ENCODING_CONFIG.codec,
-      '-preset',
-      WEBCAM_RECORDING_ENCODING_CONFIG.preset,
-      '-crf',
-      WEBCAM_RECORDING_ENCODING_CONFIG.crf,
-      '-maxrate',
-      WEBCAM_RECORDING_ENCODING_CONFIG.maxrate,
-      '-bufsize',
-      WEBCAM_RECORDING_ENCODING_CONFIG.bufsize,
-      '-pix_fmt',
-      WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
-      webcamOut,
-    )
-  }
+  appendScreenOutputArgs(finalArgs, screenIndex, screenOut, outputOptions)
+  if (hasMic && audioOut) appendAudioOutputArgs(finalArgs, micIndex, audioOut)
+  if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut)
 
   return finalArgs
+}
+
+function buildWin32SplitWebcamFfmpegSpecs(
+  inputArgs: SplitRecordingInputArgs,
+  hasMic: boolean,
+  screenOut: string,
+  webcamOut: string,
+  audioOut: string | undefined,
+  outputOptions: RecordingOutputOptions = {},
+): FfmpegProcessSpec[] {
+  const mainArgs = [...inputArgs.micInputArgs, ...inputArgs.screenInputArgs]
+  appendScreenOutputArgs(mainArgs, hasMic ? 1 : 0, screenOut, outputOptions)
+  if (hasMic && audioOut) appendAudioOutputArgs(mainArgs, 0, audioOut)
+
+  const webcamArgs = [...inputArgs.webcamInputArgs]
+  appendWebcamOutputArgs(webcamArgs, 0, webcamOut)
+
+  return [
+    { role: 'main', args: mainArgs },
+    { role: 'webcam', args: webcamArgs },
+  ]
 }
 
 /**
@@ -1241,9 +1385,11 @@ export async function startRecording(options: any) {
   }
 
   const display = process.env.DISPLAY || ':0.0'
-  const baseFfmpegArgs: string[] = []
+  const micInputArgs: string[] = []
+  const webcamInputArgs: string[] = []
+  const screenInputArgs: string[] = []
   let recordingGeometry: RecordingGeometry
-  let recordingScaleFactor = 1  // Default to 1 for non-Windows or 100% scaling
+  let recordingScaleFactor = 1 // Default to 1 for non-Windows or 100% scaling
   let webcamInputContext: WebcamInputContext = {}
 
   if (source === 'fullscreen') {
@@ -1289,14 +1435,14 @@ export async function startRecording(options: any) {
             )
             return { canceled: true }
           }
-          baseFfmpegArgs.push('-f', 'alsa', '-i', linuxMicInput)
+          micInputArgs.push('-f', 'alsa', '-i', linuxMicInput)
         }
         break
       case 'win32':
-        baseFfmpegArgs.push('-f', 'dshow', '-i', `audio=${mic.deviceLabel}`)
+        micInputArgs.push('-f', 'dshow', '-i', `audio=${mic.deviceLabel}`)
         break
       case 'darwin':
-        baseFfmpegArgs.push('-f', 'avfoundation', '-i', `:${mic.index}`)
+        micInputArgs.push('-f', 'avfoundation', '-i', `:${mic.index}`)
         break
     }
   }
@@ -1304,19 +1450,20 @@ export async function startRecording(options: any) {
     const webcamInputOptions = await resolveWebcamInputOptions(recordingProfile, webcamInputContext, webcam)
     switch (process.platform) {
       case 'linux':
-        baseFfmpegArgs.push('-f', 'v4l2')
-        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
-        baseFfmpegArgs.push('-i', `/dev/video${webcam.index}`)
+        webcamInputArgs.push('-f', 'v4l2')
+        appendWebcamInputOptions(webcamInputArgs, webcamInputOptions)
+        webcamInputArgs.push('-i', `/dev/video${webcam.index}`)
         break
       case 'win32':
-        baseFfmpegArgs.push('-f', 'dshow')
-        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
-        baseFfmpegArgs.push('-i', `video=${webcam.deviceLabel}`)
+        webcamInputArgs.push('-f', 'dshow')
+        appendWin32DshowWebcamBufferOptions(webcamInputArgs)
+        appendWebcamInputOptions(webcamInputArgs, webcamInputOptions)
+        webcamInputArgs.push('-i', `video=${webcam.deviceLabel}`)
         break
       case 'darwin':
-        baseFfmpegArgs.push('-f', 'avfoundation')
-        appendWebcamInputOptions(baseFfmpegArgs, webcamInputOptions)
-        baseFfmpegArgs.push('-i', `${webcam.index}:none`)
+        webcamInputArgs.push('-f', 'avfoundation')
+        appendWebcamInputOptions(webcamInputArgs, webcamInputOptions)
+        webcamInputArgs.push('-i', `${webcam.index}:none`)
         break
     }
   }
@@ -1327,28 +1474,30 @@ export async function startRecording(options: any) {
     const targetDisplay = allDisplays.find((d) => d.id === displayId) || screen.getPrimaryDisplay()
     const { x, y, width, height } = targetDisplay.bounds
     const scaleFactor = targetDisplay.scaleFactor || 1
-    const windowsCaptureRect =
-      process.platform === 'win32' ? getWindowsGdigrabDisplayRect(targetDisplay, allDisplays) : null
-    recordingScaleFactor = scaleFactor  // Store for metadata processing
-    
-    // For Windows, we need to use physical pixels for gdigrab
+    const windowsCaptureRect = process.platform === 'win32' ? getWindowsDdagrabDisplayRect(targetDisplay) : null
+    recordingScaleFactor = scaleFactor // Store for metadata processing
+
+    // For Windows, ddagrab captures physical pixels from a single display via Desktop Duplication.
     const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor)
     const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(height, scaleFactor)
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(x, scaleFactor)
     const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(y, scaleFactor)
-    
+
     // Store the logical dimensions for mouse tracking
     const safeWidth = Math.floor(width / 2) * 2
     const safeHeight = Math.floor(height / 2) * 2
     recordingGeometry = { x, y, width: safeWidth, height: safeHeight }
-    outputOptions.screenScale = resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
-    
+    outputOptions.screenScale =
+      resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
+
     switch (process.platform) {
       case 'linux':
-        baseFfmpegArgs.push(
+        outputOptions.screenCaptureBackend = 'x11grab'
+        screenInputArgs.push(
           '-f',
           'x11grab',
-          '-framerate', String(screenFps),
+          '-framerate',
+          String(screenFps),
           '-draw_mouse',
           '0',
           '-video_size',
@@ -1358,27 +1507,27 @@ export async function startRecording(options: any) {
         )
         break
       case 'win32':
-        baseFfmpegArgs.push(
+        outputOptions.screenNeedsHwDownload = true
+        outputOptions.screenCaptureBackend = 'ddagrab'
+        screenInputArgs.push(
           '-f',
-          'gdigrab',
-          '-framerate', String(screenFps),
-          '-draw_mouse',
-          '0',
-          '-offset_x',
-          physicalX.toString(),
-          '-offset_y',
-          physicalY.toString(),
-          '-video_size',
-          `${physicalWidth}x${physicalHeight}`,
+          'lavfi',
           '-i',
-          'desktop',
+          buildWindowsDdagrabInput(getDisplayIndex(targetDisplay, allDisplays), screenFps, {
+            x: physicalX,
+            y: physicalY,
+            width: physicalWidth,
+            height: physicalHeight,
+          }),
         )
         break
       case 'darwin':
-        baseFfmpegArgs.push(
+        outputOptions.screenCaptureBackend = 'avfoundation'
+        screenInputArgs.push(
           '-f',
           'avfoundation',
-          '-framerate', String(screenFps),
+          '-framerate',
+          String(screenFps),
           '-i',
           `${allDisplays.findIndex((d) => d.id === targetDisplay.id) || 0}:none`,
         )
@@ -1391,28 +1540,32 @@ export async function startRecording(options: any) {
     const safeWidth = Math.floor(selectedGeometry.width / 2) * 2
     const safeHeight = Math.floor(selectedGeometry.height / 2) * 2
     recordingGeometry = { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
-    outputOptions.screenScale = resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
+    outputOptions.screenScale =
+      resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
 
     // Get scale factor for the display containing the selection
     const allDisplays = screen.getAllDisplays()
-    const containingDisplay = allDisplays.find((d) => {
-      const b = d.bounds
-      return selectedGeometry.x >= b.x && selectedGeometry.y >= b.y &&
-             selectedGeometry.x + selectedGeometry.width <= b.x + b.width &&
-             selectedGeometry.y + selectedGeometry.height <= b.y + b.height
-    }) || screen.getPrimaryDisplay()
+    const containingDisplay =
+      allDisplays.find((d) => {
+        const b = d.bounds
+        return (
+          selectedGeometry.x >= b.x &&
+          selectedGeometry.y >= b.y &&
+          selectedGeometry.x + selectedGeometry.width <= b.x + b.width &&
+          selectedGeometry.y + selectedGeometry.height <= b.y + b.height
+        )
+      }) || screen.getPrimaryDisplay()
     const scaleFactor = containingDisplay.scaleFactor || 1
     const windowsCaptureRect =
       process.platform === 'win32'
-        ? getWindowsGdigrabAreaRect(
+        ? getWindowsDdagrabAreaRect(
             { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight },
             containingDisplay,
-            allDisplays,
           )
         : null
-    recordingScaleFactor = scaleFactor  // Store for metadata processing
+    recordingScaleFactor = scaleFactor // Store for metadata processing
 
-    // For Windows, convert to physical pixels
+    // For Windows, convert the selected area to physical pixels relative to the selected display.
     const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(safeWidth, scaleFactor)
     const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor)
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(selectedGeometry.x, scaleFactor)
@@ -1420,10 +1573,12 @@ export async function startRecording(options: any) {
 
     switch (process.platform) {
       case 'linux':
-        baseFfmpegArgs.push(
+        outputOptions.screenCaptureBackend = 'x11grab'
+        screenInputArgs.push(
           '-f',
           'x11grab',
-          '-framerate', String(screenFps),
+          '-framerate',
+          String(screenFps),
           '-draw_mouse',
           '0',
           '-video_size',
@@ -1433,24 +1588,23 @@ export async function startRecording(options: any) {
         )
         break
       case 'win32':
-        baseFfmpegArgs.push(
+        outputOptions.screenNeedsHwDownload = true
+        outputOptions.screenCaptureBackend = 'ddagrab'
+        screenInputArgs.push(
           '-f',
-          'gdigrab',
-          '-framerate', String(screenFps),
-          '-draw_mouse',
-          '0',
-          '-offset_x',
-          physicalX.toString(),
-          '-offset_y',
-          physicalY.toString(),
-          '-video_size',
-          `${physicalWidth}x${physicalHeight}`,
+          'lavfi',
           '-i',
-          'desktop',
+          buildWindowsDdagrabInput(getDisplayIndex(containingDisplay, allDisplays), screenFps, {
+            x: physicalX,
+            y: physicalY,
+            width: physicalWidth,
+            height: physicalHeight,
+          }),
         )
         break
       case 'darwin':
         // Note: macOS avfoundation doesn't support area capture like gdigrab/x11grab
+        outputOptions.screenCaptureBackend = 'avfoundation'
         // Area selection on macOS would require a different approach
         log.warn('[RecordingManager] Area selection not supported on macOS')
         appState.recorderWin?.show()
@@ -1477,8 +1631,26 @@ export async function startRecording(options: any) {
     }
   }
 
+  const baseFfmpegArgs = [...micInputArgs, ...webcamInputArgs, ...screenInputArgs]
+  const splitInputArgs =
+    process.platform === 'win32' && webcam
+      ? {
+          micInputArgs,
+          webcamInputArgs,
+          screenInputArgs,
+        }
+      : undefined
+
   log.info('[RecordingManager] Starting actual recording with args:', baseFfmpegArgs)
-  return startActualRecording(baseFfmpegArgs, !!webcam, !!mic, recordingGeometry, recordingScaleFactor, outputOptions)
+  return startActualRecording(
+    baseFfmpegArgs,
+    !!webcam,
+    !!mic,
+    recordingGeometry,
+    recordingScaleFactor,
+    outputOptions,
+    splitInputArgs,
+  )
 }
 
 export async function analyzeRecordingCapability(): Promise<{
@@ -1489,7 +1661,10 @@ export async function analyzeRecordingCapability(): Promise<{
 }> {
   const allDisplays = screen.getAllDisplays()
   const targetDisplay = screen.getPrimaryDisplay()
-  const targetDisplayIndex = Math.max(0, allDisplays.findIndex((display) => display.id === targetDisplay.id))
+  const targetDisplayIndex = Math.max(
+    0,
+    allDisplays.findIndex((display) => display.id === targetDisplay.id),
+  )
   const scaleFactor = targetDisplay.scaleFactor || 1
   const { x, y, width, height } = targetDisplay.bounds
   const windowsCaptureRect =
@@ -1610,11 +1785,7 @@ export async function analyzeRecordingCapability(): Promise<{
   const measuredFps = lastResult.measuredFps
   const canRecord60Fps = Boolean(measuredFps && measuredFps >= 54)
   const backendLabel =
-    lastResult.backend === 'ddagrab'
-      ? 'Desktop Duplication'
-      : lastResult.backend === 'gdigrab'
-        ? 'GDI'
-        : 'X11'
+    lastResult.backend === 'ddagrab' ? 'Desktop Duplication' : lastResult.backend === 'gdigrab' ? 'GDI' : 'X11'
   return {
     recommendedFps: canRecord60Fps ? 60 : 30,
     canRecord60Fps,
@@ -1730,99 +1901,112 @@ export async function cancelRecording() {
 /**
  * Stops trackers, writes metadata, and gracefully shuts down FFmpeg.
  */
+function takeFfmpegProcesses(): ChildProcessWithoutNullStreams[] {
+  const processes = [...appState.ffmpegProcesses]
+  if (appState.ffmpegProcess && !processes.includes(appState.ffmpegProcess)) {
+    processes.unshift(appState.ffmpegProcess)
+  }
+  appState.ffmpegProcess = null
+  appState.ffmpegProcesses = []
+  return processes
+}
+
+function stopFfmpegProcess(ffmpeg: ChildProcessWithoutNullStreams, label: string): Promise<void> {
+  return new Promise((resolve) => {
+    let resolved = false
+    let gracefulKillTimer: NodeJS.Timeout | null = null
+    let forceKillTimer: NodeJS.Timeout | null = null
+    let forceResolveTimer: NodeJS.Timeout | null = null
+
+    const resolveOnce = () => {
+      if (resolved) return
+      resolved = true
+      if (gracefulKillTimer) clearTimeout(gracefulKillTimer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+      if (forceResolveTimer) clearTimeout(forceResolveTimer)
+      resolve()
+    }
+
+    if (ffmpeg.exitCode !== null || ffmpeg.signalCode !== null) {
+      log.info(
+        `[StopRecord:${label}] FFmpeg had already exited. exitCode=${ffmpeg.exitCode} signal=${ffmpeg.signalCode}`,
+      )
+      resolveOnce()
+      return
+    }
+
+    ffmpeg.once('close', (code: any, signal: any) => {
+      log.info(`[StopRecord:${label}] FFmpeg process exited with code ${code} signal ${signal ?? 'none'}`)
+      resolveOnce()
+    })
+
+    ffmpeg.once('error', (error: any) => {
+      log.error(`[StopRecord:${label}] FFmpeg process emitted an error during shutdown:`, error)
+      resolveOnce()
+    })
+
+    if (ffmpeg.stdin) {
+      ffmpeg.stdin.once('error', (error: any) => {
+        log.warn(`[StopRecord:${label}] FFmpeg stdin error during shutdown:`, error)
+      })
+    }
+
+    try {
+      if (ffmpeg.stdin && !ffmpeg.stdin.destroyed && ffmpeg.stdin.writable) {
+        log.info(`[StopRecord:${label}] Requesting graceful FFmpeg shutdown via stdin.`)
+        ffmpeg.stdin.write('q')
+        ffmpeg.stdin.end()
+      } else {
+        log.warn(`[StopRecord:${label}] FFmpeg stdin is not writable; falling back to signals.`)
+        ffmpeg.kill('SIGINT')
+      }
+    } catch (error) {
+      log.warn(`[StopRecord:${label}] Failed to request graceful FFmpeg shutdown, sending SIGINT instead:`, error)
+      try {
+        ffmpeg.kill('SIGINT')
+      } catch (killError) {
+        log.error(`[StopRecord:${label}] Failed to send SIGINT to FFmpeg:`, killError)
+      }
+    }
+
+    gracefulKillTimer = setTimeout(() => {
+      if (resolved) return
+      log.warn(`[StopRecord:${label}] FFmpeg did not exit after graceful request; sending SIGINT.`)
+      try {
+        ffmpeg.kill('SIGINT')
+      } catch (error) {
+        log.error(`[StopRecord:${label}] Failed to send SIGINT to FFmpeg after grace period:`, error)
+      }
+    }, FFMPEG_STOP_GRACE_PERIOD_MS)
+
+    forceKillTimer = setTimeout(() => {
+      if (resolved) return
+      log.error(`[StopRecord:${label}] FFmpeg is still running; sending SIGKILL.`)
+      try {
+        ffmpeg.kill('SIGKILL')
+      } catch (error) {
+        log.error(`[StopRecord:${label}] Failed to send SIGKILL to FFmpeg:`, error)
+      }
+    }, FFMPEG_STOP_FORCE_PERIOD_MS)
+
+    forceResolveTimer = setTimeout(() => {
+      if (resolved) return
+      log.error(`[StopRecord:${label}] FFmpeg shutdown timed out. Continuing cleanup to avoid blocking the UI.`)
+      resolveOnce()
+    }, FFMPEG_STOP_RESOLVE_PERIOD_MS)
+  })
+}
+
 async function cleanupAndSave(): Promise<void> {
   if (appState.mouseTracker) {
     appState.mouseTracker.stop()
     appState.mouseTracker = null
   }
 
-  return new Promise((resolve) => {
-    if (appState.ffmpegProcess) {
-      const ffmpeg = appState.ffmpegProcess
-      appState.ffmpegProcess = null
-      let resolved = false
-      let gracefulKillTimer: NodeJS.Timeout | null = null
-      let forceKillTimer: NodeJS.Timeout | null = null
-      let forceResolveTimer: NodeJS.Timeout | null = null
-
-      const resolveOnce = () => {
-        if (resolved) return
-        resolved = true
-        if (gracefulKillTimer) clearTimeout(gracefulKillTimer)
-        if (forceKillTimer) clearTimeout(forceKillTimer)
-        if (forceResolveTimer) clearTimeout(forceResolveTimer)
-        resolve()
-      }
-
-      if (ffmpeg.exitCode !== null || ffmpeg.signalCode !== null) {
-        log.info(`[StopRecord] FFmpeg had already exited. exitCode=${ffmpeg.exitCode} signal=${ffmpeg.signalCode}`)
-        resolveOnce()
-        return
-      }
-
-      ffmpeg.once('close', (code: any, signal: any) => {
-        log.info(`[StopRecord] FFmpeg process exited with code ${code} signal ${signal ?? 'none'}`)
-        resolveOnce()
-      })
-
-      ffmpeg.once('error', (error: any) => {
-        log.error('[StopRecord] FFmpeg process emitted an error during shutdown:', error)
-        resolveOnce()
-      })
-
-      if (ffmpeg.stdin) {
-        ffmpeg.stdin.once('error', (error: any) => {
-          log.warn('[StopRecord] FFmpeg stdin error during shutdown:', error)
-        })
-      }
-
-      try {
-        if (ffmpeg.stdin && !ffmpeg.stdin.destroyed && ffmpeg.stdin.writable) {
-          log.info('[StopRecord] Requesting graceful FFmpeg shutdown via stdin.')
-          ffmpeg.stdin.write('q')
-          ffmpeg.stdin.end()
-        } else {
-          log.warn('[StopRecord] FFmpeg stdin is not writable; falling back to signals.')
-          ffmpeg.kill('SIGINT')
-        }
-      } catch (error) {
-        log.warn('[StopRecord] Failed to request graceful FFmpeg shutdown, sending SIGINT instead:', error)
-        try {
-          ffmpeg.kill('SIGINT')
-        } catch (killError) {
-          log.error('[StopRecord] Failed to send SIGINT to FFmpeg:', killError)
-        }
-      }
-
-      gracefulKillTimer = setTimeout(() => {
-        if (resolved) return
-        log.warn('[StopRecord] FFmpeg did not exit after graceful request; sending SIGINT.')
-        try {
-          ffmpeg.kill('SIGINT')
-        } catch (error) {
-          log.error('[StopRecord] Failed to send SIGINT to FFmpeg after grace period:', error)
-        }
-      }, FFMPEG_STOP_GRACE_PERIOD_MS)
-
-      forceKillTimer = setTimeout(() => {
-        if (resolved) return
-        log.error('[StopRecord] FFmpeg is still running; sending SIGKILL.')
-        try {
-          ffmpeg.kill('SIGKILL')
-        } catch (error) {
-          log.error('[StopRecord] Failed to send SIGKILL to FFmpeg:', error)
-        }
-      }, FFMPEG_STOP_FORCE_PERIOD_MS)
-
-      forceResolveTimer = setTimeout(() => {
-        if (resolved) return
-        log.error('[StopRecord] FFmpeg shutdown timed out. Continuing cleanup to avoid blocking the UI.')
-        resolveOnce()
-      }, FFMPEG_STOP_RESOLVE_PERIOD_MS)
-    } else {
-      resolve()
-    }
-  })
+  const processes = takeFfmpegProcesses()
+  await Promise.all(
+    processes.map((process, index) => stopFfmpegProcess(process, index === 0 ? 'main' : `aux-${index}`)),
+  )
 }
 
 /**
@@ -1879,6 +2063,9 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       platform: process.platform,
       screenSize: primaryDisplay.size,
       geometry: scaledGeometry,
+      screenCaptureBackend: session.screenCaptureBackend,
+      requestedScreenFps: session.requestedScreenFps,
+      ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
       cursorImages: Object.fromEntries(appState.runtimeCursorImageMap || []),
       events: finalEvents,
@@ -1897,6 +2084,9 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       cursorImages: {},
       geometry: scaledGeometry,
       screenSize: screen.getPrimaryDisplay().size,
+      screenCaptureBackend: session.screenCaptureBackend,
+      requestedScreenFps: session.requestedScreenFps,
+      ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
     }
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(errorMetadata))
@@ -1913,8 +2103,9 @@ export async function cleanupAndDiscard() {
   const sessionToDiscard = { ...appState.currentRecordingSession }
   appState.currentRecordingSession = null
 
-  appState.ffmpegProcess?.kill('SIGKILL')
-  appState.ffmpegProcess = null
+  for (const ffmpegProcess of takeFfmpegProcesses()) {
+    ffmpegProcess.kill('SIGKILL')
+  }
 
   appState.mouseTracker?.stop()
   appState.mouseTracker = null
@@ -2040,7 +2231,7 @@ export async function loadVideoFromFile() {
       metadataPath,
       webcamVideoPath: undefined,
       recordingGeometry: { x: 0, y: 0, width: 0, height: 0 },
-      scaleFactor: 1,  // No scaling for imported videos
+      scaleFactor: 1, // No scaling for imported videos
     }
     const isValid = await validateRecordingFiles(session)
     if (!isValid) {
@@ -2052,7 +2243,15 @@ export async function loadVideoFromFile() {
 
     await new Promise((resolve) => setTimeout(resolve, 500))
     appState.savingWin?.close()
-    createEditorWindow(screenVideoPath, metadataPath, session.recordingGeometry, undefined, undefined, undefined, session.scaleFactor)
+    createEditorWindow(
+      screenVideoPath,
+      metadataPath,
+      session.recordingGeometry,
+      undefined,
+      undefined,
+      undefined,
+      session.scaleFactor,
+    )
     recorderWindow.close()
     return { canceled: false, filePath: screenVideoPath }
   } catch (error) {
@@ -2082,13 +2281,26 @@ export async function importProjectFromFile() {
 
   if (canceled || filePaths.length === 0) return { canceled: true }
 
-  const sourceProjectPath = filePaths[0]
-  if (path.extname(sourceProjectPath).toLowerCase() !== '.rsproj') {
+  return importProjectFromPath(filePaths[0])
+}
+
+export async function importProjectFromPath(sourceProjectPath: string) {
+  log.info('[RecordingManager] Received import project path request.')
+  const recorderWindow = appState.recorderWin
+  if (!recorderWindow) return { canceled: true }
+
+  if (typeof sourceProjectPath !== 'string' || sourceProjectPath.trim().length === 0) {
     dialog.showErrorBox('Invalid Project File', 'Please select a valid .rsproj file.')
     return { canceled: true }
   }
-  log.info(`[RecordingManager] User selected project file: ${sourceProjectPath}`)
-  const sourceProjectDir = path.dirname(sourceProjectPath)
+
+  const normalizedSourceProjectPath = normalizeMediaPath(sourceProjectPath) || sourceProjectPath
+  if (path.extname(normalizedSourceProjectPath).toLowerCase() !== '.rsproj') {
+    dialog.showErrorBox('Invalid Project File', 'Please select a valid .rsproj file.')
+    return { canceled: true }
+  }
+  log.info(`[RecordingManager] User selected project file: ${normalizedSourceProjectPath}`)
+  const sourceProjectDir = path.dirname(normalizedSourceProjectPath)
 
   recorderWindow.hide()
   createSavingWindow()
@@ -2097,7 +2309,7 @@ export async function importProjectFromFile() {
     const recordingDir = await createRecordingSessionDir()
 
     // Read project configuration
-    const rawData = await fsPromises.readFile(sourceProjectPath, 'utf-8')
+    const rawData = await fsPromises.readFile(normalizedSourceProjectPath, 'utf-8')
     const projectData = JSON.parse(rawData) as ImportedProjectPayload
 
     const baseName = `RecordSaaS-recording-${Date.now()}`
@@ -2123,7 +2335,10 @@ export async function importProjectFromFile() {
     }
 
     // Copy any referenced media file into the secure runtime directory.
-    const importMediaFile = async (originalPath: string | null | undefined, label: string): Promise<string | undefined> => {
+    const importMediaFile = async (
+      originalPath: string | null | undefined,
+      label: string,
+    ): Promise<string | undefined> => {
       const sourcePath = await resolveExistingSourcePath(originalPath)
       if (!sourcePath) {
         if (originalPath) {
@@ -2195,8 +2410,7 @@ export async function importProjectFromFile() {
         ? canonicalMetadata.cursorImages
         : fallbackCursorImages
 
-    const mergedGeometry =
-      canonicalMetadata?.recordingGeometry ||
+    const mergedGeometry = canonicalMetadata?.recordingGeometry ||
       canonicalMetadata?.geometry ||
       projectData.recordingGeometry ||
       projectData.geometry || { x: 0, y: 0, width: 0, height: 0 }
@@ -2205,11 +2419,12 @@ export async function importProjectFromFile() {
       ...projectData,
       platform: (canonicalMetadata?.platform || projectData.platform || process.platform) as NodeJS.Platform,
       screenSize: canonicalMetadata?.screenSize || projectData.screenSize || null,
-      syncOffset: typeof canonicalMetadata?.syncOffset === 'number'
-        ? canonicalMetadata.syncOffset
-        : typeof projectData.syncOffset === 'number'
-          ? projectData.syncOffset
-          : 0,
+      syncOffset:
+        typeof canonicalMetadata?.syncOffset === 'number'
+          ? canonicalMetadata.syncOffset
+          : typeof projectData.syncOffset === 'number'
+            ? projectData.syncOffset
+            : 0,
       events: Array.isArray(mergedEvents) ? mergedEvents : [],
       cursorImages: mergedCursorImages,
       geometry: mergedGeometry,
@@ -2282,10 +2497,7 @@ export async function importProjectFromFile() {
           volume,
           fadeInDuration,
           fadeOutDuration,
-          zIndex:
-            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
-              ? rawRegion.zIndex
-              : 0,
+          zIndex: typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex) ? rawRegion.zIndex : 0,
         }
       }
 
@@ -2350,10 +2562,7 @@ export async function importProjectFromFile() {
           volume,
           fadeInDuration,
           fadeOutDuration,
-          zIndex:
-            typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex)
-              ? rawRegion.zIndex
-              : 0,
+          zIndex: typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex) ? rawRegion.zIndex : 0,
         }
       }
     }
@@ -2375,7 +2584,7 @@ export async function importProjectFromFile() {
       mediaAudioPath: importedMediaAudioPath,
       recordingGeometry: mergedGeometry,
       scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
-      originalProjectPath: sourceProjectDir
+      originalProjectPath: sourceProjectDir,
     }
 
     const isValid = await validateRecordingFiles(session)
@@ -2388,7 +2597,7 @@ export async function importProjectFromFile() {
 
     await new Promise((resolve) => setTimeout(resolve, 500))
     appState.savingWin?.close()
-    
+
     createEditorWindow(
       session.screenVideoPath,
       session.metadataPath,
@@ -2397,14 +2606,17 @@ export async function importProjectFromFile() {
       session.audioPath,
       session.mediaAudioPath,
       session.scaleFactor,
-      sourceProjectDir // Pass the original directory path
+      sourceProjectDir, // Pass the original directory path
     )
-    
+
     recorderWindow.close()
     return { canceled: false, filePath: session.screenVideoPath }
   } catch (error) {
     log.error('[RecordingManager] Error loading project from file:', error)
-    dialog.showErrorBox('Error Loading Project', `An error occurred while loading the project: ${(error as Error).message}`)
+    dialog.showErrorBox(
+      'Error Loading Project',
+      `An error occurred while loading the project: ${(error as Error).message}`,
+    )
     appState.savingWin?.close()
     if (recorderWindow && !recorderWindow.isDestroyed()) {
       recorderWindow.show()

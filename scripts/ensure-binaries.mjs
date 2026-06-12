@@ -23,6 +23,7 @@ const platformTargets = {
     assetName: 'ffmpeg.exe',
     outputPath: path.join(projectRoot, 'binaries', 'windows', 'ffmpeg.exe'),
     needsExecutableBit: false,
+    expectedVersionText: 'ffmpeg version 8.1.1',
   },
   darwin: {
     assetName: process.arch === 'arm64' ? 'ffmpeg-darwin-arm64' : 'ffmpeg-darwin-x64',
@@ -75,6 +76,16 @@ async function hasUsableBinary(filePath) {
     const detail = (probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`).trim()
     console.warn(`[setup:binaries] Existing binary at ${filePath} is invalid: ${detail}`)
     return false
+  }
+
+  if (currentTarget.expectedVersionText) {
+    const versionOutput = `${probeResult.stdout || ''}\n${probeResult.stderr || ''}`
+    if (!versionOutput.includes(currentTarget.expectedVersionText)) {
+      console.warn(
+        `[setup:binaries] Existing binary at ${filePath} does not match ${currentTarget.expectedVersionText}. It will be refreshed.`,
+      )
+      return false
+    }
   }
 
   return true
