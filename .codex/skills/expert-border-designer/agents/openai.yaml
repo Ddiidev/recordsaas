@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expert Border Designer"
+  short_description: "Guia bordas e radius de componentes UI"
+  default_prompt: "Use $expert-border-designer para corrigir bordas internas e externas de um componente UI mantendo radius, sombra e estados consistentes."
