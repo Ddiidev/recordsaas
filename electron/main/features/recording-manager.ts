@@ -5,8 +5,9 @@ import log from 'electron-log/main'
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
-import { cpus } from 'node:os'
+import { constants as osConstants, cpus, setPriority } from 'node:os'
 import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
+import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
@@ -19,6 +20,7 @@ import type { RecordingSession, RecordingGeometry } from '../state'
 
 const FFMPEG_PATH = getFFmpegPath()
 const WINDOWS_SYSTEM_AUDIO_HELPER_PATH = process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
+const store = new Store()
 
 const getFFmpegVersionLine = (): string | undefined => {
   const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-version'], {
@@ -113,6 +115,10 @@ type RecordingWebcamFps = 'synced' | 30 | 60
 type RecordingAudioCodec = 'aac' | 'mp3'
 type RecordingAudioBitrateKbps = 128 | 192 | 320
 type RecordingAudioSampleRate = 44100 | 48000
+type RecordingProcessPriority = 'low' | 'normal' | 'high'
+type RecordingProcessPriorityMode = RecordingProcessPriority | 'advanced'
+type RecordingProcessPriorityKey = 'main' | 'webcam' | 'systemAudio'
+type RecordingProcessPriorities = Record<RecordingProcessPriorityKey, RecordingProcessPriority>
 type RecordingProfile = {
   id?: string
   name?: string
@@ -195,6 +201,20 @@ const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
 const RECORDING_CAPABILITY_PROBE_SECONDS = 5
 const RECORDING_CAPABILITY_PROBE_TIMEOUT_MS = 8000
+const RECORDING_PROCESS_PRIORITY_SETTING_KEY = 'general.recordingProcessPriority'
+const RECORDING_PROCESS_PRIORITIES_SETTING_KEY = 'general.recordingProcessPriorities'
+const DEFAULT_RECORDING_PROCESS_PRIORITY: RecordingProcessPriority = 'normal'
+const DEFAULT_RECORDING_PROCESS_PRIORITY_MODE: RecordingProcessPriorityMode = 'normal'
+const DEFAULT_RECORDING_PROCESS_PRIORITIES: RecordingProcessPriorities = {
+  main: DEFAULT_RECORDING_PROCESS_PRIORITY,
+  webcam: DEFAULT_RECORDING_PROCESS_PRIORITY,
+  systemAudio: DEFAULT_RECORDING_PROCESS_PRIORITY,
+}
+const FFMPEG_ROLE_PRIORITY_KEYS: Record<FfmpegProcessRole, RecordingProcessPriorityKey> = {
+  main: 'main',
+  webcam: 'webcam',
+  'system-audio': 'systemAudio',
+}
 const ffmpegDemuxerAvailability: Partial<Record<ComputerAudioBackend, boolean | null>> = {
   pulse: null,
 }
@@ -216,6 +236,73 @@ const RECORDING_RESOLUTION_HEIGHTS: Record<Exclude<RecordingResolution, 'native'
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const isRecordingProcessPriority = (value: unknown): value is RecordingProcessPriority =>
+  value === 'low' || value === 'normal' || value === 'high'
+
+const normalizeRecordingProcessPriority = (value: unknown): RecordingProcessPriority => {
+  if (isRecordingProcessPriority(value)) return value
+  return DEFAULT_RECORDING_PROCESS_PRIORITY
+}
+
+const normalizeRecordingProcessPriorityMode = (value: unknown): RecordingProcessPriorityMode => {
+  if (value === 'low' || value === 'normal' || value === 'high') return value
+  if (value === 'advanced') return value
+  return DEFAULT_RECORDING_PROCESS_PRIORITY_MODE
+}
+
+const normalizeRecordingProcessPriorities = (value: unknown): RecordingProcessPriorities => {
+  const source = value && typeof value === 'object' ? (value as Partial<RecordingProcessPriorities>) : {}
+  return {
+    main: normalizeRecordingProcessPriority(source.main),
+    webcam: normalizeRecordingProcessPriority(source.webcam),
+    systemAudio: normalizeRecordingProcessPriority(source.systemAudio),
+  }
+}
+
+const getRecordingProcessPriorityCandidates = (priority: RecordingProcessPriority): number[] => {
+  if (process.platform === 'win32') {
+    if (priority === 'low') return [osConstants.priority.PRIORITY_LOW]
+    if (priority === 'high') return [osConstants.priority.PRIORITY_ABOVE_NORMAL, osConstants.priority.PRIORITY_NORMAL]
+    return [osConstants.priority.PRIORITY_BELOW_NORMAL, osConstants.priority.PRIORITY_NORMAL]
+  }
+
+  if (priority === 'low') return [10]
+  if (priority === 'high') return [-5, 0]
+  return [5, 0]
+}
+
+const applyRecordingProcessPriority = (
+  childProcess: ChildProcessWithoutNullStreams,
+  priority: RecordingProcessPriority,
+  label: string,
+) => {
+  if (!childProcess.pid) return
+
+  for (const candidate of getRecordingProcessPriorityCandidates(priority)) {
+    try {
+      setPriority(childProcess.pid, candidate)
+      log.info(
+        `[RecordingManager] Recording process priority applied: label=${label} pid=${childProcess.pid} mode=${priority} priority=${candidate}`,
+      )
+      return
+    } catch (error) {
+      log.warn(
+        `[RecordingManager] Failed to set recording process priority: label=${label} pid=${childProcess.pid} mode=${priority} priority=${candidate}`,
+        error,
+      )
+    }
+  }
+}
+
+const resolveRecordingProcessPriority = (
+  role: FfmpegProcessRole,
+  mode: RecordingProcessPriorityMode,
+  priorities: RecordingProcessPriorities,
+): RecordingProcessPriority => {
+  if (mode !== 'advanced') return mode
+  return priorities[FFMPEG_ROLE_PRIORITY_KEYS[role]] || DEFAULT_RECORDING_PROCESS_PRIORITY
+}
 
 const getRecordingRootDir = () => path.join(process.env.HOME || process.env.USERPROFILE || '.', '.recordsaas')
 
@@ -1324,6 +1411,12 @@ async function startActualRecording(
   systemAudioCapture?: SupportedComputerAudioCaptureConfig,
   audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
 ) {
+  const recordingProcessPriorityMode = normalizeRecordingProcessPriorityMode(
+    store.get(RECORDING_PROCESS_PRIORITY_SETTING_KEY, DEFAULT_RECORDING_PROCESS_PRIORITY_MODE),
+  )
+  const recordingProcessPriorities = normalizeRecordingProcessPriorities(
+    store.get(RECORDING_PROCESS_PRIORITIES_SETTING_KEY, DEFAULT_RECORDING_PROCESS_PRIORITIES),
+  )
   const recordingDir = await createRecordingSessionDir()
   const baseName = `RecordSaaS-recording-${Date.now()}`
   const audioExtension = getRecordedAudioFileExtension(audioConfig.audioCodec)
@@ -1462,7 +1555,14 @@ async function startActualRecording(
 
   const ffmpegRuns = ffmpegSpecs.map((spec) => {
     log.info(`[FFMPEG:${spec.role}] Starting FFmpeg with args: ${spec.args.join(' ')}`)
-    return { ...spec, process: spawn(FFMPEG_PATH, spec.args) }
+    const process = spawn(FFMPEG_PATH, spec.args)
+    const processPriority = resolveRecordingProcessPriority(
+      spec.role,
+      recordingProcessPriorityMode,
+      recordingProcessPriorities,
+    )
+    applyRecordingProcessPriority(process, processPriority, `ffmpeg:${spec.role}`)
+    return { ...spec, process }
   })
   appState.ffmpegProcess = ffmpegRuns.find((run) => run.role === 'main')?.process || ffmpegRuns[0]?.process || null
   appState.ffmpegProcesses = ffmpegRuns.map((run) => run.process)

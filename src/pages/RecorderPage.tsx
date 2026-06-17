@@ -134,6 +134,11 @@ export function RecorderPage() {
       normalizeRecordingProfiles(null)[0],
     [recordingProfiles, selectedRecordingProfileId],
   )
+  const keepRecorderMouseInteractive = useCallback(() => {
+    if (platform === 'win32' || platform === 'darwin') {
+      window.electronAPI.setRecorderIgnoreMouse(false)
+    }
+  }, [platform])
 
   const loadAuthSession = useCallback(async () => {
     try {
@@ -197,12 +202,14 @@ export function RecorderPage() {
   }, [teardownWebcamPreview])
 
   const handleOpenSettings = () => {
+    keepRecorderMouseInteractive()
     setSettingsDefaultTab('general')
     setSettingsModalOpen(true)
   }
 
   const handleOpenAccount = async () => {
     if (authSession.isAuthenticated) {
+      keepRecorderMouseInteractive()
       setSettingsDefaultTab('account')
       setSettingsModalOpen(true)
       return
@@ -216,6 +223,7 @@ export function RecorderPage() {
   }
 
   const handleSettingsClose = () => {
+    keepRecorderMouseInteractive()
     setSettingsModalOpen(false)
     setSettingsDefaultTab('general')
     void loadRecordingProfiles()
@@ -453,16 +461,12 @@ export function RecorderPage() {
 
   // Keep the recorder window interactive while its controls are visible.
   useEffect(() => {
-    if (platform === 'win32' || platform === 'darwin') {
-      window.electronAPI.setRecorderIgnoreMouse(false)
-    }
+    keepRecorderMouseInteractive()
 
     return () => {
-      if (platform === 'win32' || platform === 'darwin') {
-        window.electronAPI.setRecorderIgnoreMouse(false)
-      }
+      keepRecorderMouseInteractive()
     }
-  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, platform])
+  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, keepRecorderMouseInteractive])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {
