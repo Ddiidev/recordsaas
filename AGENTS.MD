@@ -20,11 +20,13 @@ Current scope baseline:
 - Export final output (video and related formats).
 - Persist and reload projects through `.rsproj`.
 - Support media audio asset import and lane-based control (v2.4.2 baseline).
+- Support optional Windows/Linux computer-audio capture as a simple separate recording asset: Windows uses the bundled native WASAPI loopback helper and feeds raw PCM into FFmpeg for direct compressed output; Linux uses FFmpeg `pulse` monitor capture.
 
 Hard scope boundaries for current cycle:
 - Desktop-first guidance (not landing-page-first).
 - API context included only where desktop behavior depends on it.
 - No assumption of multi-track media audio authoring beyond current implemented contracts.
+- Computer audio remains a simple `systemAudioPath` project asset with editor-level volume/mute controls; macOS stays disabled in the recorder UI for now, and we do not introduce `recordingAudioTracks` or per-source `change-sound`.
 
 ## 2. Runtime Architecture (Main, Preload, Renderer, IPC Boundaries)
 
@@ -59,8 +61,8 @@ Recorder-to-editor handoff invariant:
 Recording profile invariant:
 - Recorder startup must offer a recording profile dropdown in place of the old local-video load button. The default profile is `Native Adaptive (Recommended)`.
 - The recording profile dropdown includes profile items first, then a separator and a `Create profile` action that opens `Settings > Recording` and starts a new editable profile.
-- Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
-- The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution.
+- Recording profiles control capture-time screen/webcam resolution, FPS, and audio compression defaults (`AAC | MP3`, bitrate, sample rate); export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
+- The native adaptive recording profile keeps its video settings managed by analysis. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution. Audio compression settings on that profile remain user-editable.
 - The 60fps capability analysis tool should run a 5-second screen capture probe and show an in-button countdown/spinner while it is measuring so users understand the wait is intentional. On Windows, prefer FFmpeg `ddagrab`/Desktop Duplication for this probe and fall back to `gdigrab` only if Desktop Duplication fails to produce a measurable result.
 - On first recorder startup, if there is no valid stored native recording capability analysis, open `Settings > Recording` and trigger that analysis automatically before the user relies on the default profile FPS.
 - The recorder control window should stay interactive instead of using click-through behavior that sends clicks to the app behind it on Windows/macOS. Transparent chrome is fine; pointer input should land on the recorder controls.
@@ -135,6 +137,10 @@ Store composition:
 - Undo/redo history is intentionally partialized to visual/timeline state; operational state must not pollute history.
 
 Media-audio contract state:
+- `systemAudioPath: string | null`
+- `systemAudioUrl: string | null`
+- `systemAudioVolume: number`
+- `systemAudioMuted: boolean`
 - `mediaAudioClip: MediaAudioClip | null`
 - `mediaAudioRegions: Record<string, MediaAudioRegion>`
 - `changeSoundRegions: Record<string, ChangeSoundRegion>`
@@ -149,8 +155,9 @@ Core business rules:
 2. `change-sound` regions affect recording audio only.
 3. Lane precedence applies when overlaps occur (upper lane wins).
 4. Region-level mute/volume/fade are enforced on applicable tracks.
-5. Final mix includes recording + media when both are present.
-6. Image/video media categories can remain placeholder if no render/export behavior is implemented.
+5. Computer audio follows the main recording timeline and supports only whole-track editor volume/mute.
+6. Final mix includes recording + optional computer audio + media when present.
+7. Image/video media categories can remain placeholder if no render/export behavior is implemented.
 
 Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
@@ -158,6 +165,7 @@ Export startup invariant:
 - When rendering without an active project folder, the output path must resolve under `<RecordSaaS root>/General/`. When rendering from an active project, the active project folder remains the output base.
 - Exporting a new project must not show a folder picker. The renderer should request a project name, validate it through the main process, and save to `<RecordSaaS root>/<validated project name>/`.
 - Project folder names must be validated against the current OS folder-name rules before saving; do not accept path separators, reserved Windows device names, trailing Windows dots/spaces, control characters, or empty names.
+- When saving a new project to a name whose folder already exists, the main process must show a replacement confirmation before writing. Choosing `Substituir` deletes that existing project folder and saves the new project there; choosing `OK` cancels the save and returns the user to the naming popup.
 - Saving a project should write `project.rsproj`, copy owned media into the project folder, and create hidden sidecar `.thumbnail.png` from the main screen video. Thumbnail failures may be logged without corrupting the project save.
 - The recorder import flow should open the in-app project library modal first. That modal lists direct child folders under the configured RecordSaaS root that contain `project.rsproj`, shows `.thumbnail.png` when present, and uses file/folder timestamp plus folder size fallbacks for legacy projects.
 - Manual `.rsproj` import through the OS file picker remains available from the import modal and continues to use the existing Explorer/Finder flow.
@@ -393,8 +401,9 @@ Motion:
 Functional baseline for current roadmap item:
 - Media tab exists with categories `Audio`, `Image`, `Video`.
 - Audio path supports import, timeline insertion, playback preview, and export integration.
+- Windows computer audio is captured through the bundled native WASAPI loopback helper and streamed directly into the configured compressed `systemAudioPath` (`AAC` or `MP3`); Linux captures through FFmpeg PulseAudio/PipeWire monitor sources directly into the configured compressed output, and preview/export reuse the same simple full-length source flow.
 - One media-audio clip per project baseline.
-- Mix includes recording track plus media audio with lane-aware region behavior.
+- Mix includes recording track, optional computer audio, and media audio with lane-aware media/recording region behavior.
 - `change-sound` supports local recording-track control (volume, mute, fade).
 
 Out of scope baseline for this item:

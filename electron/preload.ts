@@ -12,6 +12,7 @@ type ProjectPayload = {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  systemAudioPath?: string
   originalProjectPath?: string
 }
 
@@ -95,6 +96,12 @@ type ListSavedProjectsResult = {
 type SaveProjectOptions = {
   thumbnailSourcePath?: string | null
   thumbnailTimeSeconds?: number | null
+  confirmReplaceExisting?: boolean
+}
+type SaveProjectResult = {
+  success: boolean
+  canceled?: boolean
+  error?: string
 }
 // Payload received from process
 type ProgressPayload = {
@@ -209,9 +216,12 @@ export const electronAPI = {
     displayId?: number
     webcam?: { deviceId: string; deviceLabel: string; index: number }
     mic?: { deviceId: string; deviceLabel: string; index: number }
+    computerAudioEnabled?: boolean
     recordingProfile?: unknown
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
   selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
+  getComputerAudioSupport: (): Promise<{ supported: boolean; reason?: string }> =>
+    ipcRenderer.invoke('recording:get-computer-audio-support'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
   loadVideoFromFile: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:load-from-file'),
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),
@@ -325,7 +335,7 @@ export const electronAPI = {
     projectData: string,
     mediaFiles: string[],
     options: SaveProjectOptions = {},
-  ): Promise<{ success: boolean; error?: string }> => {
+  ): Promise<SaveProjectResult> => {
     return ipcRenderer.invoke('fs:saveProject', { targetFolder, projectData, mediaFiles, ...options })
   },
 

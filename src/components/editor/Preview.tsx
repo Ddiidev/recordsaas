@@ -42,6 +42,9 @@ export const Preview = memo(
     const {
       videoUrl,
       audioUrl,
+      systemAudioUrl,
+      systemAudioVolume,
+      systemAudioMuted,
       mediaAudioClip,
       mediaAudioRegions,
       changeSoundRegions,
@@ -77,6 +80,9 @@ export const Preview = memo(
       useShallow((state) => ({
         videoUrl: state.videoUrl,
         audioUrl: state.audioUrl,
+        systemAudioUrl: state.systemAudioUrl,
+        systemAudioVolume: state.systemAudioVolume,
+        systemAudioMuted: state.systemAudioMuted,
         mediaAudioClip: state.mediaAudioClip,
         mediaAudioRegions: state.mediaAudioRegions,
         changeSoundRegions: state.changeSoundRegions,
@@ -118,12 +124,13 @@ export const Preview = memo(
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
     const recordingAudioRef = useRef<HTMLAudioElement>(null)
+    const systemAudioRef = useRef<HTMLAudioElement>(null)
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
     const lastUiSyncAtRef = useRef(0)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
-    const hasSeparateAudioTracks = !!audioUrl || !!mediaAudioClip?.url
+    const hasSeparateAudioTracks = !!audioUrl || !!systemAudioUrl || !!mediaAudioClip?.url
 
     const resolveRecordingForTime = useCallback(
       (playbackTime: number) => {
@@ -368,6 +375,7 @@ export const Preview = memo(
       if (!video) return
       const webcamVideo = webcamVideoRef.current
       const recordingAudio = recordingAudioRef.current
+      const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
       if (isPlaying) {
         video.play().catch(console.error)
@@ -385,6 +393,14 @@ export const Preview = memo(
             recordingAudio.pause()
             recordingAudio.currentTime = 0
           }
+        }
+        if (systemAudio) {
+          if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
+            systemAudio.currentTime = video.currentTime
+          }
+          systemAudio.playbackRate = video.playbackRate
+          systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+          systemAudio.play().catch(console.error)
         }
         if (mediaAudio) {
           const resolvedMedia = resolveMediaForTime(video.currentTime)
@@ -404,14 +420,16 @@ export const Preview = memo(
         video.pause()
         webcamVideo?.pause()
         recordingAudio?.pause()
+        systemAudio?.pause()
         mediaAudio?.pause()
         // When pausing, reset playbackRate to 1 so scrubbing is at normal speed
         video.playbackRate = 1
         if (webcamVideo) webcamVideo.playbackRate = 1
         if (recordingAudio) recordingAudio.playbackRate = 1
+        if (systemAudio) systemAudio.playbackRate = 1
         if (mediaAudio) mediaAudio.playbackRate = 1
       }
-    }, [isPlaying, resolveRecordingForTime, resolveMediaForTime, videoRef, volume])
+    }, [isPlaying, resolveRecordingForTime, resolveMediaForTime, videoRef, volume, systemAudioVolume])
 
     useEffect(() => {
       const video = videoRef.current
@@ -433,6 +451,21 @@ export const Preview = memo(
         recordingAudio.pause()
       }
     }, [audioUrl, isPlaying, resolveRecordingForTime, videoRef, volume])
+
+    useEffect(() => {
+      const video = videoRef.current
+      const systemAudio = systemAudioRef.current
+      if (!video || !systemAudio) return
+
+      if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
+        systemAudio.currentTime = video.currentTime
+      }
+      systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+      systemAudio.muted = isMuted || systemAudioMuted
+      if (!isPlaying) {
+        systemAudio.pause()
+      }
+    }, [systemAudioUrl, isPlaying, videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
 
     useEffect(() => {
       const video = videoRef.current
@@ -459,6 +492,7 @@ export const Preview = memo(
     useEffect(() => {
       const video = videoRef.current
       const recordingAudio = recordingAudioRef.current
+      const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
       if (video) {
         // Video is always muted when we have a separate audio track
@@ -476,18 +510,33 @@ export const Preview = memo(
         recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
         recordingAudio.muted = isMuted
       }
+      if (systemAudio) {
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+        systemAudio.muted = isMuted || systemAudioMuted
+      }
       if (mediaAudio) {
         const playbackTime = video?.currentTime ?? currentTime
         const resolvedMedia = resolveMediaForTime(playbackTime)
         mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
         mediaAudio.muted = isMuted
       }
-    }, [volume, isMuted, videoRef, hasSeparateAudioTracks, currentTime, resolveRecordingForTime, resolveMediaForTime])
+    }, [
+      volume,
+      isMuted,
+      videoRef,
+      hasSeparateAudioTracks,
+      currentTime,
+      resolveRecordingForTime,
+      resolveMediaForTime,
+      systemAudioVolume,
+      systemAudioMuted,
+    ])
 
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
       const video = videoRef.current
       const recordingAudio = recordingAudioRef.current
+      const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
       let playbackTime = video.currentTime
 
@@ -507,6 +556,9 @@ export const Preview = memo(
               recordingAudio.pause()
               recordingAudio.currentTime = 0
             }
+          }
+          if (systemAudio) {
+            systemAudio.currentTime = playbackTime
           }
           if (mediaAudio) {
             if (resolvedMedia.isActive) {
@@ -538,6 +590,10 @@ export const Preview = memo(
           recordingAudio.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
           recordingAudio.pause()
         }
+        if (systemAudio) {
+          systemAudio.currentTime = playbackTime
+          systemAudio.pause()
+        }
         if (mediaAudio) {
           const resolvedMedia = resolveMediaForTime(playbackTime)
           mediaAudio.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
@@ -567,6 +623,16 @@ export const Preview = memo(
             recordingAudio.pause()
           }
           recordingAudio.currentTime = 0
+        }
+      }
+      if (systemAudio) {
+        if (Math.abs(systemAudio.currentTime - playbackTime) > 0.1) {
+          systemAudio.currentTime = playbackTime
+        }
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+        systemAudio.playbackRate = video.playbackRate
+        if (isPlaying && systemAudio.paused) {
+          systemAudio.play().catch(console.error)
         }
       }
       if (mediaAudio) {
@@ -618,6 +684,10 @@ export const Preview = memo(
       handleMediaLoadError('Recording audio', recordingAudioRef.current)
     }, [handleMediaLoadError])
 
+    const handleSystemAudioError = useCallback(() => {
+      handleMediaLoadError('Computer audio', systemAudioRef.current)
+    }, [handleMediaLoadError])
+
     const handleMediaAudioError = useCallback(() => {
       handleMediaLoadError('Media audio', mediaAudioRef.current)
     }, [handleMediaLoadError])
@@ -633,7 +703,7 @@ export const Preview = memo(
 
         // Only check video for audio tracks if we don't have a separate audio file
         const store = useEditorStore.getState()
-        if (!store.audioUrl) {
+        if (!store.audioUrl && !store.systemAudioUrl) {
           // Check for audio tracks using type-safe checks
           const hasAudioTracks = video.audioTracks && video.audioTracks.length > 0
           const hasMozAudio = 'mozHasAudio' in video && video.mozHasAudio === true
@@ -688,6 +758,22 @@ export const Preview = memo(
         }
       }
     }, [resolveRecordingForTime, videoRef, volume])
+
+    const handleSystemAudioLoadedMetadata = useCallback(() => {
+      const video = videoRef.current
+      const systemAudio = systemAudioRef.current
+      if (video && systemAudio) {
+        console.info(`[Preview] Computer audio metadata loaded: duration=${systemAudio.duration} src=${systemAudio.currentSrc}`)
+        systemAudio.currentTime = video.currentTime
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+        systemAudio.muted = isMuted || systemAudioMuted
+        if (video.paused) {
+          systemAudio.pause()
+        } else {
+          systemAudio.play().catch(console.error)
+        }
+      }
+    }, [videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
@@ -761,6 +847,9 @@ export const Preview = memo(
         const resolvedRecording = resolveRecordingForTime(value)
         recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
       }
+      if (systemAudioRef.current) {
+        systemAudioRef.current.currentTime = value
+      }
       if (mediaAudioRef.current) {
         const resolvedMedia = resolveMediaForTime(value)
         mediaAudioRef.current.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
@@ -785,6 +874,9 @@ export const Preview = memo(
       if (recordingAudioRef.current) {
         const resolvedRecording = resolveRecordingForTime(rewindTime)
         recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
+      }
+      if (systemAudioRef.current) {
+        systemAudioRef.current.currentTime = rewindTime
       }
       if (mediaAudioRef.current) {
         const resolvedMedia = resolveMediaForTime(rewindTime)
@@ -857,6 +949,15 @@ export const Preview = memo(
             src={audioUrl}
             onLoadedMetadata={handleRecordingAudioLoadedMetadata}
             onError={handleRecordingAudioError}
+            style={{ display: 'none' }}
+          />
+        )}
+        {systemAudioUrl && (
+          <audio
+            ref={systemAudioRef}
+            src={systemAudioUrl}
+            onLoadedMetadata={handleSystemAudioLoadedMetadata}
+            onError={handleSystemAudioError}
             style={{ display: 'none' }}
           />
         )}

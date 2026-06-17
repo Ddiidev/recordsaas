@@ -8,6 +8,7 @@ import {
   importProjectFromPath,
   selectRecordingArea,
   analyzeRecordingCapability,
+  getComputerAudioSupport,
 } from '../../features/recording-manager'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -17,6 +18,10 @@ export function handleStartRecording(_event: any, options: any) {
 
 export function handleAnalyzeRecordingCapability() {
   return analyzeRecordingCapability()
+}
+
+export function handleGetComputerAudioSupport() {
+  return getComputerAudioSupport()
 }
 
 export function handleLoadVideoFromFile() {

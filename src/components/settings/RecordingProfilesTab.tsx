@@ -6,6 +6,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/
 import { InfoCircle, Loader2, Plus, Trash } from '@icons'
 import { cn } from '../../lib/utils'
 import {
+  AUDIO_BITRATE_OPTIONS,
+  AUDIO_CODEC_LABELS,
+  AUDIO_CODEC_OPTIONS,
+  AUDIO_SAMPLE_RATE_OPTIONS,
   NATIVE_RECORDING_ANALYSIS_SETTING_KEY,
   NATIVE_RECORDING_PROFILE_ID,
   RECORDING_PROFILES_SETTING_KEY,
@@ -30,15 +34,15 @@ const createCustomProfile = (): RecordingProfile => ({
   screenFps: 60,
   webcamResolution: 'native',
   webcamFps: 'synced',
+  audioCodec: 'aac',
+  audioBitrateKbps: 192,
+  audioSampleRate: 48000,
 })
 
 const ANALYSIS_DURATION_SECONDS = 5
 
 const persistProfiles = (profiles: RecordingProfile[]) => {
-  window.electronAPI.setSetting(
-    RECORDING_PROFILES_SETTING_KEY,
-    profiles.filter((profile) => profile.id !== NATIVE_RECORDING_PROFILE_ID && !profile.isNative),
-  )
+  window.electronAPI.setSetting(RECORDING_PROFILES_SETTING_KEY, profiles)
 }
 
 export function RecordingProfilesTab({
@@ -91,10 +95,11 @@ export function RecordingProfilesTab({
   }, [])
 
   const selectedProfile = useMemo(
-    () => profiles.find((profile) => profile.id === selectedProfileId) || profiles[0],
+    () => profiles.find((profile) => profile.id === selectedProfileId) ?? profiles[0] ?? createNativeRecordingProfile(),
     [profiles, selectedProfileId],
   )
   const isNativeProfile = selectedProfile.id === NATIVE_RECORDING_PROFILE_ID || selectedProfile.isNative
+  const isAudioSettingsEditable = isNativeProfile || isEditing
 
   useEffect(() => {
     if (!isAnalyzing) {
@@ -125,12 +130,11 @@ export function RecordingProfilesTab({
 
   const updateSelectedProfile = useCallback(
     (patch: Partial<RecordingProfile>) => {
-      if (isNativeProfile) return
       updateProfiles((current) =>
         current.map((profile) => (profile.id === selectedProfile.id ? { ...profile, ...patch } : profile)),
       )
     },
-    [isNativeProfile, selectedProfile.id, updateProfiles],
+    [selectedProfile.id, updateProfiles],
   )
 
   const handleAddProfile = useCallback(() => {
@@ -164,21 +168,21 @@ export function RecordingProfilesTab({
       setAnalysis(result)
       window.electronAPI.setSetting(NATIVE_RECORDING_ANALYSIS_SETTING_KEY, result)
       setProfiles((current) => {
+        const currentNativeProfile = current.find((profile) => profile.id === NATIVE_RECORDING_PROFILE_ID)
         const next = current.map((profile) =>
-          profile.id === NATIVE_RECORDING_PROFILE_ID ? createNativeRecordingProfile(result.recommendedFps) : profile,
+          profile.id === NATIVE_RECORDING_PROFILE_ID
+            ? createNativeRecordingProfile(result.recommendedFps, currentNativeProfile)
+            : profile,
         )
         persistProfiles(next)
         return next
       })
-      if (!isNativeProfile) {
-        updateSelectedProfile({ screenFps: result.recommendedFps })
-      }
     } catch (error) {
       console.error('Failed to analyze recording capability:', error)
     } finally {
       setIsAnalyzing(false)
     }
-  }, [isNativeProfile, updateSelectedProfile])
+  }, [])
 
   useEffect(() => {
     if (!isLoaded || analyzeRequestId <= 0 || handledAnalyzeRequestIdRef.current === analyzeRequestId) return
@@ -202,7 +206,9 @@ export function RecordingProfilesTab({
         <div className="mb-6 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Recording Profiles</h2>
-            <p className="text-sm text-muted-foreground">Control capture resolution and FPS before recording starts.</p>
+            <p className="text-sm text-muted-foreground">
+              Control capture resolution, FPS, and audio compression before recording starts.
+            </p>
           </div>
           <Button onClick={handleAddProfile} size="sm">
             <Plus className="mr-2 h-4 w-4" />
@@ -240,7 +246,8 @@ export function RecordingProfilesTab({
                 <p className="mt-1 text-sm text-muted-foreground">
                   Uses the selected screen's native resolution. Screen FPS is selected by the performance analysis tool,
                   targeting 60fps when the PC can sustain it and falling back to 30fps when needed. Webcam stays at
-                  30fps and requests the same capture resolution as the selected screen or area.
+                  30fps and requests the same capture resolution as the selected screen or area. Audio compression can
+                  still be customized below.
                 </p>
               </div>
             )}
@@ -272,7 +279,9 @@ export function RecordingProfilesTab({
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">{selectedProfile.name}</h3>
                   <p className="text-sm text-muted-foreground">
-                    {isNativeProfile ? 'This profile is managed by analysis.' : 'Edit the selected recording profile.'}
+                    {isNativeProfile
+                      ? 'Video settings are managed by analysis. Audio settings below remain editable.'
+                      : 'Edit the selected recording profile.'}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -397,6 +406,108 @@ export function RecordingProfilesTab({
                       {WEBCAM_FPS_OPTIONS.map((fps) => (
                         <SelectItem key={fps} value={String(fps)}>
                           {fps === 'synced' ? 'Synchronized' : `${fps}fps`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                <div className="my-2 border-t border-border/70 pt-4">
+                  <div className="mb-3">
+                    <h4 className="text-sm font-semibold text-foreground">Audio</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Controls recorded microphone audio and computer audio compression.
+                    </p>
+                  </div>
+                </div>
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center gap-1">
+                      Format
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+                            <InfoCircle className="h-4 w-4" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          AAC usually gives better quality per MB. MP3 is useful for compatibility.
+                        </TooltipContent>
+                      </Tooltip>
+                    </span>
+                  }
+                >
+                  <Select
+                    value={selectedProfile.audioCodec}
+                    onValueChange={(value) => updateSelectedProfile({ audioCodec: value as RecordingProfile['audioCodec'] })}
+                    disabled={!isAudioSettingsEditable}
+                  >
+                    <SelectTrigger className="h-10 bg-background/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AUDIO_CODEC_OPTIONS.map((codec) => (
+                        <SelectItem key={codec} value={codec}>
+                          {AUDIO_CODEC_LABELS[codec]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                <Field label="Bitrate">
+                  <Select
+                    value={String(selectedProfile.audioBitrateKbps)}
+                    onValueChange={(value) =>
+                      updateSelectedProfile({ audioBitrateKbps: Number(value) as RecordingProfile['audioBitrateKbps'] })
+                    }
+                    disabled={!isAudioSettingsEditable}
+                  >
+                    <SelectTrigger className="h-10 bg-background/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AUDIO_BITRATE_OPTIONS.map((bitrate) => (
+                        <SelectItem key={bitrate} value={String(bitrate)}>
+                          {bitrate} kbps
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                <Field
+                  label={
+                    <span className="inline-flex items-center gap-1">
+                      Sample rate
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex h-5 w-5 items-center justify-center text-muted-foreground">
+                            <InfoCircle className="h-4 w-4" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          48 kHz is recommended for screen recordings and video workflows.
+                        </TooltipContent>
+                      </Tooltip>
+                    </span>
+                  }
+                >
+                  <Select
+                    value={String(selectedProfile.audioSampleRate)}
+                    onValueChange={(value) =>
+                      updateSelectedProfile({ audioSampleRate: Number(value) as RecordingProfile['audioSampleRate'] })
+                    }
+                    disabled={!isAudioSettingsEditable}
+                  >
+                    <SelectTrigger className="h-10 bg-background/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AUDIO_SAMPLE_RATE_OPTIONS.map((sampleRate) => (
+                        <SelectItem key={sampleRate} value={String(sampleRate)}>
+                          {sampleRate === 48000 ? '48 kHz' : '44.1 kHz'}
                         </SelectItem>
                       ))}
                     </SelectContent>

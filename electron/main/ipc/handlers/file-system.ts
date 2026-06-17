@@ -5,7 +5,7 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Dirent, Stats } from 'node:fs'
-import { app } from 'electron'
+import { app, dialog, IpcMainInvokeEvent } from 'electron'
 import Store from 'electron-store'
 import { normalizeMediaPath, toMediaUrl } from '../../lib/media-url'
 import { getFFmpegPath } from '../../lib/utils'
@@ -84,6 +84,7 @@ type SaveProjectPayload = {
   mediaFiles: string[]
   thumbnailSourcePath?: string | null
   thumbnailTimeSeconds?: number | null
+  confirmReplaceExisting?: boolean
 }
 
 const resolveFilePath = (filePath: string): string => normalizeMediaPath(filePath) || filePath
@@ -169,6 +170,29 @@ const pathExists = async (filePath: string): Promise<boolean> => {
   } catch {
     return false
   }
+}
+
+const isInsideRecordSaaSRoot = (targetFolder: string): boolean => {
+  const rootPath = path.resolve(getConfiguredRecordSaaSRootPath())
+  const resolvedTarget = path.resolve(resolveFilePath(targetFolder))
+  const relativePath = path.relative(rootPath, resolvedTarget)
+
+  return Boolean(relativePath) && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+}
+
+const confirmReplaceExistingProject = async (targetFolder: string): Promise<boolean> => {
+  const result = await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Project already exists',
+    message: `A project named "${path.basename(targetFolder)}" already exists.`,
+    detail: `Click "Substituir" to delete the existing project folder and save the new project there.\n\n${targetFolder}`,
+    buttons: ['OK', 'Substituir'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  })
+
+  return result.response === 1
 }
 
 const getDirectorySize = async (directoryPath: string): Promise<number> => {
@@ -443,11 +467,25 @@ export function handleResolveExportOutputPath(
 }
 
 export async function handleSaveProject(
-  _event: unknown,
+  _event: IpcMainInvokeEvent,
   payload: SaveProjectPayload,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; canceled?: boolean; error?: string }> {
   try {
-    const { targetFolder, projectData, mediaFiles, thumbnailSourcePath, thumbnailTimeSeconds } = payload
+    const { projectData, mediaFiles, thumbnailSourcePath, thumbnailTimeSeconds, confirmReplaceExisting } = payload
+    const targetFolder = path.resolve(resolveFilePath(payload.targetFolder))
+
+    if (confirmReplaceExisting && (await pathExists(targetFolder))) {
+      if (!isInsideRecordSaaSRoot(targetFolder)) {
+        return { success: false, error: 'Cannot replace a project folder outside the RecordSaaS root.' }
+      }
+
+      const shouldReplace = await confirmReplaceExistingProject(targetFolder)
+      if (!shouldReplace) {
+        return { success: false, canceled: true }
+      }
+
+      await fs.rm(targetFolder, { recursive: true, force: true })
+    }
 
     // 1. Ensure target folder exists
     await fs.mkdir(targetFolder, { recursive: true })

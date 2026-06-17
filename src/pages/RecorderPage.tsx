@@ -17,9 +17,11 @@ import {
   Square,
   Settings,
   UserCircle,
+  Volume,
 } from '@icons'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../components/ui/select'
+import { Switch } from '../components/ui/switch'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
 import { ImportProjectModal } from '../components/recorder/ImportProjectModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
@@ -79,6 +81,9 @@ export function RecorderPage() {
   const [selectedDisplayId, setSelectedDisplayId] = useState<string>('')
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
+  const [computerAudioEnabled, setComputerAudioEnabled] = useState(false)
+  const [computerAudioSupported, setComputerAudioSupported] = useState(false)
+  const [computerAudioSupportReason, setComputerAudioSupportReason] = useState<string | null>(null)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
   const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
@@ -115,10 +120,17 @@ export function RecorderPage() {
     }
     return 'Not logged in'
   }, [authSession.isAuthenticated, authSession.user?.email, authSession.user?.name])
+  const computerAudioTooltip = useMemo(() => {
+    if (platform === 'darwin') {
+      return 'Ainda não implementado no macOS. Logo mais será implementado.'
+    }
+
+    return computerAudioSupportReason || 'Computer audio capture is not available right now.'
+  }, [computerAudioSupportReason, platform])
   const selectedRecordingProfile = useMemo(
     () =>
-      recordingProfiles.find((profile) => profile.id === selectedRecordingProfileId) ||
-      recordingProfiles[0] ||
+      recordingProfiles.find((profile) => profile.id === selectedRecordingProfileId) ??
+      recordingProfiles[0] ??
       normalizeRecordingProfiles(null)[0],
     [recordingProfiles, selectedRecordingProfileId],
   )
@@ -228,17 +240,29 @@ export function RecorderPage() {
 
     const initialize = async () => {
       try {
-        const [savedWebcamId, savedMicId, savedCursorScale, savedPreparationCountdown, fetchedDisplays] =
-          await Promise.all([
-            window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
-            window.electronAPI.getSetting<string>('recorder.selectedMicId'),
-            window.electronAPI.getSetting<number>('recorder.cursorScale'),
-            window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
-            window.electronAPI.getDisplays(),
-          ])
+        const [
+          savedWebcamId,
+          savedMicId,
+          savedComputerAudioEnabled,
+          computerAudioSupport,
+          savedCursorScale,
+          savedPreparationCountdown,
+          fetchedDisplays,
+        ] = await Promise.all([
+          window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
+          window.electronAPI.getSetting<string>('recorder.selectedMicId'),
+          window.electronAPI.getSetting<boolean>('recorder.computerAudioEnabled'),
+          window.electronAPI.getComputerAudioSupport(),
+          window.electronAPI.getSetting<number>('recorder.cursorScale'),
+          window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
+          window.electronAPI.getDisplays(),
+        ])
 
         setSelectedWebcamId(savedWebcamId || 'none')
         setSelectedMicId(savedMicId || 'none')
+        setComputerAudioSupported(computerAudioSupport.supported)
+        setComputerAudioSupportReason(computerAudioSupport.reason || null)
+        setComputerAudioEnabled(computerAudioSupport.supported && savedComputerAudioEnabled === true)
 
         if (typeof savedPreparationCountdown === 'number' && isPreparationCountdownOption(savedPreparationCountdown)) {
           setPreparationCountdownSeconds(savedPreparationCountdown)
@@ -511,6 +535,7 @@ export function RecorderPage() {
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
         webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
         mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
+        computerAudioEnabled,
         recordingProfile: selectedRecordingProfile,
       })
 
@@ -606,6 +631,12 @@ export function RecorderPage() {
     window.electronAPI.setSetting(key, id)
   }
 
+  const handleComputerAudioChange = (checked: boolean) => {
+    const enabled = computerAudioSupported && checked
+    setComputerAudioEnabled(enabled)
+    window.electronAPI.setSetting('recorder.computerAudioEnabled', enabled)
+  }
+
   const handleProfileChange = (id: string) => {
     if (id === CREATE_RECORDING_PROFILE_ACTION) {
       setRecordingProfileCreateRequestId((current) => current + 1)
@@ -617,6 +648,31 @@ export function RecorderPage() {
     setSelectedRecordingProfileId(id)
     window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
+
+  const computerAudioControl = (
+    <div
+      className={cn(
+        'flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3',
+        !computerAudioSupported && 'opacity-70',
+      )}
+      style={{ WebkitAppRegion: 'no-drag' }}
+    >
+      <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-6 w-6 shrink-0">
+        <Volume size={14} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+      </IconShell>
+      <div className="flex flex-col leading-none">
+        <span className="text-[11px] font-medium text-foreground">PC audio</span>
+        <span className="text-[10px] text-muted-foreground">
+          {computerAudioEnabled ? 'Included' : computerAudioSupported ? 'Off' : 'Unsupported'}
+        </span>
+      </div>
+      <Switch
+        checked={computerAudioEnabled}
+        onCheckedChange={handleComputerAudioChange}
+        disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
+      />
+    </div>
+  )
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -783,6 +839,17 @@ export function RecorderPage() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                {!computerAudioSupported ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>{computerAudioControl}</TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                      {computerAudioTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  computerAudioControl
+                )}
 
                 <Select
                   value={selectedRecordingProfile.id}

@@ -116,13 +116,14 @@ export function EditorPage() {
           videoPath,
           metadataPath,
           audioPath,
+          systemAudioPath,
           webcamVideoPath,
           mediaAudioClip,
           originalProjectPath,
           duration: projectDuration,
         } = storeState
 
-        const mediaFiles = [videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip?.path]
+        const mediaFiles = [videoPath, metadataPath, audioPath, systemAudioPath, webcamVideoPath, mediaAudioClip?.path]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
 
@@ -150,6 +151,11 @@ export function EditorPage() {
         if (stateToSave.videoPath) stateToSave.videoPath = getMediaPathBasename(stateToSave.videoPath)
         if (stateToSave.metadataPath) stateToSave.metadataPath = getMediaPathBasename(stateToSave.metadataPath)
         if (stateToSave.audioPath) stateToSave.audioPath = getMediaPathBasename(stateToSave.audioPath)
+        if (stateToSave.systemAudioPath) {
+          const serializedSystemAudioPath = getMediaPathBasename(stateToSave.systemAudioPath)
+          stateToSave.systemAudioPath = serializedSystemAudioPath
+          stateToSave.systemAudioUrl = `media://${serializedSystemAudioPath}`
+        }
         if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getMediaPathBasename(stateToSave.webcamVideoPath)
         if (stateToSave.mediaAudioClip?.path) {
           const serializedMediaPath = getMediaPathBasename(stateToSave.mediaAudioClip.path)
@@ -165,6 +171,7 @@ export function EditorPage() {
         const saveResult = await window.electronAPI.saveProject(targetFolder, projectData, filesToExport, {
           thumbnailSourcePath: normalizeMediaPath(videoPath) || null,
           thumbnailTimeSeconds: getProjectThumbnailTimeSeconds(projectDuration),
+          confirmReplaceExisting: !originalProjectPath,
         })
 
         if (saveResult.success) {
@@ -173,6 +180,8 @@ export function EditorPage() {
             window.electronAPI.showItemInFolder(targetFolder)
           }
           setProjectNamePopupOpen(false)
+        } else if (saveResult.canceled) {
+          setProjectNamePopupOpen(!originalProjectPath)
         } else {
           alert(`Failed to export project: ${saveResult.error}`)
         }
@@ -303,6 +312,7 @@ export function EditorPage() {
         payload.metadataPath,
         payload.webcamVideoPath,
         payload.audioPath,
+        payload.systemAudioPath,
         payload.originalProjectPath,
       ].join('\0')
       if (lastProjectPayloadKeyRef.current === payloadKey) {

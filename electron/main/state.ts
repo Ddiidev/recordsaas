@@ -18,11 +18,16 @@ export interface RecordingSession {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  systemAudioPath?: string
+  systemAudioTempPath?: string
   mediaAudioPath?: string
   recordingGeometry: RecordingGeometry
   scaleFactor: number // Display scale factor (for Windows DPI scaling)
   screenCaptureBackend?: string
   requestedScreenFps?: number
+  recordingAudioCodec?: 'aac' | 'mp3'
+  recordingAudioBitrateKbps?: 128 | 192 | 320
+  recordingAudioSampleRate?: 44100 | 48000
   originalProjectPath?: string
 }
 
@@ -43,6 +48,7 @@ interface AppState {
   // Processes & Streams
   ffmpegProcess: ChildProcessWithoutNullStreams | null
   ffmpegProcesses: ChildProcessWithoutNullStreams[]
+  systemAudioHelperProcess: ChildProcessWithoutNullStreams | null
   mouseTracker: IMouseTracker | null
 
   // In-memory recording data
@@ -71,6 +77,7 @@ export const appState: AppState = {
   exportTray: null,
   ffmpegProcess: null,
   ffmpegProcesses: [],
+  systemAudioHelperProcess: null,
   mouseTracker: null,
   recordedMouseEvents: [],
   runtimeCursorImageMap: new Map(),

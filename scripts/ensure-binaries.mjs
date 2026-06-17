@@ -10,14 +10,19 @@ const projectRoot = path.resolve(__dirname, '..')
 const assetsRepo = process.env.RECORDSAAS_BINARY_REPO || 'Ddiidev/recordsaas-assets'
 const configuredReleaseTag = process.env.RECORDSAAS_BINARY_RELEASE_TAG
 const configuredBaseUrl = process.env.RECORDSAAS_BINARY_BASE_URL
+const forceDotnetHelperBuild = process.env.RECORDSAAS_FORCE_DOTNET_HELPER_BUILD === '1'
 const configuredGithubToken =
   process.env.RECORDSAAS_BINARY_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
+const windowsSystemAudioProjectPath = path.join(projectRoot, 'native', 'RecordSaaS.SystemAudio', 'RecordSaaS.SystemAudio.csproj')
+const windowsSystemAudioProjectDir = path.dirname(windowsSystemAudioProjectPath)
+const windowsSystemAudioOutputPath = path.join(projectRoot, 'binaries', 'windows', 'recordsaas-system-audio.exe')
 
 const platformTargets = {
   linux: {
     assetName: 'ffmpeg',
     outputPath: path.join(projectRoot, 'binaries', 'linux', 'ffmpeg'),
     needsExecutableBit: true,
+    requiredDemuxer: 'pulse',
   },
   win32: {
     assetName: 'ffmpeg.exe',
@@ -47,48 +52,167 @@ async function ensureExecutableBit(filePath) {
   await fs.chmod(filePath, 0o755)
 }
 
-function probeBinary(filePath) {
-  return spawnSync(filePath, ['-hide_banner', '-version'], {
+async function getLatestHelperSourceMTimeMs(directoryPath) {
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true })
+  let latestMTimeMs = 0
+
+  for (const entry of entries) {
+    if (entry.name === 'bin' || entry.name === 'obj') {
+      continue
+    }
+
+    const entryPath = path.join(directoryPath, entry.name)
+    const stats = await fs.stat(entryPath)
+    if (stats.isDirectory()) {
+      latestMTimeMs = Math.max(latestMTimeMs, await getLatestHelperSourceMTimeMs(entryPath))
+    } else if (stats.isFile()) {
+      latestMTimeMs = Math.max(latestMTimeMs, stats.mtimeMs)
+    }
+  }
+
+  return latestMTimeMs
+}
+
+async function ensureWindowsSystemAudioHelper() {
+  if (process.platform !== 'win32') {
+    return
+  }
+
+  await fs.mkdir(path.dirname(windowsSystemAudioOutputPath), { recursive: true })
+
+  if (!forceDotnetHelperBuild) {
+    try {
+      const [sourceMTimeMs, outputStats] = await Promise.all([
+        getLatestHelperSourceMTimeMs(windowsSystemAudioProjectDir),
+        fs.stat(windowsSystemAudioOutputPath),
+      ])
+
+      if (outputStats.isFile() && outputStats.size > 0 && outputStats.mtimeMs >= sourceMTimeMs) {
+        const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
+        if (!probeResult.error && probeResult.status === 0) {
+          console.log(`[setup:binaries] Reusing existing Windows system-audio helper at ${windowsSystemAudioOutputPath}`)
+          return
+        }
+      }
+    } catch {
+      // Missing or stale helper falls through to publish.
+    }
+  }
+
+  if (forceDotnetHelperBuild) {
+    console.log('[setup:binaries] Forcing rebuild of Windows system-audio helper.')
+  } else {
+    console.log('[setup:binaries] Building Windows system-audio helper because the existing binary is missing, stale, or invalid.')
+  }
+
+  const publishResult = spawnSync(
+    'dotnet',
+    [
+      'publish',
+      windowsSystemAudioProjectPath,
+      '-c',
+      'Release',
+      '-r',
+      'win-x64',
+      '--self-contained',
+      'true',
+      '/p:PublishSingleFile=true',
+      '/p:EnableCompressionInSingleFile=true',
+      '/p:PublishTrimmed=false',
+      '-o',
+      path.dirname(windowsSystemAudioOutputPath),
+    ],
+    {
+      encoding: 'utf-8',
+      timeout: 300000,
+    },
+  )
+
+  if (publishResult.error) {
+    throw publishResult.error
+  }
+
+  if (publishResult.status !== 0) {
+    throw new Error((publishResult.stderr || publishResult.stdout || `dotnet publish failed with code ${publishResult.status}`).trim())
+  }
+
+  const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
+  if (probeResult.error || probeResult.status !== 0) {
+    throw new Error(
+      (probeResult.stderr || probeResult.stdout || probeResult.error?.message || 'System audio helper probe failed.').trim(),
+    )
+  }
+
+  console.log(`[setup:binaries] Windows system-audio helper ready at ${windowsSystemAudioOutputPath}`)
+}
+
+function probeBinary(filePath, args = ['-hide_banner', '-version']) {
+  return spawnSync(filePath, args, {
     encoding: 'utf-8',
     timeout: 4000,
   })
 }
 
-async function hasUsableBinary(filePath) {
+async function inspectBinary(filePath) {
   try {
     const stats = await fs.stat(filePath)
     if (!stats.isFile() || stats.size <= 0) {
-      return false
+      return { exists: false, runnable: false, versionOk: false, demuxerOk: false, detail: 'file missing or empty' }
     }
   } catch {
-    return false
+    return { exists: false, runnable: false, versionOk: false, demuxerOk: false, detail: 'file missing or empty' }
   }
 
   await ensureExecutableBit(filePath)
 
   const probeResult = probeBinary(filePath)
   if (probeResult.error) {
-    console.warn(`[setup:binaries] Existing binary at ${filePath} is invalid: ${probeResult.error.message}`)
-    return false
-  }
-
-  if (probeResult.status !== 0) {
-    const detail = (probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`).trim()
-    console.warn(`[setup:binaries] Existing binary at ${filePath} is invalid: ${detail}`)
-    return false
-  }
-
-  if (currentTarget.expectedVersionText) {
-    const versionOutput = `${probeResult.stdout || ''}\n${probeResult.stderr || ''}`
-    if (!versionOutput.includes(currentTarget.expectedVersionText)) {
-      console.warn(
-        `[setup:binaries] Existing binary at ${filePath} does not match ${currentTarget.expectedVersionText}. It will be refreshed.`,
-      )
-      return false
+    return {
+      exists: true,
+      runnable: false,
+      versionOk: false,
+      demuxerOk: false,
+      detail: probeResult.error.message,
     }
   }
 
-  return true
+  if (probeResult.status !== 0) {
+    return {
+      exists: true,
+      runnable: false,
+      versionOk: false,
+      demuxerOk: false,
+      detail: (probeResult.stderr || probeResult.stdout || `exit code ${probeResult.status}`).trim(),
+    }
+  }
+
+  let versionOk = true
+  if (currentTarget.expectedVersionText) {
+    const versionOutput = `${probeResult.stdout || ''}\n${probeResult.stderr || ''}`
+    if (!versionOutput.includes(currentTarget.expectedVersionText)) {
+      versionOk = false
+    }
+  }
+
+  let demuxerOk = true
+  let demuxerDetail = ''
+  if (currentTarget.requiredDemuxer) {
+    const demuxerResult = probeBinary(filePath, ['-hide_banner', '-h', `demuxer=${currentTarget.requiredDemuxer}`])
+    const demuxerOutput = `${demuxerResult.stdout || ''}\n${demuxerResult.stderr || ''}`
+
+    if (demuxerResult.error || demuxerResult.status !== 0 || demuxerOutput.includes(`Unknown format '${currentTarget.requiredDemuxer}'`)) {
+      demuxerOk = false
+      demuxerDetail = (demuxerResult.stderr || demuxerResult.stdout || demuxerResult.error?.message || `exit code ${demuxerResult.status}`).trim()
+    }
+  }
+
+  return {
+    exists: true,
+    runnable: true,
+    versionOk,
+    demuxerOk,
+    detail: demuxerDetail,
+  }
 }
 
 async function fetchJson(url) {
@@ -168,9 +292,28 @@ async function downloadAsset(url) {
   return fetch(url, { headers })
 }
 
-if (await hasUsableBinary(currentTarget.outputPath)) {
+const existingBinary = await inspectBinary(currentTarget.outputPath)
+
+if (existingBinary.runnable && existingBinary.versionOk && existingBinary.demuxerOk) {
+  await ensureWindowsSystemAudioHelper()
   console.log(`[setup:binaries] FFmpeg ready at ${currentTarget.outputPath}`)
   process.exit(0)
+}
+
+if (existingBinary.exists && existingBinary.runnable && !existingBinary.versionOk) {
+  console.warn(
+    `[setup:binaries] Existing binary at ${currentTarget.outputPath} does not match ${currentTarget.expectedVersionText}. It will be refreshed.`,
+  )
+}
+
+if (existingBinary.exists && existingBinary.runnable && !existingBinary.demuxerOk) {
+  console.warn(
+    `[setup:binaries] Existing binary at ${currentTarget.outputPath} does not support required demuxer "${currentTarget.requiredDemuxer}": ${existingBinary.detail}`,
+  )
+}
+
+if (existingBinary.exists && !existingBinary.runnable) {
+  console.warn(`[setup:binaries] Existing binary at ${currentTarget.outputPath} is invalid: ${existingBinary.detail}`)
 }
 
 await fs.mkdir(path.dirname(currentTarget.outputPath), { recursive: true })
@@ -205,8 +348,19 @@ const binaryData = Buffer.from(await response.arrayBuffer())
 await fs.writeFile(currentTarget.outputPath, binaryData)
 await ensureExecutableBit(currentTarget.outputPath)
 
-if (!(await hasUsableBinary(currentTarget.outputPath))) {
+const downloadedBinary = await inspectBinary(currentTarget.outputPath)
+
+if (!downloadedBinary.runnable || !downloadedBinary.versionOk) {
   throw new Error(`Downloaded FFmpeg asset is invalid: ${currentTarget.outputPath}`)
 }
 
+if (!downloadedBinary.demuxerOk && currentTarget.requiredDemuxer) {
+  console.warn(
+    `[setup:binaries] Downloaded FFmpeg still lacks required demuxer "${currentTarget.requiredDemuxer}". Continuing without computer-audio support until assets release is updated.`,
+  )
+  console.warn(`[setup:binaries] Demuxer probe detail: ${downloadedBinary.detail}`)
+}
+
 console.log(`[setup:binaries] FFmpeg saved to ${currentTarget.outputPath}`)
+
+await ensureWindowsSystemAudioHelper()

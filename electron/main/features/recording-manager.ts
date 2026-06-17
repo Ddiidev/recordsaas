@@ -8,7 +8,7 @@ import fsPromises from 'node:fs/promises'
 import { cpus } from 'node:os'
 import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
 import { appState } from '../state'
-import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage } from '../lib/utils'
+import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
 import { VITE_PUBLIC } from '../lib/constants'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
@@ -18,6 +18,7 @@ import { createSavingWindow, createSelectionWindow } from '../windows/temporary-
 import type { RecordingSession, RecordingGeometry } from '../state'
 
 const FFMPEG_PATH = getFFmpegPath()
+const WINDOWS_SYSTEM_AUDIO_HELPER_PATH = process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
 
 const getFFmpegVersionLine = (): string | undefined => {
   const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-version'], {
@@ -37,6 +38,7 @@ type ImportedProjectPayload = {
   metadataPath?: string | null
   webcamVideoPath?: string | null
   audioPath?: string | null
+  systemAudioPath?: string | null
   timelineLanes?: Array<{
     id?: string
     name?: string
@@ -108,6 +110,9 @@ type RuntimeProjectMetadata = ImportedProjectPayload & {
 type RecordingResolution = 'native' | 'sd' | 'hd' | 'full-hd' | '2k'
 type RecordingScreenFps = 30 | 60 | 120
 type RecordingWebcamFps = 'synced' | 30 | 60
+type RecordingAudioCodec = 'aac' | 'mp3'
+type RecordingAudioBitrateKbps = 128 | 192 | 320
+type RecordingAudioSampleRate = 44100 | 48000
 type RecordingProfile = {
   id?: string
   name?: string
@@ -116,6 +121,9 @@ type RecordingProfile = {
   screenFps?: RecordingScreenFps
   webcamResolution?: RecordingResolution
   webcamFps?: RecordingWebcamFps
+  audioCodec?: RecordingAudioCodec
+  audioBitrateKbps?: RecordingAudioBitrateKbps
+  audioSampleRate?: RecordingAudioSampleRate
 }
 type RecordingProfileRuntime = {
   isNative: boolean
@@ -123,6 +131,9 @@ type RecordingProfileRuntime = {
   screenFps: RecordingScreenFps
   webcamResolution: RecordingResolution
   webcamFps: RecordingWebcamFps
+  audioCodec: RecordingAudioCodec
+  audioBitrateKbps: RecordingAudioBitrateKbps
+  audioSampleRate: RecordingAudioSampleRate
 }
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
@@ -130,10 +141,19 @@ type RecordingOutputOptions = {
   screenNeedsHwDownload?: boolean
   screenCaptureBackend?: string
 }
-type FfmpegProcessRole = 'main' | 'webcam'
+type FfmpegProcessRole = 'main' | 'webcam' | 'system-audio'
+type ComputerAudioBackend = 'windows-helper' | 'pulse'
 type FfmpegProcessSpec = {
   role: FfmpegProcessRole
   args: string[]
+}
+type WindowsSystemAudioProbe = {
+  deviceName: string
+  sampleRate: number
+  channels: number
+  bitsPerSample: number
+  encoding: string
+  sampleFormat?: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le'
 }
 type SplitRecordingInputArgs = {
   micInputArgs: string[]
@@ -175,6 +195,9 @@ const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
 const RECORDING_CAPABILITY_PROBE_SECONDS = 5
 const RECORDING_CAPABILITY_PROBE_TIMEOUT_MS = 8000
+const ffmpegDemuxerAvailability: Partial<Record<ComputerAudioBackend, boolean | null>> = {
+  pulse: null,
+}
 const WIN32_DSHOW_WEBCAM_THREAD_QUEUE_SIZE = '1024'
 const WIN32_DSHOW_WEBCAM_RTBUF_SIZE = '512M'
 const WEBCAM_RECORDING_ENCODING_CONFIG = {
@@ -233,6 +256,27 @@ const normalizeWebcamFps = (value: unknown, fallback: RecordingWebcamFps): Recor
   return fallback
 }
 
+const normalizeRecordingAudioCodec = (value: unknown, fallback: RecordingAudioCodec): RecordingAudioCodec => {
+  if (value === 'aac' || value === 'mp3') return value
+  return fallback
+}
+
+const normalizeRecordingAudioBitrate = (
+  value: unknown,
+  fallback: RecordingAudioBitrateKbps,
+): RecordingAudioBitrateKbps => {
+  if (value === 128 || value === 192 || value === 320) return value
+  return fallback
+}
+
+const normalizeRecordingAudioSampleRate = (
+  value: unknown,
+  fallback: RecordingAudioSampleRate,
+): RecordingAudioSampleRate => {
+  if (value === 44100 || value === 48000) return value
+  return fallback
+}
+
 const normalizeRecordingResolution = (value: unknown, fallback: RecordingResolution): RecordingResolution => {
   if (value === 'native' || value === 'sd' || value === 'hd' || value === 'full-hd' || value === '2k') return value
   return fallback
@@ -247,6 +291,9 @@ const normalizeRecordingProfile = (value: RecordingProfile | null | undefined): 
       screenFps: normalizeRecordingFps(value?.screenFps, 30),
       webcamResolution: 'native',
       webcamFps: 30,
+      audioCodec: normalizeRecordingAudioCodec(value?.audioCodec, 'aac'),
+      audioBitrateKbps: normalizeRecordingAudioBitrate(value?.audioBitrateKbps, 192),
+      audioSampleRate: normalizeRecordingAudioSampleRate(value?.audioSampleRate, 48000),
     }
   }
 
@@ -256,6 +303,9 @@ const normalizeRecordingProfile = (value: RecordingProfile | null | undefined): 
     screenFps: normalizeRecordingFps(value?.screenFps, 30),
     webcamResolution: normalizeRecordingResolution(value?.webcamResolution, 'native'),
     webcamFps: normalizeWebcamFps(value?.webcamFps, 'synced'),
+    audioCodec: normalizeRecordingAudioCodec(value?.audioCodec, 'aac'),
+    audioBitrateKbps: normalizeRecordingAudioBitrate(value?.audioBitrateKbps, 192),
+    audioSampleRate: normalizeRecordingAudioSampleRate(value?.audioSampleRate, 48000),
   }
 }
 
@@ -589,6 +639,252 @@ function isFFmpegRecordingReadyMessage(message: string): boolean {
   return message.includes('Press [q] to stop') || message.includes('Output #0,') || message.includes('frame=')
 }
 
+function hasFFmpegDemuxer(demuxer: 'pulse'): boolean {
+  const cachedValue = ffmpegDemuxerAvailability[demuxer]
+  if (cachedValue !== null && cachedValue !== undefined) {
+    return cachedValue
+  }
+
+  const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-h', `demuxer=${demuxer}`], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`
+  const isAvailable = result.status === 0 && !output.includes(`Unknown format '${demuxer}'`)
+  ffmpegDemuxerAvailability[demuxer] = isAvailable
+  return isAvailable
+}
+
+function normalizeWindowsSystemAudioSampleFormat(
+  probe: WindowsSystemAudioProbe,
+): 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le' {
+  const sampleFormat = probe.sampleFormat?.toLowerCase()
+  if (
+    sampleFormat === 's16le' ||
+    sampleFormat === 's24le' ||
+    sampleFormat === 's32le' ||
+    sampleFormat === 'f32le' ||
+    sampleFormat === 'f64le'
+  ) {
+    return sampleFormat
+  }
+
+  const encoding = probe.encoding.toLowerCase()
+  if (encoding.includes('float')) {
+    return probe.bitsPerSample >= 64 ? 'f64le' : 'f32le'
+  }
+
+  switch (probe.bitsPerSample) {
+    case 24:
+      return 's24le'
+    case 32:
+      return 's32le'
+    default:
+      return 's16le'
+  }
+}
+
+function probeWindowsSystemAudioHelper():
+  | { supported: true; probe: WindowsSystemAudioProbe }
+  | { supported: false; reason?: string } {
+  const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, ['--probe'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+    windowsHide: true,
+  })
+
+  if (result.error) {
+    return {
+      supported: false,
+      reason: `Windows system-audio helper is unavailable: ${result.error.message}`,
+    }
+  }
+
+  if (result.status !== 0) {
+    return {
+      supported: false,
+      reason:
+        (result.stderr || result.stdout || `Windows system-audio helper exited with code ${result.status}`).trim(),
+    }
+  }
+
+  try {
+    const probe = JSON.parse((result.stdout || result.stderr || '').trim()) as WindowsSystemAudioProbe
+    if (
+      typeof probe.deviceName !== 'string' ||
+      typeof probe.sampleRate !== 'number' ||
+      typeof probe.channels !== 'number' ||
+      typeof probe.bitsPerSample !== 'number' ||
+      typeof probe.encoding !== 'string'
+    ) {
+      throw new Error('Probe did not include a usable PCM format.')
+    }
+
+    return {
+      supported: true,
+      probe: {
+        ...probe,
+        sampleFormat: normalizeWindowsSystemAudioSampleFormat(probe),
+      },
+    }
+  } catch (error) {
+    return {
+      supported: false,
+      reason: `Could not parse Windows system-audio helper probe: ${(error as Error).message}`,
+    }
+  }
+}
+
+function probeLinuxPulseSource(sourceName: string): boolean {
+  const result = spawnSync(
+    FFMPEG_PATH,
+    ['-hide_banner', '-nostdin', '-loglevel', 'error', '-f', 'pulse', '-i', sourceName, '-t', '0.2', '-f', 'null', '-'],
+    {
+      encoding: 'utf-8',
+      timeout: 4000,
+    },
+  )
+
+  if (result.error) {
+    log.warn(`[LinuxAudio] Pulse probe failed for source "${sourceName}":`, result.error)
+    return false
+  }
+
+  if (result.status === 0) {
+    log.info(`[LinuxAudio] Using PulseAudio source "${sourceName}" for computer audio capture.`)
+    return true
+  }
+
+  const detail = (result.stderr || result.stdout || `exit code ${result.status}`).trim()
+  log.warn(`[LinuxAudio] Pulse source "${sourceName}" is unavailable: ${detail}`)
+  return false
+}
+
+function resolveLinuxSystemAudioSource(): string | null {
+  const sourceList = spawnSync('pactl', ['list', 'short', 'sources'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+  if (sourceList.error || sourceList.status !== 0) {
+    log.warn('[LinuxAudio] Failed to list PulseAudio sources through pactl:', sourceList.error || sourceList.stderr || sourceList.stdout)
+    return null
+  }
+
+  const pactlResult = spawnSync('pactl', ['get-default-sink'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  })
+  const defaultSink = pactlResult.status === 0 ? (pactlResult.stdout || '').trim() : ''
+  if (pactlResult.error || pactlResult.status !== 0) {
+    log.warn('[LinuxAudio] Could not resolve default PulseAudio sink:', pactlResult.error || pactlResult.stderr || pactlResult.stdout)
+  }
+
+  const sourceNames = (sourceList.stdout || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(/\s+/)[1])
+    .filter((name): name is string => Boolean(name))
+
+  const monitorSources = sourceNames.filter((name) => name.endsWith('.monitor'))
+  const preferredMonitor = defaultSink ? `${defaultSink}.monitor` : null
+  const selectedSource =
+    (preferredMonitor && monitorSources.find((name) => name === preferredMonitor)) ||
+    monitorSources[0] ||
+    null
+
+  if (!selectedSource) {
+    log.warn('[LinuxAudio] No PulseAudio monitor source was found for computer audio capture.')
+    return null
+  }
+
+  return selectedSource
+}
+
+type ComputerAudioCaptureConfig =
+  | {
+      supported: true
+      backend: ComputerAudioBackend
+      input: string
+      inputFormat?: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le'
+      inputSampleRate?: number
+      inputChannels?: number
+    }
+  | {
+      supported: false
+      backend: ComputerAudioBackend | null
+      reason: string
+    }
+
+type SupportedComputerAudioCaptureConfig = Extract<ComputerAudioCaptureConfig, { supported: true }>
+
+function resolveComputerAudioCaptureConfig(): ComputerAudioCaptureConfig {
+  if (process.platform === 'win32') {
+    const helperProbe = probeWindowsSystemAudioHelper()
+    if (!helperProbe.supported) {
+      return {
+        supported: false,
+        backend: 'windows-helper',
+        reason: helperProbe.reason || `Windows system-audio helper is unavailable: ${WINDOWS_SYSTEM_AUDIO_HELPER_PATH}`,
+      }
+    }
+
+    return {
+      supported: true,
+      backend: 'windows-helper',
+      input: WINDOWS_SYSTEM_AUDIO_HELPER_PATH,
+      inputFormat: helperProbe.probe.sampleFormat,
+      inputSampleRate: helperProbe.probe.sampleRate,
+      inputChannels: helperProbe.probe.channels,
+    }
+  }
+
+  if (process.platform === 'linux') {
+    if (!hasFFmpegDemuxer('pulse')) {
+      return {
+        supported: false,
+        backend: 'pulse',
+        reason: `Current FFmpeg binary does not support PulseAudio system audio capture: ${FFMPEG_PATH}`,
+      }
+    }
+
+    const input = resolveLinuxSystemAudioSource()
+    if (!input) {
+      return {
+        supported: false,
+        backend: 'pulse',
+        reason:
+          'No PulseAudio monitor source was found. Start a desktop session with a default output sink or make a monitor source available.',
+      }
+    }
+
+    if (!probeLinuxPulseSource(input)) {
+      return {
+        supported: false,
+        backend: 'pulse',
+        reason: `FFmpeg could not open the PulseAudio monitor source "${input}".`,
+      }
+    }
+
+    return { supported: true, backend: 'pulse', input }
+  }
+
+  return {
+    supported: false,
+    backend: null,
+    reason: 'Computer audio capture is not implemented on macOS yet.',
+  }
+}
+
+export function getComputerAudioSupport(): { supported: boolean; reason?: string; backend?: ComputerAudioBackend | null } {
+  const support = resolveComputerAudioCaptureConfig()
+  if (support.supported) {
+    return { supported: true, backend: support.backend }
+  }
+
+  return { supported: false, backend: support.backend, reason: support.reason }
+}
+
 async function requestRecorderWebcamRelease(): Promise<void> {
   const recorderWindow = appState.recorderWin
   if (!recorderWindow || recorderWindow.isDestroyed()) {
@@ -862,6 +1158,9 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   if (session.audioPath) {
     filesToValidate.push(session.audioPath)
   }
+  if (session.systemAudioPath) {
+    filesToValidate.push(session.systemAudioPath)
+  }
   if (session.mediaAudioPath) {
     filesToValidate.push(session.mediaAudioPath)
   }
@@ -900,13 +1199,18 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
  * @returns Promise that resolves to the path of the trimmed audio file
  */
 async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<string> {
-  const trimmedPath = audioPath.replace(/\.aac$/, '-trimmed.aac')
+  const ext = path.extname(audioPath) || '.wav'
+  const trimmedPath = audioPath.slice(0, -ext.length) + `-trimmed${ext}`
   const trimSeconds = trimMs / 1000
 
   log.info(`[AudioTrim] Trimming ${trimMs}ms from beginning of ${audioPath}`)
 
   return new Promise((resolve, reject) => {
-    const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, '-c:a', 'copy', trimmedPath]
+    const codecArgs =
+      ext.toLowerCase() === '.wav'
+        ? ['-c:a', 'pcm_s16le']
+        : ['-c:a', 'copy']
+    const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, ...codecArgs, trimmedPath]
 
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
@@ -939,6 +1243,67 @@ async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<
   })
 }
 
+async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: number = 1000): Promise<void> {
+  if (!session.systemAudioPath) return
+
+  if (!session.systemAudioTempPath) {
+    await trimAudioFile(session.systemAudioPath, trimMs)
+    return
+  }
+
+  const tempPath = session.systemAudioTempPath
+  const finalPath = session.systemAudioPath
+  const config: RecordingAudioOutputConfig = {
+    audioCodec: normalizeRecordingAudioCodec(session.recordingAudioCodec, 'aac'),
+    audioBitrateKbps: normalizeRecordingAudioBitrate(session.recordingAudioBitrateKbps, 192),
+    audioSampleRate: normalizeRecordingAudioSampleRate(session.recordingAudioSampleRate, 48000),
+  }
+  const trimSeconds = trimMs / 1000
+
+  log.info(
+    `[SystemAudioFinalize] Encoding helper capture ${tempPath} -> ${finalPath} (${config.audioCodec}/${config.audioBitrateKbps}k/${config.audioSampleRate}Hz)`,
+  )
+
+  await new Promise<void>((resolve, reject) => {
+    const ffmpegArgs = [
+      '-y',
+      '-ss',
+      trimSeconds.toString(),
+      '-i',
+      tempPath,
+      '-vn',
+      ...getRecordedAudioCodecArgs(config),
+      finalPath,
+    ]
+    const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
+
+    ffmpeg.stderr.on('data', (data: any) => {
+      log.info(`[SystemAudioFinalize FFmpeg]: ${data.toString()}`)
+    })
+
+    ffmpeg.on('close', (code: any) => {
+      if (code === 0) {
+        resolve()
+        return
+      }
+
+      reject(new Error(`System audio finalization failed with code ${code}`))
+    })
+
+    ffmpeg.on('error', (error: any) => {
+      reject(error)
+    })
+  })
+
+  try {
+    await fsPromises.unlink(tempPath)
+  } catch (error) {
+    log.warn(`[SystemAudioFinalize] Failed to delete helper temp WAV: ${tempPath}`, error)
+  }
+
+  session.systemAudioTempPath = undefined
+}
+
 /**
  * The core function that spawns FFmpeg and the mouse tracker to begin recording.
  * @param inputArgs - Platform-specific FFmpeg input arguments.
@@ -955,13 +1320,20 @@ async function startActualRecording(
   scaleFactor: number = 1,
   outputOptions: RecordingOutputOptions = {},
   splitInputArgs?: SplitRecordingInputArgs,
+  recordSystemAudio: boolean = false,
+  systemAudioCapture?: SupportedComputerAudioCaptureConfig,
+  audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
 ) {
   const recordingDir = await createRecordingSessionDir()
   const baseName = `RecordSaaS-recording-${Date.now()}`
+  const audioExtension = getRecordedAudioFileExtension(audioConfig.audioCodec)
 
   const screenVideoPath = path.join(recordingDir, `${baseName}-screen.mp4`)
   const webcamVideoPath = hasWebcam ? path.join(recordingDir, `${baseName}-webcam.mp4`) : undefined
-  const audioPath = hasMic ? path.join(recordingDir, `${baseName}-audio.aac`) : undefined
+  const audioPath = hasMic ? path.join(recordingDir, `${baseName}-audio${audioExtension}`) : undefined
+  const systemAudioPath = recordSystemAudio
+    ? path.join(recordingDir, `${baseName}-system-audio${audioExtension}`)
+    : undefined
   const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
   // Store recordingGeometry and scaleFactor in the session
@@ -969,11 +1341,15 @@ async function startActualRecording(
     screenVideoPath,
     webcamVideoPath,
     audioPath,
+    systemAudioPath,
     metadataPath,
     recordingGeometry,
     scaleFactor,
     screenCaptureBackend: outputOptions.screenCaptureBackend,
     requestedScreenFps: outputOptions.screenFps,
+    recordingAudioCodec: audioConfig.audioCodec,
+    recordingAudioBitrateKbps: audioConfig.audioBitrateKbps,
+    recordingAudioSampleRate: audioConfig.audioSampleRate,
   }
   appState.recorderWin?.minimize()
 
@@ -1028,7 +1404,7 @@ async function startActualRecording(
   const shouldSplitWin32WebcamProcess = Boolean(
     process.platform === 'win32' && hasWebcam && webcamVideoPath && splitInputArgs,
   )
-  const ffmpegSpecs =
+  const ffmpegSpecs: FfmpegProcessSpec[] =
     shouldSplitWin32WebcamProcess && splitInputArgs && webcamVideoPath
       ? buildWin32SplitWebcamFfmpegSpecs(
           splitInputArgs,
@@ -1037,6 +1413,7 @@ async function startActualRecording(
           webcamVideoPath,
           audioPath,
           outputOptions,
+          audioConfig,
         )
       : [
           {
@@ -1049,9 +1426,35 @@ async function startActualRecording(
               webcamVideoPath,
               audioPath,
               outputOptions,
+              audioConfig,
             ),
           },
         ]
+
+  const systemAudioEncoderArgs =
+    systemAudioPath && systemAudioCapture?.backend === 'windows-helper' && systemAudioCapture.inputFormat
+      ? buildWindowsHelperSystemAudioFfmpegArgs(
+          systemAudioPath,
+          systemAudioCapture.inputFormat,
+          systemAudioCapture.inputSampleRate || 48000,
+          systemAudioCapture.inputChannels || 2,
+          audioConfig,
+        )
+      : null
+
+  if (systemAudioPath && systemAudioCapture?.backend === 'pulse') {
+    ffmpegSpecs.push({
+      role: 'system-audio',
+      args: buildSystemAudioFfmpegArgs(systemAudioPath, systemAudioCapture.input, audioConfig),
+    })
+  }
+
+  if (systemAudioEncoderArgs) {
+    ffmpegSpecs.push({
+      role: 'system-audio',
+      args: systemAudioEncoderArgs,
+    })
+  }
 
   if (shouldSplitWin32WebcamProcess) {
     log.info('[FFMPEG] Windows webcam capture will run in a separate FFmpeg process.')
@@ -1063,6 +1466,27 @@ async function startActualRecording(
   })
   appState.ffmpegProcess = ffmpegRuns.find((run) => run.role === 'main')?.process || ffmpegRuns[0]?.process || null
   appState.ffmpegProcesses = ffmpegRuns.map((run) => run.process)
+  const systemAudioEncoderRun =
+    systemAudioEncoderArgs ? ffmpegRuns.find((run) => run.role === 'system-audio') || null : null
+
+  let systemAudioHelperRun:
+    | {
+        role: 'system-audio'
+        process: ChildProcessWithoutNullStreams
+      }
+    | null = null
+
+  if (systemAudioPath && systemAudioCapture?.backend === 'windows-helper') {
+    log.info('[SystemAudioHelper] Starting helper in stdout mode.')
+    const helperProcess = spawn(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, ['--stdout'], { windowsHide: true })
+    appState.systemAudioHelperProcess = helperProcess
+    systemAudioHelperRun = {
+      role: 'system-audio',
+      process: helperProcess,
+    }
+  } else {
+    appState.systemAudioHelperProcess = null
+  }
 
   return new Promise((resolve) => {
     let startResolved = false
@@ -1091,10 +1515,16 @@ async function startActualRecording(
       resolve(value)
     }
 
+    const expectedReadyCount =
+      ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
+
     const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
       readyRoles.add(role)
-      if (readyRoles.size < ffmpegRuns.length) return
+      log.info(
+        `[FFMPEG] Ready signal from ${role}. count=${readyRoles.size}/${expectedReadyCount} roles=${Array.from(readyRoles).join(',')}`,
+      )
+      if (readyRoles.size < expectedReadyCount) return
 
       recordingReady = true
       const session = appState.currentRecordingSession
@@ -1191,6 +1621,66 @@ async function startActualRecording(
         }
       })
     }
+
+    if (systemAudioHelperRun) {
+      const helper = systemAudioHelperRun.process
+      let helperStderrBuffer = ''
+
+      helper.once('spawn', () => {
+        log.info('[SystemAudioHelper] Process spawned, waiting for READY signal...')
+      })
+
+      helper.once('error', (error: NodeJS.ErrnoException) => {
+        log.error('[SystemAudioHelper] Failed to start helper:', error)
+        dialog.showErrorBox('Recording Failed', `Could not start system audio helper.\n\n${error.message}`)
+        cleanupFailedRecordingStart()
+        resolveOnce({ canceled: true })
+      })
+
+      helper.once('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        if (recordingReady || fatalStartupHandled) {
+          return
+        }
+
+        log.error(`[SystemAudioHelper] Exited before recording became ready. code=${code} signal=${signal}`)
+        const errorMessage =
+          startupErrorText.trim() ||
+          `System audio helper exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
+        dialog.showErrorBox('Recording Failed', errorMessage)
+        cleanupFailedRecordingStart()
+        resolveOnce({ canceled: true })
+      })
+
+      helper.stderr.on('data', (data: Buffer) => {
+        helperStderrBuffer += data.toString()
+        const helperStderrLines = helperStderrBuffer.split(/\r?\n/)
+        helperStderrBuffer = helperStderrLines.pop() ?? ''
+
+        for (const rawLine of helperStderrLines) {
+          const message = rawLine.trim()
+          if (!message) {
+            continue
+          }
+
+          if (!recordingReady && message.includes('READY')) {
+            markRecordingReady('system-audio')
+          }
+
+          startupErrorText = `[system-audio] ${message}`
+          if (!message.includes('READY')) {
+            log.warn(`[SystemAudioHelper stderr]: ${message}`)
+          }
+        }
+      })
+
+      if (systemAudioEncoderRun) {
+        helper.stdout.pipe(systemAudioEncoderRun.process.stdin)
+      } else {
+        log.error('[SystemAudioHelper] Windows helper started without a matching FFmpeg encoder process.')
+        cleanupFailedRecordingStart()
+        resolveOnce({ canceled: true })
+      }
+    }
   })
 }
 
@@ -1237,8 +1727,89 @@ function appendScreenOutputArgs(
   args.push(screenOut)
 }
 
-function appendAudioOutputArgs(args: string[], micIndex: number, audioOut: string): void {
-  args.push('-map', `${micIndex}:a`, '-c:a', 'aac', '-b:a', '192k', audioOut)
+function buildSystemAudioFfmpegArgs(
+  audioOut: string,
+  inputName: string,
+  config: RecordingAudioOutputConfig,
+): string[] {
+  return ['-y', '-f', 'pulse', '-i', inputName, '-vn', ...getRecordedAudioCodecArgs(config), audioOut]
+}
+
+function buildWindowsHelperSystemAudioFfmpegArgs(
+  audioOut: string,
+  inputFormat: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le',
+  inputSampleRate: number,
+  inputChannels: number,
+  config: RecordingAudioOutputConfig,
+): string[] {
+  return [
+    '-y',
+    '-f',
+    inputFormat,
+    '-ar',
+    String(inputSampleRate),
+    '-ac',
+    String(inputChannels),
+    '-i',
+    'pipe:0',
+    '-vn',
+    ...getRecordedAudioCodecArgs(config),
+    audioOut,
+  ]
+}
+
+type RecordingAudioOutputConfig = Pick<
+  RecordingProfileRuntime,
+  'audioCodec' | 'audioBitrateKbps' | 'audioSampleRate'
+>
+
+function getRecordedAudioFileExtension(codec: RecordingAudioCodec): '.aac' | '.mp3' {
+  return codec === 'mp3' ? '.mp3' : '.aac'
+}
+
+function getRecordedAudioCodecArgs(config: RecordingAudioOutputConfig): string[] {
+  const codecArgs = config.audioCodec === 'mp3' ? ['-c:a', 'libmp3lame'] : ['-c:a', 'aac']
+  return [...codecArgs, '-b:a', `${config.audioBitrateKbps}k`, '-ar', String(config.audioSampleRate), '-ac', '2']
+}
+
+function appendEncodedAudioOutputArgs(
+  args: string[],
+  inputSpecifier: string,
+  audioOut: string,
+  config: RecordingAudioOutputConfig,
+): void {
+  args.push('-map', inputSpecifier, ...getRecordedAudioCodecArgs(config), audioOut)
+}
+
+function stopSystemAudioHelperProcess(process: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+
+    const resolveOnce = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+
+    process.once('close', () => resolveOnce())
+    process.once('error', () => resolveOnce())
+
+    try {
+      if (process.stdin && !process.stdin.destroyed) {
+        process.stdin.end()
+      } else {
+        process.kill('SIGINT')
+      }
+    } catch {
+      try {
+        process.kill('SIGKILL')
+      } catch {
+        resolveOnce()
+      }
+    }
+
+    setTimeout(resolveOnce, FFMPEG_STOP_RESOLVE_PERIOD_MS)
+  })
 }
 
 function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string): void {
@@ -1272,6 +1843,7 @@ function buildFfmpegArgs(
   webcamOut?: string,
   audioOut?: string,
   outputOptions: RecordingOutputOptions = {},
+  audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
 ): string[] {
   const finalArgs = [...inputArgs]
   const micIndex = hasMic ? 0 : -1
@@ -1279,7 +1851,7 @@ function buildFfmpegArgs(
   const screenIndex = (hasMic ? 1 : 0) + (hasWebcam ? 1 : 0)
 
   appendScreenOutputArgs(finalArgs, screenIndex, screenOut, outputOptions)
-  if (hasMic && audioOut) appendAudioOutputArgs(finalArgs, micIndex, audioOut)
+  if (hasMic && audioOut) appendEncodedAudioOutputArgs(finalArgs, `${micIndex}:a`, audioOut, audioConfig)
   if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut)
 
   return finalArgs
@@ -1292,10 +1864,11 @@ function buildWin32SplitWebcamFfmpegSpecs(
   webcamOut: string,
   audioOut: string | undefined,
   outputOptions: RecordingOutputOptions = {},
+  audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
 ): FfmpegProcessSpec[] {
   const mainArgs = [...inputArgs.micInputArgs, ...inputArgs.screenInputArgs]
   appendScreenOutputArgs(mainArgs, hasMic ? 1 : 0, screenOut, outputOptions)
-  if (hasMic && audioOut) appendAudioOutputArgs(mainArgs, 0, audioOut)
+  if (hasMic && audioOut) appendEncodedAudioOutputArgs(mainArgs, '0:a', audioOut, audioConfig)
 
   const webcamArgs = [...inputArgs.webcamInputArgs]
   appendWebcamOutputArgs(webcamArgs, 0, webcamOut)
@@ -1336,11 +1909,26 @@ function createTray() {
  */
 export async function startRecording(options: any) {
   const { source, displayId, mic, webcam } = options
+  const computerAudioEnabled = options.computerAudioEnabled === true
   const recordingProfile = normalizeRecordingProfile(options.recordingProfile)
+  const audioConfig: RecordingAudioOutputConfig = {
+    audioCodec: recordingProfile.audioCodec,
+    audioBitrateKbps: recordingProfile.audioBitrateKbps,
+    audioSampleRate: recordingProfile.audioSampleRate,
+  }
   const screenFps = recordingProfile.screenFps
   const outputOptions: RecordingOutputOptions = { screenFps }
   log.info('[RecordingManager] Received start recording request with options:', options)
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
+
+  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig() : null
+  if (computerAudioEnabled && !computerAudioCapture?.supported) {
+    dialog.showErrorBox(
+      'Computer Audio Unavailable',
+      `${computerAudioCapture?.reason || 'Computer audio capture is unavailable on this platform.'}\n\nBinary:\n${FFMPEG_PATH}`,
+    )
+    return { canceled: true }
+  }
 
   if (webcam) {
     await requestRecorderWebcamRelease()
@@ -1650,6 +2238,9 @@ export async function startRecording(options: any) {
     recordingScaleFactor,
     outputOptions,
     splitInputArgs,
+    computerAudioEnabled,
+    computerAudioCapture?.supported ? computerAudioCapture : undefined,
+    audioConfig,
   )
 }
 
@@ -1854,6 +2445,28 @@ export async function stopRecording() {
     }
   }
 
+  if (session.systemAudioPath) {
+    try {
+      log.info('[StopRecord] Finalizing computer audio file...')
+      await finalizeSystemAudioCapture(session, 1000)
+      log.info('[StopRecord] Computer audio file finalized successfully.')
+    } catch (error) {
+      log.error('[StopRecord] Failed to finalize computer audio file:', error)
+
+      if (session.systemAudioTempPath) {
+        try {
+          await fsPromises.unlink(session.systemAudioPath).catch(() => undefined)
+          session.systemAudioPath = session.systemAudioTempPath
+          session.systemAudioTempPath = undefined
+          await trimAudioFile(session.systemAudioPath, 1000)
+          log.warn('[StopRecord] Falling back to raw helper WAV for computer audio.')
+        } catch (fallbackError) {
+          log.error('[StopRecord] Failed to recover raw helper WAV after finalize error:', fallbackError)
+        }
+      }
+    }
+  }
+
   // Step 3: Process and save metadata (after video file is complete)
   await processAndSaveMetadata(session)
 
@@ -1881,6 +2494,7 @@ export async function stopRecording() {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.systemAudioPath,
       session.mediaAudioPath,
       session.scaleFactor,
     )
@@ -1909,6 +2523,12 @@ function takeFfmpegProcesses(): ChildProcessWithoutNullStreams[] {
   appState.ffmpegProcess = null
   appState.ffmpegProcesses = []
   return processes
+}
+
+function takeSystemAudioHelperProcess(): ChildProcessWithoutNullStreams | null {
+  const process = appState.systemAudioHelperProcess
+  appState.systemAudioHelperProcess = null
+  return process
 }
 
 function stopFfmpegProcess(ffmpeg: ChildProcessWithoutNullStreams, label: string): Promise<void> {
@@ -2001,6 +2621,11 @@ async function cleanupAndSave(): Promise<void> {
   if (appState.mouseTracker) {
     appState.mouseTracker.stop()
     appState.mouseTracker = null
+  }
+
+  const systemAudioHelper = takeSystemAudioHelperProcess()
+  if (systemAudioHelper) {
+    await stopSystemAudioHelperProcess(systemAudioHelper)
   }
 
   const processes = takeFfmpegProcesses()
@@ -2103,6 +2728,15 @@ export async function cleanupAndDiscard() {
   const sessionToDiscard = { ...appState.currentRecordingSession }
   appState.currentRecordingSession = null
 
+  const systemAudioHelper = takeSystemAudioHelperProcess()
+  if (systemAudioHelper) {
+    try {
+      systemAudioHelper.kill('SIGKILL')
+    } catch {
+      // ignore helper cleanup failures during discard
+    }
+  }
+
   for (const ffmpegProcess of takeFfmpegProcesses()) {
     ffmpegProcess.kill('SIGKILL')
   }
@@ -2141,7 +2775,8 @@ export async function cleanupOrphanedRecordings() {
 
   try {
     const allFiles = await fsPromises.readdir(recordingDir)
-    const filePattern = /^RecordSaaS-recording-\d+(-screen\.mp4|-webcam\.mp4|\.json)$/
+    const filePattern =
+      /^RecordSaaS-recording-\d+(-screen\.mp4|-webcam\.mp4|-audio\.(aac|mp3)|-system-audio(?:-raw)?\.(aac|mp3|wav)|\.json)$/
     const filesToDelete = allFiles
       .filter((file) => filePattern.test(file))
       .map((file) => path.join(recordingDir, file))
@@ -2247,6 +2882,7 @@ export async function loadVideoFromFile() {
       screenVideoPath,
       metadataPath,
       session.recordingGeometry,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -2364,6 +3000,10 @@ export async function importProjectFromPath(sourceProjectPath: string) {
     }
     const webcamVideoPath = await importMediaFile(projectData.webcamVideoPath, 'webcam video')
     const audioPath = await importMediaFile(projectData.audioPath, 'audio track')
+    const systemAudioPath = await importMediaFile(
+      getProjectFirstField(projectData, null, 'systemAudioPath') || null,
+      'computer audio track',
+    )
 
     // Copy canonical metadata if available; this is the source of cursor/mouse events.
     let hasCanonicalMetadataFile = false
@@ -2430,6 +3070,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       geometry: mergedGeometry,
       recordingGeometry: mergedGeometry,
       timelineLanes: normalizedTimelineLanes,
+      systemAudioPath: systemAudioPath || undefined,
     }
 
     if (rawMediaAudioClip && importedMediaAudioPath) {
@@ -2581,6 +3222,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       metadataPath,
       webcamVideoPath,
       audioPath,
+      systemAudioPath,
       mediaAudioPath: importedMediaAudioPath,
       recordingGeometry: mergedGeometry,
       scaleFactor: typeof projectData.scaleFactor === 'number' ? projectData.scaleFactor : 1,
@@ -2604,6 +3246,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       session.recordingGeometry,
       session.webcamVideoPath,
       session.audioPath,
+      session.systemAudioPath,
       session.mediaAudioPath,
       session.scaleFactor,
       sourceProjectDir, // Pass the original directory path
