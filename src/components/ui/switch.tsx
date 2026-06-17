@@ -4,7 +4,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 
 const switchVariants = cva(
-  'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-[7px] border-2 border-transparent p-[2px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
+  'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-md border-2 border-transparent p-[2px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
@@ -40,7 +40,7 @@ const switchVariants = cva(
 )
 
 const thumbVariants = cva(
-  'pointer-events-none block h-4 w-4 rounded-[5px] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.28),0_1px_1px_rgba(15,23,42,0.18)] ring-0 transition-transform',
+  'pointer-events-none block h-4 w-4 rounded-sm bg-white shadow-[0_1px_3px_rgba(15,23,42,0.28),0_1px_1px_rgba(15,23,42,0.18)] ring-0 transition-transform',
   {
     variants: {
       isChecked: {
@@ -60,7 +60,7 @@ const Switch = React.forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>, 
     <SwitchPrimitives.Root
       className={cn(
         switchVariants({ variant, isChecked: checked }),
-        'relative inline-flex h-6 w-11 items-center rounded-[7px] transition-colors',
+        'relative inline-flex h-6 w-11 items-center rounded-md transition-colors',
         className,
       )}
       checked={checked}

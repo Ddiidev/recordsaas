@@ -334,7 +334,7 @@ Inputs and selects:
 
 Slider and switch:
 - `Slider` track: `h-2`, rounded-full; handle: `w-[18px] h-[18px] rounded-sm border-primary/40`.
-- `Switch`: root `h-6 w-11 rounded-[7px] p-[2px]`; thumb `h-4 w-4 rounded-[5px]` with visible shadow in both on/off states.
+- `Switch`: root `h-6 w-11 rounded-md p-[2px]`; thumb `h-4 w-4 rounded-sm` with visible shadow in both on/off states.
 
 ### 5.3 Layout and dimension baseline (editor)
 
