@@ -29,6 +29,10 @@ export const initialProjectState: ProjectState = {
   videoUrl: null,
   audioPath: null,
   audioUrl: null,
+  systemAudioPath: null,
+  systemAudioUrl: null,
+  systemAudioVolume: 1,
+  systemAudioMuted: false,
   mediaAudioClip: null,
   videoDimensions: { width: 0, height: 0 },
   recordingGeometry: null,
@@ -55,6 +59,9 @@ const fallbackNameFromPath = (filePath: string): string => {
   const chunks = filePath.split(/[\\/]/).filter(Boolean)
   return chunks[chunks.length - 1] || 'audio'
 }
+
+const clampAudioVolume = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : 1
 
 const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
   if (!value || typeof value !== 'object') return null
@@ -543,11 +550,12 @@ async function prepareMacOSCursorBitmaps(theme: CursorTheme, scale: number): Pro
 
 export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get) => ({
   ...initialProjectState,
-  loadProject: async ({ videoPath, metadataPath, webcamVideoPath, audioPath, originalProjectPath }) => {
+  loadProject: async ({ videoPath, metadataPath, webcamVideoPath, audioPath, systemAudioPath, originalProjectPath }) => {
     // Always use media:// protocol for video, webcam, and audio URLs (revert to original logic)
     const videoUrl = toMediaUrl(videoPath)
     const webcamVideoUrl = toMediaUrl(webcamVideoPath)
     const audioUrl = toMediaUrl(audioPath)
+    const systemAudioUrl = toMediaUrl(systemAudioPath)
 
     get().resetProjectState() // Clear previous project data first
 
@@ -579,7 +587,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.isWebcamVisible = webcamVideoUrl ? presetToApply?.isWebcamVisible ?? true : false
       state.audioPath = audioPath || null
       state.audioUrl = audioUrl
-      state.hasAudioTrack = !!audioUrl
+      state.systemAudioPath = systemAudioPath || null
+      state.systemAudioUrl = systemAudioUrl
+      state.systemAudioVolume = 1
+      state.systemAudioMuted = false
+      state.hasAudioTrack = !!audioUrl || !!systemAudioUrl
       state.mediaAudioClip = null
       state.mediaAudioRegions = {}
       state.changeSoundRegions = {}
@@ -629,6 +641,14 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
         state.swapRegions = parseSwapRegions(parsedData.swapRegions, fallbackTimelineLaneId)
         state.mediaAudioClip = parsedMediaAudioClip
+        if (typeof parsedData.systemAudioPath === 'string' && parsedData.systemAudioPath.length > 0 && !state.systemAudioPath) {
+          const normalizedSystemAudioPath = normalizeMediaPath(parsedData.systemAudioPath)
+          state.systemAudioPath = normalizedSystemAudioPath
+          state.systemAudioUrl = toMediaUrl(normalizedSystemAudioPath)
+        }
+        state.systemAudioVolume = clampAudioVolume(parsedData.systemAudioVolume)
+        state.systemAudioMuted = parsedData.systemAudioMuted === true
+        state.hasAudioTrack = !!state.audioUrl || !!state.systemAudioUrl || !!state.mediaAudioClip
         const fallbackMediaLaneId = fallbackTimelineLaneId
         state.mediaAudioRegions = parseMediaAudioRegions(parsedData.mediaAudioRegions, fallbackMediaLaneId, parsedMediaAudioClip)
         state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
@@ -863,6 +883,16 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   setHasAudioTrack: (hasAudio) => {
     set((state) => {
       state.hasAudioTrack = hasAudio
+    })
+  },
+  updateSystemAudioSettings: ({ volume, isMuted }) => {
+    set((state) => {
+      if (typeof volume === 'number' && Number.isFinite(volume)) {
+        state.systemAudioVolume = Math.max(0, Math.min(volume, 1))
+      }
+      if (typeof isMuted === 'boolean') {
+        state.systemAudioMuted = isMuted
+      }
     })
   },
   setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {

@@ -27,6 +27,12 @@ const generateDefaultProjectName = () => {
   return `RecordSaaS-${timestamp}`
 }
 
+const getProjectThumbnailTimeSeconds = (duration: number) => {
+  if (!Number.isFinite(duration) || duration <= 0) return 0
+  if (duration <= 2) return Math.max(0, duration / 2)
+  return Math.min(1, duration - 0.1)
+}
+
 export function EditorPage() {
   const {
     loadProject,
@@ -101,71 +107,94 @@ export function EditorPage() {
     }
   }, [isProjectNamePopupOpen, projectExportName])
 
-  const handleExportProject = useCallback(async (projectName?: string) => {
-    try {
-      setIsExportingProject(true)
-      const storeState = useEditorStore.getState()
-      const { videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip, originalProjectPath } = storeState
-      
-      const mediaFiles = [videoPath, metadataPath, audioPath, webcamVideoPath, mediaAudioClip?.path]
-        .map((filePath) => normalizeMediaPath(filePath))
-        .filter((filePath): filePath is string => Boolean(filePath))
-      
-      let targetFolder = originalProjectPath
-      const filesToExport = mediaFiles
-      
-      if (!targetFolder) {
-        const resolvedProjectFolder = await window.electronAPI.resolveProjectFolder(projectName || projectExportName)
-        if (!resolvedProjectFolder.success || !resolvedProjectFolder.targetFolder) {
-          setProjectNameError(resolvedProjectFolder.error || 'Invalid project name.')
-          setProjectNameValid(false)
-          return
+  const handleExportProject = useCallback(
+    async (projectName?: string) => {
+      try {
+        setIsExportingProject(true)
+        const storeState = useEditorStore.getState()
+        const {
+          videoPath,
+          metadataPath,
+          audioPath,
+          systemAudioPath,
+          webcamVideoPath,
+          mediaAudioClip,
+          originalProjectPath,
+          duration: projectDuration,
+        } = storeState
+
+        const mediaFiles = [videoPath, metadataPath, audioPath, systemAudioPath, webcamVideoPath, mediaAudioClip?.path]
+          .map((filePath) => normalizeMediaPath(filePath))
+          .filter((filePath): filePath is string => Boolean(filePath))
+
+        let targetFolder = originalProjectPath
+        const filesToExport = mediaFiles
+
+        if (!targetFolder) {
+          const resolvedProjectFolder = await window.electronAPI.resolveProjectFolder(projectName || projectExportName)
+          if (!resolvedProjectFolder.success || !resolvedProjectFolder.targetFolder) {
+            setProjectNameError(resolvedProjectFolder.error || 'Invalid project name.')
+            setProjectNameValid(false)
+            return
+          }
+
+          targetFolder = resolvedProjectFolder.targetFolder
+          setProjectExportName(resolvedProjectFolder.normalizedName || projectName || projectExportName)
         }
 
-        targetFolder = resolvedProjectFolder.targetFolder
-        setProjectExportName(resolvedProjectFolder.normalizedName || projectName || projectExportName)
-      }
-      
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const stateToSave = { ...storeState } as any
-      delete stateToSave.cursorBitmapsToRender
-      stateToSave.events = storeState.metadata
-      delete stateToSave.metadata
-      
-      if (stateToSave.videoPath) stateToSave.videoPath = getMediaPathBasename(stateToSave.videoPath)
-      if (stateToSave.metadataPath) stateToSave.metadataPath = getMediaPathBasename(stateToSave.metadataPath)
-      if (stateToSave.audioPath) stateToSave.audioPath = getMediaPathBasename(stateToSave.audioPath)
-      if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getMediaPathBasename(stateToSave.webcamVideoPath)
-      if (stateToSave.mediaAudioClip?.path) {
-        const serializedMediaPath = getMediaPathBasename(stateToSave.mediaAudioClip.path)
-        stateToSave.mediaAudioClip = {
-          ...stateToSave.mediaAudioClip,
-          path: serializedMediaPath,
-          url: `media://${serializedMediaPath}`,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const stateToSave = { ...storeState } as any
+        delete stateToSave.cursorBitmapsToRender
+        stateToSave.events = storeState.metadata
+        delete stateToSave.metadata
+
+        if (stateToSave.videoPath) stateToSave.videoPath = getMediaPathBasename(stateToSave.videoPath)
+        if (stateToSave.metadataPath) stateToSave.metadataPath = getMediaPathBasename(stateToSave.metadataPath)
+        if (stateToSave.audioPath) stateToSave.audioPath = getMediaPathBasename(stateToSave.audioPath)
+        if (stateToSave.systemAudioPath) {
+          const serializedSystemAudioPath = getMediaPathBasename(stateToSave.systemAudioPath)
+          stateToSave.systemAudioPath = serializedSystemAudioPath
+          stateToSave.systemAudioUrl = `media://${serializedSystemAudioPath}`
         }
-      }
-      
-      const projectData = JSON.stringify(stateToSave, null, 2)
-      
-      const saveResult = await window.electronAPI.saveProject(targetFolder, projectData, filesToExport)
-      
-      if (saveResult.success) {
-        if (!originalProjectPath) {
-          useEditorStore.getState().setOriginalProjectPath(targetFolder)
-          window.electronAPI.showItemInFolder(targetFolder)
+        if (stateToSave.webcamVideoPath) stateToSave.webcamVideoPath = getMediaPathBasename(stateToSave.webcamVideoPath)
+        if (stateToSave.mediaAudioClip?.path) {
+          const serializedMediaPath = getMediaPathBasename(stateToSave.mediaAudioClip.path)
+          stateToSave.mediaAudioClip = {
+            ...stateToSave.mediaAudioClip,
+            path: serializedMediaPath,
+            url: `media://${serializedMediaPath}`,
+          }
         }
-        setProjectNamePopupOpen(false)
-      } else {
-        alert(`Failed to export project: ${saveResult.error}`)
+
+        const projectData = JSON.stringify(stateToSave, null, 2)
+
+        const saveResult = await window.electronAPI.saveProject(targetFolder, projectData, filesToExport, {
+          thumbnailSourcePath: normalizeMediaPath(videoPath) || null,
+          thumbnailTimeSeconds: getProjectThumbnailTimeSeconds(projectDuration),
+          confirmReplaceExisting: !originalProjectPath,
+        })
+
+        if (saveResult.success) {
+          if (!originalProjectPath) {
+            useEditorStore.getState().setOriginalProjectPath(targetFolder)
+            window.electronAPI.showItemInFolder(targetFolder)
+          }
+          setProjectNamePopupOpen(false)
+        } else if (saveResult.canceled) {
+          setProjectNamePopupOpen(!originalProjectPath)
+        } else {
+          alert(`Failed to export project: ${saveResult.error}`)
+        }
+      } catch (error: unknown) {
+        console.error(error)
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        alert(`Error: ${errorMessage}`)
+      } finally {
+        setIsExportingProject(false)
       }
-    } catch (error: unknown) {
-      console.error(error)
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      alert(`Error: ${errorMessage}`)
-    } finally {
-      setIsExportingProject(false)
-    }
-  }, [projectExportName])
+    },
+    [projectExportName],
+  )
 
   const handleExportProjectButtonClick = useCallback(() => {
     const originalProjectPath = useEditorStore.getState().originalProjectPath
@@ -278,7 +307,14 @@ export function EditorPage() {
     window.electronAPI.getPlatform().then(setPlatform)
     initializeSettings()
     const cleanup = window.electronAPI.onProjectOpen(async (payload) => {
-      const payloadKey = [payload.videoPath, payload.metadataPath, payload.webcamVideoPath, payload.audioPath, payload.originalProjectPath].join('\0')
+      const payloadKey = [
+        payload.videoPath,
+        payload.metadataPath,
+        payload.webcamVideoPath,
+        payload.audioPath,
+        payload.systemAudioPath,
+        payload.originalProjectPath,
+      ].join('\0')
       if (lastProjectPayloadKeyRef.current === payloadKey) {
         console.info(`[EditorPage] Ignoring duplicate project payload: ${payload.videoPath}`)
         return
@@ -338,12 +374,13 @@ export function EditorPage() {
                 <Input
                   id="project-export-name"
                   value={projectExportName}
+                  disabled={isExportingProject}
                   onChange={(event) => setProjectExportName(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' && isProjectNameValid && !isExportingProject) {
                       void handleConfirmProjectExport()
                     }
-                    if (event.key === 'Escape') {
+                    if (event.key === 'Escape' && !isExportingProject) {
                       setProjectNamePopupOpen(false)
                     }
                   }}
@@ -366,7 +403,13 @@ export function EditorPage() {
                   onClick={() => void handleConfirmProjectExport()}
                   disabled={!isProjectNameValid || isExportingProject}
                 >
-                  Save Project
+                  {isExportingProject ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Project'
+                  )}
                 </Button>
               </div>
             </div>
@@ -394,7 +437,9 @@ export function EditorPage() {
           size="icon"
           onClick={() => setSettingsModalOpen(true)}
           aria-label="Open Settings"
-          className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+          className={cn(
+            'h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm',
+          )}
         >
           <Settings className="w-4 h-4" />
         </Button>
@@ -406,7 +451,9 @@ export function EditorPage() {
           size="icon"
           onClick={() => window.electronAPI.openRecorder()}
           aria-label="Home"
-          className={cn('h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm')}
+          className={cn(
+            'h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-lg border border-border shadow-sm',
+          )}
         >
           <Home className="w-4 h-4" />
         </Button>
@@ -444,7 +491,11 @@ export function EditorPage() {
           </h1>
 
           <div className="flex flex-1 items-center justify-end">
-            {showCustomWindowControls ? <WindowControls /> : platform === 'win32' ? <div className="w-[112px]" aria-hidden="true" /> : null}
+            {showCustomWindowControls ? (
+              <WindowControls />
+            ) : platform === 'win32' ? (
+              <div className="w-[112px]" aria-hidden="true" />
+            ) : null}
           </div>
         </header>
 

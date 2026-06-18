@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <AssemblyName>recordsaas-system-audio</AssemblyName>
+    <RootNamespace>RecordSaaS.SystemAudio</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+</Project>

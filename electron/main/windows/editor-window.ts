@@ -21,6 +21,7 @@ type ProjectOpenPayload = {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  systemAudioPath?: string
   originalProjectPath?: string
 }
 
@@ -30,6 +31,7 @@ export function createEditorWindow(
   recordingGeometry: RecordingGeometry,
   webcamVideoPath?: string,
   audioPath?: string,
+  systemAudioPath?: string,
   mediaAudioPath?: string,
   scaleFactor: number = 1,
   originalProjectPath?: string
@@ -47,6 +49,7 @@ export function createEditorWindow(
     recordingGeometry,
     webcamVideoPath,
     audioPath,
+    systemAudioPath,
     mediaAudioPath,
     scaleFactor,
     originalProjectPath,
@@ -58,6 +61,7 @@ export function createEditorWindow(
     metadataPath,
     webcamVideoPath,
     audioPath,
+    systemAudioPath,
     originalProjectPath: appState.currentEditorSessionFiles.originalProjectPath,
   }
 
@@ -207,11 +211,21 @@ export async function cleanupEditorFiles(files: {
   metadataPath: string
   webcamVideoPath?: string
   audioPath?: string
+  systemAudioPath?: string
+  systemAudioTempPath?: string
   mediaAudioPath?: string
   originalProjectPath?: string
 }) {
   log.info('[EditorWindow] Cleaning up session files:', files)
-  const unlinkPromises = [files.screenVideoPath, files.webcamVideoPath, files.audioPath, files.mediaAudioPath, files.metadataPath]
+  const unlinkPromises = [
+    files.screenVideoPath,
+    files.webcamVideoPath,
+    files.audioPath,
+    files.systemAudioPath,
+    files.systemAudioTempPath,
+    files.mediaAudioPath,
+    files.metadataPath,
+  ]
     .filter(Boolean)
     .map((filePath) => (fsSync.existsSync(filePath!) ? fs.unlink(filePath!) : Promise.resolve()))
   try {
