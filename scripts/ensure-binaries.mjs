@@ -10,12 +10,12 @@ const projectRoot = path.resolve(__dirname, '..')
 const assetsRepo = process.env.RECORDSAAS_BINARY_REPO || 'Ddiidev/recordsaas-assets'
 const configuredReleaseTag = process.env.RECORDSAAS_BINARY_RELEASE_TAG
 const configuredBaseUrl = process.env.RECORDSAAS_BINARY_BASE_URL
-const forceDotnetHelperBuild = process.env.RECORDSAAS_FORCE_DOTNET_HELPER_BUILD === '1'
 const configuredGithubToken =
   process.env.RECORDSAAS_BINARY_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN
-const windowsSystemAudioProjectPath = path.join(projectRoot, 'native', 'RecordSaaS.SystemAudio', 'RecordSaaS.SystemAudio.csproj')
-const windowsSystemAudioProjectDir = path.dirname(windowsSystemAudioProjectPath)
 const windowsSystemAudioOutputPath = path.join(projectRoot, 'binaries', 'windows', 'recordsaas-system-audio.exe')
+const windowsSystemAudioAssetUrl =
+  process.env.RECORDSAAS_SYSTEM_AUDIO_ASSET_URL ||
+  'https://github.com/Ddiidev/recordsaas-assets/releases/download/2.0.2/recordsaas-system-audio.exe'
 
 const platformTargets = {
   linux: {
@@ -52,27 +52,6 @@ async function ensureExecutableBit(filePath) {
   await fs.chmod(filePath, 0o755)
 }
 
-async function getLatestHelperSourceMTimeMs(directoryPath) {
-  const entries = await fs.readdir(directoryPath, { withFileTypes: true })
-  let latestMTimeMs = 0
-
-  for (const entry of entries) {
-    if (entry.name === 'bin' || entry.name === 'obj') {
-      continue
-    }
-
-    const entryPath = path.join(directoryPath, entry.name)
-    const stats = await fs.stat(entryPath)
-    if (stats.isDirectory()) {
-      latestMTimeMs = Math.max(latestMTimeMs, await getLatestHelperSourceMTimeMs(entryPath))
-    } else if (stats.isFile()) {
-      latestMTimeMs = Math.max(latestMTimeMs, stats.mtimeMs)
-    }
-  }
-
-  return latestMTimeMs
-}
-
 async function ensureWindowsSystemAudioHelper() {
   if (process.platform !== 'win32') {
     return
@@ -80,61 +59,25 @@ async function ensureWindowsSystemAudioHelper() {
 
   await fs.mkdir(path.dirname(windowsSystemAudioOutputPath), { recursive: true })
 
-  if (!forceDotnetHelperBuild) {
-    try {
-      const [sourceMTimeMs, outputStats] = await Promise.all([
-        getLatestHelperSourceMTimeMs(windowsSystemAudioProjectDir),
-        fs.stat(windowsSystemAudioOutputPath),
-      ])
-
-      if (outputStats.isFile() && outputStats.size > 0 && outputStats.mtimeMs >= sourceMTimeMs) {
-        const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
-        if (!probeResult.error && probeResult.status === 0) {
-          console.log(`[setup:binaries] Reusing existing Windows system-audio helper at ${windowsSystemAudioOutputPath}`)
-          return
-        }
+  try {
+    const outputStats = await fs.stat(windowsSystemAudioOutputPath)
+    if (outputStats.isFile() && outputStats.size > 0) {
+      const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
+      if (!probeResult.error && probeResult.status === 0) {
+        console.log(`[setup:binaries] Reusing existing Windows system-audio helper at ${windowsSystemAudioOutputPath}`)
+        return
       }
-    } catch {
-      // Missing or stale helper falls through to publish.
     }
+  } catch {
+    // Missing or invalid helper falls through to release download.
   }
 
-  if (forceDotnetHelperBuild) {
-    console.log('[setup:binaries] Forcing rebuild of Windows system-audio helper.')
-  } else {
-    console.log('[setup:binaries] Building Windows system-audio helper because the existing binary is missing, stale, or invalid.')
+  console.log(`[setup:binaries] Downloading Windows system-audio helper from ${windowsSystemAudioAssetUrl}`)
+  const response = await downloadAsset(windowsSystemAudioAssetUrl)
+  if (!response.ok) {
+    throw new Error(`Failed to download Windows system-audio helper (${response.status} ${response.statusText}).`)
   }
-
-  const publishResult = spawnSync(
-    'dotnet',
-    [
-      'publish',
-      windowsSystemAudioProjectPath,
-      '-c',
-      'Release',
-      '-r',
-      'win-x64',
-      '--self-contained',
-      'true',
-      '/p:PublishSingleFile=true',
-      '/p:EnableCompressionInSingleFile=true',
-      '/p:PublishTrimmed=false',
-      '-o',
-      path.dirname(windowsSystemAudioOutputPath),
-    ],
-    {
-      encoding: 'utf-8',
-      timeout: 300000,
-    },
-  )
-
-  if (publishResult.error) {
-    throw publishResult.error
-  }
-
-  if (publishResult.status !== 0) {
-    throw new Error((publishResult.stderr || publishResult.stdout || `dotnet publish failed with code ${publishResult.status}`).trim())
-  }
+  await fs.writeFile(windowsSystemAudioOutputPath, Buffer.from(await response.arrayBuffer()))
 
   const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
   if (probeResult.error || probeResult.status !== 0) {
@@ -143,7 +86,7 @@ async function ensureWindowsSystemAudioHelper() {
     )
   }
 
-  console.log(`[setup:binaries] Windows system-audio helper ready at ${windowsSystemAudioOutputPath}`)
+  console.log(`[setup:binaries] Windows system-audio helper downloaded and ready at ${windowsSystemAudioOutputPath}`)
 }
 
 function probeBinary(filePath, args = ['-hide_banner', '-version']) {
