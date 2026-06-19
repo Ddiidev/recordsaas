@@ -1803,6 +1803,8 @@ function buildWindowsHelperSystemAudioFfmpegArgs(
 ): string[] {
   return [
     '-y',
+    '-use_wallclock_as_timestamps',
+    '1',
     '-f',
     inputFormat,
     '-ar',
@@ -1812,6 +1814,8 @@ function buildWindowsHelperSystemAudioFfmpegArgs(
     '-i',
     'pipe:0',
     '-vn',
+    '-af',
+    'aresample=async=1000:first_pts=0',
     ...getRecordedAudioCodecArgs(config),
     audioOut,
   ]
