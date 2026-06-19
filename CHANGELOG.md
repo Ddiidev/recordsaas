@@ -1,3 +1,10 @@
+## [2.5.7](https://github.com/Ddiidev/recordsaas/compare/v2.5.6...v2.5.7) (2026-06-19)
+
+
+### Bug Fixes
+
+* stabilize adaptive screen and system audio recording ([6d6c080](https://github.com/Ddiidev/recordsaas/commit/6d6c08083ee378ec02e2c2a436d5d6131df78a34))
+
 ## [2.5.6](https://github.com/Ddiidev/recordsaas/compare/v2.5.5...v2.5.6) (2026-06-11)
 
 
