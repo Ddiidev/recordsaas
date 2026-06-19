@@ -1323,6 +1323,24 @@ async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: num
   session.systemAudioTempPath = undefined
 }
 
+async function discardEmptySystemAudio(session: RecordingSession): Promise<void> {
+  if (!session.systemAudioPath) return
+
+  try {
+    const stats = await fsPromises.stat(session.systemAudioPath)
+    if (stats.size > 0) return
+
+    log.warn('[SystemAudioFinalize] Computer audio file is empty; continuing without a computer-audio track.')
+    await fsPromises.unlink(session.systemAudioPath).catch(() => undefined)
+    session.systemAudioPath = undefined
+    session.systemAudioTempPath = undefined
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    session.systemAudioPath = undefined
+    session.systemAudioTempPath = undefined
+  }
+}
+
 /**
  * The core function that spawns FFmpeg and the mouse tracker to begin recording.
  * @param inputArgs - Platform-specific FFmpeg input arguments.
@@ -2473,6 +2491,8 @@ export async function stopRecording() {
       }
     }
   }
+
+  await discardEmptySystemAudio(session)
 
   // Step 3: Process and save metadata (after video file is complete)
   await processAndSaveMetadata(session)

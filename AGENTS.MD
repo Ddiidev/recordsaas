@@ -410,6 +410,7 @@ Functional baseline for current roadmap item:
 - Media tab exists with categories `Audio`, `Image`, `Video`.
 - Audio path supports import, timeline insertion, playback preview, and export integration.
 - Windows computer audio is captured through the bundled native WASAPI loopback helper and streamed directly into the configured compressed `systemAudioPath` (`AAC` or `MP3`); Linux captures through FFmpeg PulseAudio/PipeWire monitor sources directly into the configured compressed output, and preview/export reuse the same simple full-length source flow.
+- If optional computer-audio capture produces an empty file, discard only `systemAudioPath` and continue with valid screen, microphone, and webcam outputs.
 - One media-audio clip per project baseline.
 - Mix includes recording track, optional computer audio, and media audio with lane-aware media/recording region behavior.
 - `change-sound` supports local recording-track control (volume, mute, fade).
