@@ -1,3 +1,10 @@
+## [2.5.9](https://github.com/Ddiidev/recordsaas/compare/v2.5.8...v2.5.9) (2026-06-19)
+
+
+### Bug Fixes
+
+* use supported Windows build runner ([fcc4eca](https://github.com/Ddiidev/recordsaas/commit/fcc4eca2b59fa859b8ea771169851bcb1ba0027c))
+
 ## [2.5.8](https://github.com/Ddiidev/recordsaas/compare/v2.5.7...v2.5.8) (2026-06-19)
 
 
