@@ -1,4 +1,12 @@
 // --- Types ---
+export type {
+  ScreenEncoderPreference,
+  ScreenEncoderProbeResult,
+  ScreenEncoderSelectionMode,
+  ScreenEncoderStatus,
+  ScreenEncoderVendor,
+} from './screen-encoder'
+
 export type BackgroundType = 'color' | 'gradient' | 'image' | 'wallpaper'
 export type AspectRatio = '16:9' | '9:16' | '4:3' | '3:4' | '1:1'
 export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'media' | 'animation' | 'settings'
@@ -290,6 +298,10 @@ export interface ProjectState {
   videoUrl: string | null
   audioPath: string | null
   audioUrl: string | null
+  systemAudioPath: string | null
+  systemAudioUrl: string | null
+  systemAudioVolume: number
+  systemAudioMuted: boolean
   mediaAudioClip: MediaAudioClip | null
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
@@ -312,6 +324,7 @@ export interface ProjectActions {
     metadataPath: string
     webcamVideoPath?: string
     audioPath?: string
+    systemAudioPath?: string
     originalProjectPath?: string
   }) => Promise<void>
   setVideoDimensions: (dims: { width: number; height: number }) => void
@@ -320,6 +333,7 @@ export interface ProjectActions {
   setPostProcessingCursorScale: (scale: number) => Promise<void>
   reloadCursorTheme: (themeName: string) => Promise<void>
   setHasAudioTrack: (hasAudio: boolean) => void
+  updateSystemAudioSettings: (settings: { volume?: number; isMuted?: boolean }) => void
   setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void

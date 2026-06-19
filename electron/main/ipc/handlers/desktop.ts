@@ -75,14 +75,14 @@ export async function getDshowDevices(): Promise<{
       let lastDevice: { name: string; type: 'video' | 'audio' } | null = null
 
       for (const line of lines) {
-        const friendlyNameMatch = line.match(/\[dshow.*\] "([^"]+)" \((video|audio)\)/)
+        const friendlyNameMatch = line.match(/\[[^\]]+\]\s+"([^"]+)" \((video|audio)\)/)
         if (friendlyNameMatch) {
           const [, name, type] = friendlyNameMatch
           lastDevice = { name, type: type as 'video' | 'audio' }
           continue
         }
 
-        const altNameMatch = line.match(/\[dshow.*\]\s+Alternative name "([^"]+)"/)
+        const altNameMatch = line.match(/\[[^\]]+\]\s+Alternative name "([^"]+)"/)
         if (altNameMatch && lastDevice) {
           const [, alternativeName] = altNameMatch
           if (lastDevice.type === 'video') {

@@ -20,11 +20,14 @@ Current scope baseline:
 - Export final output (video and related formats).
 - Persist and reload projects through `.rsproj`.
 - Support media audio asset import and lane-based control (v2.4.2 baseline).
+- Support optional Windows/Linux computer-audio capture as a simple separate recording asset: Windows uses the bundled native WASAPI loopback helper and feeds raw PCM into FFmpeg for direct compressed output; Linux uses FFmpeg `pulse` monitor capture.
 
 Hard scope boundaries for current cycle:
 - Desktop-first guidance (not landing-page-first).
 - API context included only where desktop behavior depends on it.
 - No assumption of multi-track media audio authoring beyond current implemented contracts.
+- Computer audio remains a simple `systemAudioPath` project asset with editor-level volume/mute controls; macOS stays disabled in the recorder UI for now, and we do not introduce `recordingAudioTracks` or per-source `change-sound`.
+- Editor microphone and computer-audio controls are independent. Microphone `volume`/`isMuted` must never alter `systemAudioVolume`/`systemAudioMuted`, preview playback, or computer-audio export.
 
 ## 2. Runtime Architecture (Main, Preload, Renderer, IPC Boundaries)
 
@@ -59,13 +62,21 @@ Recorder-to-editor handoff invariant:
 Recording profile invariant:
 - Recorder startup must offer a recording profile dropdown in place of the old local-video load button. The default profile is `Native Adaptive (Recommended)`.
 - The recording profile dropdown includes profile items first, then a separator and a `Create profile` action that opens `Settings > Recording` and starts a new editable profile.
-- Recording profiles control capture-time screen/webcam resolution and FPS only; export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
-- The native adaptive recording profile is read-only in settings. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution.
+- Recording profiles control capture-time screen/webcam resolution, FPS, and audio compression defaults (`AAC | MP3`, bitrate, sample rate); export settings remain independent. During export, adaptive/native mode uses the actual recorded video properties, not the selected profile object.
+- The native adaptive recording profile keeps its video settings managed by analysis. Its screen FPS can be updated by the 60fps capability analysis tool; webcam capture stays at 30fps and requests the selected screen/area capture resolution. Audio compression settings on that profile remain user-editable.
 - The 60fps capability analysis tool should run a 5-second screen capture probe and show an in-button countdown/spinner while it is measuring so users understand the wait is intentional. On Windows, prefer FFmpeg `ddagrab`/Desktop Duplication for this probe and fall back to `gdigrab` only if Desktop Duplication fails to produce a measurable result.
+- On first recorder startup, if there is no valid stored native recording capability analysis, open `Settings > Recording` and trigger that analysis automatically before the user relies on the default profile FPS.
 - The recorder control window should stay interactive instead of using click-through behavior that sends clicks to the app behind it on Windows/macOS. Transparent chrome is fine; pointer input should land on the recorder controls.
+- When the recorder opens `Settings`, keep the window interactive (`setIgnoreMouseEvents(false)`) and render the modal in an isolated top stacking context; do not rely on transparent-window hit-testing for the close button.
 - On Windows, webcam capture options must be probed before recording when an explicit size is requested. If DShow rejects the target size, fall back to a supported common size or device default instead of aborting the recording.
+- On Windows, when webcam capture is enabled, screen capture and webcam capture must run in separate FFmpeg processes. Keep screen+mic in the main process and webcam in an auxiliary process so a slow DShow camera cannot starve `ddagrab` screen frames. Stop/cancel paths must shut down every FFmpeg process before validating or discarding session files.
+- On Windows, DShow webcam capture should use enlarged input buffering (`thread_queue_size`/`rtbufsize`) and should fall back from requested 60fps to 30fps when the camera rejects 60fps. Do not lower screen FPS just because the webcam only supports 30fps.
 - Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.
+- Performance settings own `general.forceHighPerformanceGpu`, `export.memoryLimitPercent`, and FFmpeg recording process priority. General settings must not duplicate those controls.
+- General setting `general.recordingProcessPriority` controls FFmpeg recording process scheduling with `low | normal | high | advanced`. On Windows, `normal` intentionally maps to below-normal OS priority, `low` maps to low priority, and `high` maps to above-normal without using realtime/admin-only priority.
+- When `general.recordingProcessPriority` is `advanced`, `general.recordingProcessPriorities` applies per FFmpeg role: `main` for screen/mic, `webcam` for separate webcam capture, and `systemAudio` for computer-audio recording/encoding.
 - Saved screen MP4 output must preserve the requested profile FPS as CFR on the output side. Capture inputs such as Windows `gdigrab` can expose sparse/VFR average FPS even when requested at 30fps; do not let new recordings persist as low-FPS screen files when the profile requested 30/60/120fps.
+- Recording metadata should include optional diagnostic fields for the screen capture backend, requested screen FPS, and FFmpeg version so future low-FPS investigations can confirm whether the recording used `ddagrab`, `gdigrab`, `x11grab`, or `avfoundation` and which bundled asset produced the file.
 - Webcam capture size/FPS remain profile-controlled, but the saved webcam MP4 must use controlled `libx264` CRF/VBV settings instead of mirroring the high-quality screen encoder. Keep webcam bitrate bounded for long/noisy recordings so camera files do not grow into multi-GB artifacts.
 
 Media URL invariant:
@@ -78,6 +89,7 @@ Media URL invariant:
 ### 3.1 Entry and app flow
 - `src/App.tsx`
 - `src/pages/RecorderPage.tsx`
+- `src/components/recorder/ImportProjectModal.tsx`
 - `src/lib/recorder-window.ts`
 - `src/pages/EditorPage.tsx`
 - `src/pages/RendererPage.tsx`
@@ -115,9 +127,12 @@ Media URL invariant:
 - File/project handlers: `electron/main/ipc/handlers/file-system.ts`
 - Auth handlers: `electron/main/ipc/handlers/auth.ts`
 - Preload API surface: `electron/preload.ts`
+- Screen encoder resolver/probes: `electron/main/features/screen-encoder.ts`
+- Windows monitor capture mapper: `electron/main/features/windows-screen-capture.ts`
 
 ### 3.6 Types and contracts
 - Canonical app types: `src/types/index.ts`
+- Screen encoder settings/status contract: `src/types/screen-encoder.ts`
 
 ### 3.7 Release automation
 - Release workflow: `.github/workflows/release.yml`
@@ -130,6 +145,10 @@ Store composition:
 - Undo/redo history is intentionally partialized to visual/timeline state; operational state must not pollute history.
 
 Media-audio contract state:
+- `systemAudioPath: string | null`
+- `systemAudioUrl: string | null`
+- `systemAudioVolume: number`
+- `systemAudioMuted: boolean`
 - `mediaAudioClip: MediaAudioClip | null`
 - `mediaAudioRegions: Record<string, MediaAudioRegion>`
 - `changeSoundRegions: Record<string, ChangeSoundRegion>`
@@ -144,8 +163,9 @@ Core business rules:
 2. `change-sound` regions affect recording audio only.
 3. Lane precedence applies when overlaps occur (upper lane wins).
 4. Region-level mute/volume/fade are enforced on applicable tracks.
-5. Final mix includes recording + media when both are present.
-6. Image/video media categories can remain placeholder if no render/export behavior is implemented.
+5. Computer audio follows the main recording timeline and supports only whole-track editor volume/mute.
+6. Final mix includes recording + optional computer audio + media when present.
+7. Image/video media categories can remain placeholder if no render/export behavior is implemented.
 
 Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.
@@ -153,6 +173,10 @@ Export startup invariant:
 - When rendering without an active project folder, the output path must resolve under `<RecordSaaS root>/General/`. When rendering from an active project, the active project folder remains the output base.
 - Exporting a new project must not show a folder picker. The renderer should request a project name, validate it through the main process, and save to `<RecordSaaS root>/<validated project name>/`.
 - Project folder names must be validated against the current OS folder-name rules before saving; do not accept path separators, reserved Windows device names, trailing Windows dots/spaces, control characters, or empty names.
+- When saving a new project to a name whose folder already exists, the main process must show a replacement confirmation before writing. Choosing `Substituir` deletes that existing project folder and saves the new project there; choosing `OK` cancels the save and returns the user to the naming popup.
+- Saving a project should write `project.rsproj`, copy owned media into the project folder, and create hidden sidecar `.thumbnail.png` from the main screen video. Thumbnail failures may be logged without corrupting the project save.
+- The recorder import flow should open the in-app project library modal first. That modal lists direct child folders under the configured RecordSaaS root that contain `project.rsproj`, shows `.thumbnail.png` when present, and uses file/folder timestamp plus folder size fallbacks for legacy projects.
+- Manual `.rsproj` import through the OS file picker remains available from the import modal and continues to use the existing Explorer/Finder flow.
 - Renderer video export must not load full local MP4 files into a single renderer/main-process buffer. Screen and webcam video decoding should stream chunks through `fs:statFile` and `fs:readFileChunk` into MP4Box/WebCodecs so projects with files larger than 2GiB remain exportable.
 - Chunked MP4 pumps must respect the next offset returned by `MP4Box.appendBuffer` and call `MP4Box.seek(0, true)` after extraction starts; many recordings keep `moov` at EOF, and linear chunk feeding can reach `onReady` without extracting any main-video samples.
 - Chunked MP4/WebCodecs export must release MP4Box samples after they are submitted to the decoder and must size chunk, decode, frame, and encoder queues from the configured export RAM budget. The user-facing RAM setting is stored as `export.memoryLimitPercent`; `100%` maps to a process budget below 70% of physical RAM, not to all installed memory. The renderer should pause MP4 pumping/rendering under memory pressure and fail with a clear budget error instead of continuing to grow unbounded.
@@ -191,6 +215,17 @@ IPC contract baseline (media import):
 - `{ canceled: false, asset: { path: string, name: string } }`
 - Mandatory rule: selected media is copied into runtime storage (`~/.recordsaas`); original user path must not become session ownership.
 
+IPC contract baseline (project library/import):
+- Channel: `fs:listSavedProjects`
+- Return union:
+- `{ success: true, rootPath: string, projects: SavedProjectListItem[] }`
+- `{ success: false, rootPath?: string, error: string }`
+- `SavedProjectListItem` includes `name`, `folderPath`, `projectFilePath`, optional `thumbnailPath`/`thumbnailUrl`, `recordedAt`, `sizeBytes`, and `isLegacy`.
+- Channel: `recording:import-project-file`
+- Input: absolute `.rsproj` path selected from the library modal.
+- Return shape matches `recording:import-project`.
+- Manual picker channel `recording:import-project` remains the compatibility path for files outside the configured RecordSaaS root.
+
 `.rsproj` compatibility baseline:
 - Serialized fields of interest include `mediaAudioClip`, `mediaAudioRegions`, `changeSoundRegions`.
 - Serialized camera/layout fields of interest include `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `swapRegions`.
@@ -223,6 +258,7 @@ Webcam layout contract baseline:
 - With frame padding set to `0`, `side-by-side` must not add an extra internal camera inset or gap; camera and desktop areas should be able to reach the frame edges.
 - `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
 - New recordings/projects without serialized webcam layout or visibility must inherit those values from the active preset before falling back to app defaults.
+- During editor preview playback, webcam sync currently uses the baseline hard-resync behavior from `Preview.tsx`; do not reintroduce playback-rate nudging or renderer border snapping without fresh visual proof because those changes were rolled back during swap/border flicker investigation.
 
 ## 5. UI and Styling Baseline (Tokens and Consistency)
 
@@ -302,7 +338,7 @@ Inputs and selects:
 
 Slider and switch:
 - `Slider` track: `h-2`, rounded-full; handle: `w-[18px] h-[18px] rounded-sm border-primary/40`.
-- `Switch`: root `h-6 w-11 rounded-md`; thumb `h-5 w-5 rounded-[4px]`.
+- `Switch`: root `h-6 w-11 rounded-[4px] p-[2px]` with direct background color; thumb `h-4 w-4 rounded-[4px]` with visible shadow in both on/off states.
 
 ### 5.3 Layout and dimension baseline (editor)
 
@@ -373,8 +409,9 @@ Motion:
 Functional baseline for current roadmap item:
 - Media tab exists with categories `Audio`, `Image`, `Video`.
 - Audio path supports import, timeline insertion, playback preview, and export integration.
+- Windows computer audio is captured through the bundled native WASAPI loopback helper and streamed directly into the configured compressed `systemAudioPath` (`AAC` or `MP3`); Linux captures through FFmpeg PulseAudio/PipeWire monitor sources directly into the configured compressed output, and preview/export reuse the same simple full-length source flow.
 - One media-audio clip per project baseline.
-- Mix includes recording track plus media audio with lane-aware region behavior.
+- Mix includes recording track, optional computer audio, and media audio with lane-aware media/recording region behavior.
 - `change-sound` supports local recording-track control (volume, mute, fade).
 
 Out of scope baseline for this item:
@@ -490,6 +527,7 @@ Escalation path:
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |
+| Screen capture/encoder selection issue | `electron/main/features/windows-screen-capture.ts`, `electron/main/features/screen-encoder.ts`, `electron/main/features/recording-manager.ts`, `src/components/settings/PerformanceTab.tsx`, `src/pages/RecorderPage.tsx` | Critical | Probe selected encoder, verify Automatic/manual/Generic warnings, record secondary monitors with mixed DPI, confirm cursor appears once, and compare hardware versus Generic CPU usage |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
 | Release CI / artifact publishing change | `.github/workflows/release.yml`, `.releaserc.json`, `package.json` | High | Confirm release tag/version handoff, public asset names, and GitHub Release upload behavior |
 

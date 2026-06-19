@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { AdjustmentsHorizontal, IconSwitch, InfoCircle, InfoCircleSolid, Keyboard, Settings, UserCircle, X, type IconComponent } from '@icons'
+import {
+  AdjustmentsHorizontal,
+  IconSwitch,
+  InfoCircle,
+  InfoCircleSolid,
+  Keyboard,
+  Settings,
+  UserCircle,
+  X,
+  type IconComponent,
+} from '@icons'
 import { GeneralTab } from './GeneralTab'
 import { AboutTab } from './AboutTab'
 import { ShortcutsTab } from './ShortcutsTab'
 import { AccountTab } from './AccountTab'
 import { RecordingProfilesTab } from './RecordingProfilesTab'
+import { PerformanceTab } from './PerformanceTab'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -14,14 +25,18 @@ interface SettingsModalProps {
   isTransparent?: boolean
   defaultTab?: SettingsTab
   recordingProfileCreateRequestId?: number
+  recordingProfileAnalyzeRequestId?: number
+  highlightScreenEncoderRequestId?: number
   onRecordingProfileCreateRequestHandled?: () => void
+  onRecordingProfileAnalyzeRequestHandled?: () => void
 }
 
-export type SettingsTab = 'general' | 'recording' | 'shortcuts' | 'account' | 'about'
+export type SettingsTab = 'general' | 'recording' | 'performance' | 'shortcuts' | 'account' | 'about'
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconComponent; solid?: IconComponent }> = [
   { id: 'general', label: 'General', icon: Settings },
   { id: 'recording', label: 'Recording', icon: AdjustmentsHorizontal },
+  { id: 'performance', label: 'Performance', icon: AdjustmentsHorizontal },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'account', label: 'Account', icon: UserCircle },
   { id: 'about', label: 'About', icon: InfoCircle, solid: InfoCircleSolid },
@@ -33,7 +48,10 @@ export function SettingsModal({
   isTransparent = false,
   defaultTab = 'general',
   recordingProfileCreateRequestId = 0,
+  recordingProfileAnalyzeRequestId = 0,
+  highlightScreenEncoderRequestId = 0,
   onRecordingProfileCreateRequestHandled,
+  onRecordingProfileAnalyzeRequestHandled,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab)
 
@@ -53,9 +71,13 @@ export function SettingsModal({
         return (
           <RecordingProfilesTab
             createProfileRequestId={recordingProfileCreateRequestId}
+            analyzeRequestId={recordingProfileAnalyzeRequestId}
             onCreateProfileRequestHandled={onRecordingProfileCreateRequestHandled}
+            onAnalyzeRequestHandled={onRecordingProfileAnalyzeRequestHandled}
           />
         )
+      case 'performance':
+        return <PerformanceTab highlightScreenEncoderRequestId={highlightScreenEncoderRequestId} />
       case 'shortcuts':
         return <ShortcutsTab />
       case 'account':
@@ -71,17 +93,19 @@ export function SettingsModal({
     <div
       data-interactive="true"
       className={cn(
-        'fixed inset-0 z-50 flex items-center justify-center',
-        isTransparent ? 'bg-transparent' : 'bg-background/80 backdrop-blur-[2px]'
+        'fixed inset-0 z-[1000] flex items-center justify-center pointer-events-auto',
+        isTransparent ? 'bg-transparent' : 'bg-background/80 backdrop-blur-[2px]',
       )}
+      style={{ WebkitAppRegion: 'no-drag' }}
       onClick={onClose}
     >
       <div
         data-interactive="true"
         className={cn(
-          'relative m-3 flex h-[calc(100vh-1.5rem)] max-h-[780px] w-full max-w-[1320px] flex-row overflow-hidden rounded-lg border bg-card shadow-2xl',
-          isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border'
+          'relative isolate m-3 flex h-[calc(100vh-1.5rem)] max-h-[780px] w-full max-w-[1320px] flex-row overflow-hidden rounded-lg border bg-card shadow-2xl pointer-events-auto',
+          isTransparent ? 'border-white/20 dark:border-white/20' : 'border-border',
         )}
+        style={{ WebkitAppRegion: 'no-drag' }}
         onClick={(e) => e.stopPropagation()}
       >
         {window.process?.platform !== 'darwin' && (
@@ -89,7 +113,7 @@ export function SettingsModal({
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="icon-hover absolute right-4 top-4 z-[60] h-8 w-8 rounded-md border border-border/60 text-muted-foreground transition-colors hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive"
+            className="icon-hover absolute right-4 top-4 z-[1002] h-8 w-8 rounded-md border border-border/60 text-muted-foreground transition-colors hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive pointer-events-auto"
           >
             <span className="sr-only">Close</span>
             <X className="h-4 w-4" />

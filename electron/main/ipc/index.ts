@@ -45,10 +45,13 @@ export function registerIpcHandlers() {
   // Recording
   ipcMain.handle('recording:start', recordingHandlers.handleStartRecording)
   ipcMain.handle('recording:analyze-capability', recordingHandlers.handleAnalyzeRecordingCapability)
+  ipcMain.handle('recording:get-screen-encoder-status', recordingHandlers.handleGetScreenEncoderStatus)
+  ipcMain.handle('recording:get-computer-audio-support', recordingHandlers.handleGetComputerAudioSupport)
   ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
   ipcMain.handle('recording:import-project', recordingHandlers.handleImportProject)
+  ipcMain.handle('recording:import-project-file', recordingHandlers.handleImportProjectFile)
   ipcMain.handle('media:import-audio', mediaHandlers.handleImportMediaAudio)
 
   // Export
@@ -62,6 +65,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)
   ipcMain.handle('fs:getRecordSaaSRootPath', fsHandlers.handleGetRecordSaaSRootPath)
   ipcMain.handle('fs:getDefaultRecordSaaSRootPath', fsHandlers.handleGetDefaultRecordSaaSRootPath)
+  ipcMain.handle('fs:listSavedProjects', fsHandlers.handleListSavedProjects)
   ipcMain.handle('fs:validateProjectFolderName', fsHandlers.handleValidateProjectFolderName)
   ipcMain.handle('fs:resolveProjectFolder', fsHandlers.handleResolveProjectFolder)
   ipcMain.handle('fs:resolveExportOutputPath', fsHandlers.handleResolveExportOutputPath)

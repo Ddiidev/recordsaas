@@ -1394,14 +1394,26 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   // Prepare final audio for export:
   // - recording track (modulated by change-sound regions)
+  // - optional computer audio track
   // - media track (independent media regions)
-  // - optional mix of both tracks
+  // - optional mix of all available tracks
   let resolvedAudioInputPath: string | null = null
 
   const projectStateRecord = projectState as Record<string, unknown>
   try {
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
+    const recordingVolume =
+      typeof projectStateRecord.volume === 'number' && Number.isFinite(projectStateRecord.volume)
+        ? Math.max(0, Math.min(projectStateRecord.volume, 1))
+        : 1
+    const recordingMuted = projectStateRecord.isMuted === true || recordingVolume <= 0
+    const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
+    const systemAudioVolume =
+      typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
+        ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, 1))
+        : 1
+    const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioVolume <= 0
     const mediaClip = (projectStateRecord.mediaAudioClip || null) as MediaAudioClipLike | null
     const mediaPath = normalizeMediaPath(mediaClip?.path)
     const timelineLanes = Array.isArray(projectStateRecord.timelineLanes)
@@ -1415,6 +1427,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         : 0
     const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
     const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
+    const baseTimelineSegments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes)
     const recordingTimelineSegments = buildAudioTimelineSegments(
       duration,
       cutRegions,
@@ -1434,13 +1447,29 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       Math.abs(recordingTimelineSegments[0].start) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].duration - duration) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].speed - 1) < 0.01 &&
+      Math.abs(recordingVolume - 1) < 0.001 &&
       changeSoundRegions.length === 0
+    const systemAudioHasNoTransform =
+      baseTimelineSegments.length === 1 &&
+      Math.abs(baseTimelineSegments[0].start) < 0.001 &&
+      Math.abs(baseTimelineSegments[0].duration - duration) < 0.001 &&
+      Math.abs(baseTimelineSegments[0].speed - 1) < 0.01 &&
+      Math.abs(systemAudioVolume - 1) < 0.001 &&
+      !systemAudioMuted
 
     let recordingTrackPath: string | null = null
+    let systemTrackPath: string | null = null
     let mediaTrackPath: string | null = null
 
-    if (recordingPath) {
-      const recordingSegments = buildRecordingExportAudioSegments(recordingTimelineSegments, changeSoundRegions, timelineLanes)
+    if (recordingPath && !recordingMuted) {
+      const recordingSegments = buildRecordingExportAudioSegments(
+        recordingTimelineSegments,
+        changeSoundRegions,
+        timelineLanes,
+      ).map((segment) => ({
+        ...segment,
+        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * recordingVolume)),
+      }))
       if (recordingSegments.length > 0) {
         if (recordingHasNoTransform) {
           log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')
@@ -1452,6 +1481,26 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
           }
           recordingTrackPath = processedRecordingPath
           processedAudioTempRoots.add(path.dirname(processedRecordingPath))
+        }
+      }
+    }
+
+    if (systemAudioPath && !systemAudioMuted) {
+      const systemSegments = buildRecordingExportAudioSegments(baseTimelineSegments, [], timelineLanes).map((segment) => ({
+        ...segment,
+        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
+      }))
+      if (systemSegments.length > 0) {
+        if (systemAudioHasNoTransform) {
+          log.info('[ExportManager] Reusing original computer audio; no computer audio edits detected.')
+          systemTrackPath = systemAudioPath
+        } else {
+          const processedSystemPath = await renderProcessedAudioFile(systemAudioPath, systemSegments, runAuxiliaryFFmpeg)
+          if (!processedSystemPath) {
+            throw new Error('Failed to process computer audio track')
+          }
+          systemTrackPath = processedSystemPath
+          processedAudioTempRoots.add(path.dirname(processedSystemPath))
         }
       }
     }
@@ -1468,15 +1517,22 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       }
     }
 
-    if (recordingTrackPath && mediaTrackPath) {
-      const mixedTrackPath = await mixAudioTracks(recordingTrackPath, mediaTrackPath, runAuxiliaryFFmpeg)
-      if (!mixedTrackPath) {
-        throw new Error('Failed to mix recording and media audio tracks')
+    const audioTracksToMix = [recordingTrackPath, systemTrackPath, mediaTrackPath].filter(
+      (trackPath): trackPath is string => Boolean(trackPath),
+    )
+    if (audioTracksToMix.length > 1) {
+      let mixedTrackPath = audioTracksToMix[0]
+      for (const nextTrackPath of audioTracksToMix.slice(1)) {
+        const nextMixedTrackPath = await mixAudioTracks(mixedTrackPath, nextTrackPath, runAuxiliaryFFmpeg)
+        if (!nextMixedTrackPath) {
+          throw new Error('Failed to mix export audio tracks')
+        }
+        mixedTrackPath = nextMixedTrackPath
+        processedAudioTempRoots.add(path.dirname(mixedTrackPath))
       }
       resolvedAudioInputPath = mixedTrackPath
-      processedAudioTempRoots.add(path.dirname(mixedTrackPath))
     } else {
-      resolvedAudioInputPath = recordingTrackPath || mediaTrackPath
+      resolvedAudioInputPath = audioTracksToMix[0] || null
     }
   } catch (error) {
     log.error('[ExportManager] Error while preparing export audio input:', error)

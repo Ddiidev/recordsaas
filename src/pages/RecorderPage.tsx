@@ -17,21 +17,29 @@ import {
   Square,
   Settings,
   UserCircle,
+  Volume,
 } from '@icons'
 import { Button } from '../components/ui/button'
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../components/ui/select'
+import { Switch } from '../components/ui/switch'
 import { SettingsModal, type SettingsTab } from '../components/settings/SettingsModal'
+import { ImportProjectModal } from '../components/recorder/ImportProjectModal'
 import { useDeviceManager } from '../hooks/useDeviceManager'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder-window'
 import { cn } from '../lib/utils'
 import type { AuthSession } from '../types/auth'
 import {
+  HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY,
+  type ScreenEncoderStatus,
+} from '../types/screen-encoder'
+import {
   NATIVE_RECORDING_ANALYSIS_SETTING_KEY,
   NATIVE_RECORDING_PROFILE_ID,
   RECORDING_PROFILES_SETTING_KEY,
   SELECTED_RECORDING_PROFILE_SETTING_KEY,
   getRecordingProfileLabel,
+  isRecordingCapabilityAnalysis,
   normalizeRecordingProfiles,
   type RecordingCapabilityAnalysis,
   type RecordingProfile,
@@ -67,6 +75,7 @@ type ActionInProgress = 'none' | 'recording' | 'loading'
 type RecordingSource = 'area' | 'fullscreen' | 'window'
 type ToolbarSelectKey = 'display' | 'webcam' | 'mic' | 'profile'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
+type EncoderWarningDecision = 'continue' | 'configure'
 
 export function RecorderPage() {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
@@ -77,8 +86,16 @@ export function RecorderPage() {
   const [selectedDisplayId, setSelectedDisplayId] = useState<string>('')
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
+  const [computerAudioEnabled, setComputerAudioEnabled] = useState(false)
+  const [computerAudioSupported, setComputerAudioSupported] = useState(false)
+  const [computerAudioSupportReason, setComputerAudioSupportReason] = useState<string | null>(null)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
+  const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
+  const [highlightScreenEncoderRequestId, setHighlightScreenEncoderRequestId] = useState(0)
+  const [encoderWarningStatus, setEncoderWarningStatus] = useState<ScreenEncoderStatus | null>(null)
+  const [suppressGenericEncoderWarning, setSuppressGenericEncoderWarning] = useState(false)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
@@ -99,23 +116,42 @@ export function RecorderPage() {
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
+  const hasRequestedInitialRecordingAnalysisRef = useRef(false)
+  const encoderWarningResolverRef = useRef<((decision: EncoderWarningDecision) => void) | null>(null)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
-  const recorderWindowPreset = isSettingsModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+  const recorderWindowPreset =
+    isSettingsModalOpen || isImportProjectModalOpen || encoderWarningStatus
+      ? 'settings'
+      : isWebcamPreviewVisible
+        ? 'preview'
+        : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
     }
     return 'Not logged in'
   }, [authSession.isAuthenticated, authSession.user?.email, authSession.user?.name])
+  const computerAudioTooltip = useMemo(() => {
+    if (platform === 'darwin') {
+      return 'Ainda não implementado no macOS. Logo mais será implementado.'
+    }
+
+    return computerAudioSupportReason || 'Computer audio capture is not available right now.'
+  }, [computerAudioSupportReason, platform])
   const selectedRecordingProfile = useMemo(
     () =>
-      recordingProfiles.find((profile) => profile.id === selectedRecordingProfileId) ||
-      recordingProfiles[0] ||
+      recordingProfiles.find((profile) => profile.id === selectedRecordingProfileId) ??
+      recordingProfiles[0] ??
       normalizeRecordingProfiles(null)[0],
     [recordingProfiles, selectedRecordingProfileId],
   )
+  const keepRecorderMouseInteractive = useCallback(() => {
+    if (platform === 'win32' || platform === 'darwin') {
+      window.electronAPI.setRecorderIgnoreMouse(false)
+    }
+  }, [platform])
 
   const loadAuthSession = useCallback(async () => {
     try {
@@ -134,12 +170,19 @@ export function RecorderPage() {
         window.electronAPI.getSetting<string>(SELECTED_RECORDING_PROFILE_SETTING_KEY),
         window.electronAPI.getSetting<RecordingCapabilityAnalysis>(NATIVE_RECORDING_ANALYSIS_SETTING_KEY),
       ])
-      const recommendedFps = analysis?.recommendedFps === 30 ? 30 : 60
+      const validAnalysis = isRecordingCapabilityAnalysis(analysis) ? analysis : null
+      const recommendedFps = validAnalysis?.recommendedFps === 60 ? 60 : 30
       const normalized = normalizeRecordingProfiles(storedProfiles, recommendedFps)
       setRecordingProfiles(normalized)
       setSelectedRecordingProfileId(
         normalized.some((profile) => profile.id === selectedId) ? selectedId : NATIVE_RECORDING_PROFILE_ID,
       )
+      if (!validAnalysis && !hasRequestedInitialRecordingAnalysisRef.current) {
+        hasRequestedInitialRecordingAnalysisRef.current = true
+        setSettingsDefaultTab('recording')
+        setSettingsModalOpen(true)
+        setRecordingProfileAnalyzeRequestId((current) => current + 1)
+      }
     } catch (error) {
       console.error('Failed to load recording profiles:', error)
       setRecordingProfiles(normalizeRecordingProfiles(null))
@@ -172,12 +215,14 @@ export function RecorderPage() {
   }, [teardownWebcamPreview])
 
   const handleOpenSettings = () => {
+    keepRecorderMouseInteractive()
     setSettingsDefaultTab('general')
     setSettingsModalOpen(true)
   }
 
   const handleOpenAccount = async () => {
     if (authSession.isAuthenticated) {
+      keepRecorderMouseInteractive()
       setSettingsDefaultTab('account')
       setSettingsModalOpen(true)
       return
@@ -191,6 +236,7 @@ export function RecorderPage() {
   }
 
   const handleSettingsClose = () => {
+    keepRecorderMouseInteractive()
     setSettingsModalOpen(false)
     setSettingsDefaultTab('general')
     void loadRecordingProfiles()
@@ -215,17 +261,29 @@ export function RecorderPage() {
 
     const initialize = async () => {
       try {
-        const [savedWebcamId, savedMicId, savedCursorScale, savedPreparationCountdown, fetchedDisplays] =
-          await Promise.all([
-            window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
-            window.electronAPI.getSetting<string>('recorder.selectedMicId'),
-            window.electronAPI.getSetting<number>('recorder.cursorScale'),
-            window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
-            window.electronAPI.getDisplays(),
-          ])
+        const [
+          savedWebcamId,
+          savedMicId,
+          savedComputerAudioEnabled,
+          computerAudioSupport,
+          savedCursorScale,
+          savedPreparationCountdown,
+          fetchedDisplays,
+        ] = await Promise.all([
+          window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
+          window.electronAPI.getSetting<string>('recorder.selectedMicId'),
+          window.electronAPI.getSetting<boolean>('recorder.computerAudioEnabled'),
+          window.electronAPI.getComputerAudioSupport(),
+          window.electronAPI.getSetting<number>('recorder.cursorScale'),
+          window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
+          window.electronAPI.getDisplays(),
+        ])
 
         setSelectedWebcamId(savedWebcamId || 'none')
         setSelectedMicId(savedMicId || 'none')
+        setComputerAudioSupported(computerAudioSupport.supported)
+        setComputerAudioSupportReason(computerAudioSupport.reason || null)
+        setComputerAudioEnabled(computerAudioSupport.supported && savedComputerAudioEnabled === true)
 
         if (typeof savedPreparationCountdown === 'number' && isPreparationCountdownOption(savedPreparationCountdown)) {
           setPreparationCountdownSeconds(savedPreparationCountdown)
@@ -416,16 +474,12 @@ export function RecorderPage() {
 
   // Keep the recorder window interactive while its controls are visible.
   useEffect(() => {
-    if (platform === 'win32' || platform === 'darwin') {
-      window.electronAPI.setRecorderIgnoreMouse(false)
-    }
+    keepRecorderMouseInteractive()
 
     return () => {
-      if (platform === 'win32' || platform === 'darwin') {
-        window.electronAPI.setRecorderIgnoreMouse(false)
-      }
+      keepRecorderMouseInteractive()
     }
-  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, platform])
+  }, [isAnyToolbarSelectOpen, isSettingsModalOpen, keepRecorderMouseInteractive])
 
   const clearPreparationCountdown = () => {
     if (preparationCountdownIntervalRef.current !== null) {
@@ -433,6 +487,39 @@ export function RecorderPage() {
       preparationCountdownIntervalRef.current = null
     }
     setPreparationSecondsLeft(null)
+  }
+
+  const requestEncoderWarning = (status: ScreenEncoderStatus) =>
+    new Promise<EncoderWarningDecision>((resolve) => {
+      encoderWarningResolverRef.current = resolve
+      setSuppressGenericEncoderWarning(false)
+      setEncoderWarningStatus(status)
+    })
+
+  const resolveEncoderWarning = (decision: EncoderWarningDecision) => {
+    if (
+      decision === 'continue' &&
+      encoderWarningStatus?.preference === 'auto' &&
+      suppressGenericEncoderWarning
+    ) {
+      window.electronAPI.setSetting(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY, true)
+    }
+
+    setEncoderWarningStatus(null)
+    const resolver = encoderWarningResolverRef.current
+    encoderWarningResolverRef.current = null
+    resolver?.(decision)
+  }
+
+  const openEncoderSettings = () => {
+    resolveEncoderWarning('configure')
+    setActionInProgress('none')
+    setRecordingState('idle')
+    setIsRecording(false)
+    clearPreparationCountdown()
+    setSettingsDefaultTab('performance')
+    setHighlightScreenEncoderRequestId((current) => current + 1)
+    setSettingsModalOpen(true)
   }
 
   const resolvePreparationCountdownSeconds = async () => {
@@ -498,6 +585,7 @@ export function RecorderPage() {
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
         webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
         mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
+        computerAudioEnabled,
         recordingProfile: selectedRecordingProfile,
       })
 
@@ -521,6 +609,22 @@ export function RecorderPage() {
     setRecordingState('preparing')
 
     try {
+      const [encoderStatus, hideGenericWarning] = await Promise.all([
+        window.electronAPI.getScreenEncoderStatus(false),
+        window.electronAPI.getSetting<boolean>(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY),
+      ])
+      const automaticGenericWarning =
+        encoderStatus.preference === 'auto' && !encoderStatus.isHardware && hideGenericWarning !== true
+      const manualFallbackWarning =
+        encoderStatus.preference !== 'auto' &&
+        encoderStatus.preference !== 'generic' &&
+        encoderStatus.selectionMode === 'fallback'
+
+      if (automaticGenericWarning || manualFallbackWarning) {
+        const decision = await requestEncoderWarning(encoderStatus)
+        if (decision === 'configure') return
+      }
+
       let selectedAreaGeometry:
         | {
             x: number
@@ -557,20 +661,46 @@ export function RecorderPage() {
     window.electronAPI.stopRecording()
   }
 
-  const handleImportProject = async () => {
+  const handleImportProject = () => {
+    setImportProjectModalOpen(true)
+  }
+
+  const handleImportProjectFile = async (projectFilePath: string) => {
+    setActionInProgress('loading')
+    try {
+      const result = await window.electronAPI.importProjectFile(projectFilePath)
+      if (result.canceled) setActionInProgress('none')
+    } catch (error) {
+      console.error('Failed to import project from library:', error)
+      setActionInProgress('none')
+    }
+  }
+
+  const handleImportProjectManually = async () => {
     setActionInProgress('loading')
     try {
       const result = await window.electronAPI.importProject()
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
-      console.error('Failed to import project from file:', error)
+      console.error('Failed to import project manually:', error)
       setActionInProgress('none')
     }
+  }
+
+  const handleCloseImportProjectModal = () => {
+    if (actionInProgress === 'loading') return
+    setImportProjectModalOpen(false)
   }
 
   const handleSelectionChange = (setter: (id: string) => void, key: string) => (id: string) => {
     setter(id)
     window.electronAPI.setSetting(key, id)
+  }
+
+  const handleComputerAudioChange = (checked: boolean) => {
+    const enabled = computerAudioSupported && checked
+    setComputerAudioEnabled(enabled)
+    window.electronAPI.setSetting('recorder.computerAudioEnabled', enabled)
   }
 
   const handleProfileChange = (id: string) => {
@@ -584,6 +714,31 @@ export function RecorderPage() {
     setSelectedRecordingProfileId(id)
     window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
+
+  const computerAudioControl = (
+    <div
+      className={cn(
+        'flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3',
+        !computerAudioSupported && 'opacity-70',
+      )}
+      style={{ WebkitAppRegion: 'no-drag' }}
+    >
+      <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-6 w-6 shrink-0">
+        <Volume size={14} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+      </IconShell>
+      <div className="flex flex-col leading-none">
+        <span className="text-[11px] font-medium text-foreground">PC audio</span>
+        <span className="text-[10px] text-muted-foreground">
+          {computerAudioEnabled ? 'Included' : computerAudioSupported ? 'Off' : 'Unsupported'}
+        </span>
+      </div>
+      <Switch
+        checked={computerAudioEnabled}
+        onCheckedChange={handleComputerAudioChange}
+        disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
+      />
+    </div>
+  )
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -650,7 +805,9 @@ export function RecorderPage() {
                           <DeviceDesktop size={14} />
                         </IconShell>
                         <span className="truncate">
-                          {truncateRecorderLabel(displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...')}
+                          {truncateRecorderLabel(
+                            displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...',
+                          )}
                         </span>
                       </div>
                     </SelectValue>
@@ -748,6 +905,17 @@ export function RecorderPage() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                {!computerAudioSupported ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>{computerAudioControl}</TooltipTrigger>
+                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                      {computerAudioTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  computerAudioControl
+                )}
 
                 <Select
                   value={selectedRecordingProfile.id}
@@ -934,13 +1102,59 @@ export function RecorderPage() {
         </div>
       )}
 
+      <ImportProjectModal
+        isOpen={isImportProjectModalOpen}
+        isImporting={actionInProgress === 'loading'}
+        onClose={handleCloseImportProjectModal}
+        onImportProject={(projectFilePath) => {
+          void handleImportProjectFile(projectFilePath)
+        }}
+        onImportManually={() => {
+          void handleImportProjectManually()
+        }}
+      />
+
+      {encoderWarningStatus && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-background/80 p-6">
+          <div className="w-full max-w-xl rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <h2 className="text-lg font-semibold">
+              {encoderWarningStatus.preference !== 'auto' ? 'Selected encoder is unavailable' : 'Generic screen encoder'}
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {encoderWarningStatus.fallbackReason ||
+                'Generic CPU mode can increase CPU usage and reduce FPS in games.'}
+            </p>
+            {encoderWarningStatus.preference === 'auto' && (
+              <label className="mt-5 flex items-center gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={suppressGenericEncoderWarning}
+                  onChange={(event) => setSuppressGenericEncoderWarning(event.target.checked)}
+                />
+                Do not show again
+              </label>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <Button variant="secondary" onClick={openEncoderSettings}>Configure</Button>
+              <Button onClick={() => resolveEncoderWarning('continue')}>Continue with Generic</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={handleSettingsClose}
         isTransparent
         defaultTab={settingsDefaultTab}
         recordingProfileCreateRequestId={recordingProfileCreateRequestId}
+        recordingProfileAnalyzeRequestId={recordingProfileAnalyzeRequestId}
+        highlightScreenEncoderRequestId={highlightScreenEncoderRequestId}
         onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
+        onRecordingProfileAnalyzeRequestHandled={() => {
+          setRecordingProfileAnalyzeRequestId(0)
+          void loadRecordingProfiles()
+        }}
       />
     </TooltipProvider>
   )
