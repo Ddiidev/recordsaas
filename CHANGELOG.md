@@ -1,3 +1,10 @@
+## [2.5.10](https://github.com/Ddiidev/recordsaas/compare/v2.5.9...v2.5.10) (2026-06-19)
+
+
+### Bug Fixes
+
+* preserve system audio timeline during silence ([7ac3e4f](https://github.com/Ddiidev/recordsaas/commit/7ac3e4f435d8188e02ff154e2ce6f92c703ffe3e))
+
 ## [2.5.9](https://github.com/Ddiidev/recordsaas/compare/v2.5.8...v2.5.9) (2026-06-19)
 
 
