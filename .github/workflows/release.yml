@@ -54,7 +54,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             build_command: npm run dist:linux
-          - os: windows-latest
+          - os: windows-2022
             build_command: npm run dist:win
           - os: macos-latest
             build_command: npm run dist:mac-x64

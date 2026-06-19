@@ -438,6 +438,7 @@ Desktop-safe integration rule:
 
 Release CI baseline:
 - `.github/workflows/release.yml` is the source of truth for desktop release automation.
+- Windows release builds use `windows-2022`; `global-mouse-events` depends on `node-gyp@10`, which supports Visual Studio 2022 but not the Visual Studio 18 image currently exposed by `windows-latest`.
 - Semantic-release creates the GitHub Release/tag first; the build matrix then compiles per OS and uploads public release assets to that existing GitHub Release.
 - `scripts/ensure-binaries.mjs` must resolve FFmpeg release assets through direct GitHub release download URLs by default, with authenticated GitHub API lookup only as fallback so CI is not blocked by anonymous API rate limits.
 - Public desktop assets are limited to `RecordSaaSSetup-mac-v<version>.zip`, `RecordSaaSSetup-linux-v<version>.zip`, and `RecordSaaSSetup-windows-v<version>.exe`.
