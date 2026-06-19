@@ -1,3 +1,10 @@
+## [2.5.8](https://github.com/Ddiidev/recordsaas/compare/v2.5.7...v2.5.8) (2026-06-19)
+
+
+### Bug Fixes
+
+* package Windows mouse tracking dependency ([1a17a2b](https://github.com/Ddiidev/recordsaas/commit/1a17a2bdf41665353244f0ac6c4f7d690cf3e08b))
+
 ## [2.5.7](https://github.com/Ddiidev/recordsaas/compare/v2.5.6...v2.5.7) (2026-06-19)
 
 
