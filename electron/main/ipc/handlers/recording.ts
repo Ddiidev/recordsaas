@@ -10,6 +10,7 @@ import {
   analyzeRecordingCapability,
   getComputerAudioSupport,
 } from '../../features/recording-manager'
+import { getScreenEncoderStatus } from '../../features/screen-encoder'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function handleStartRecording(_event: any, options: any) {
@@ -22,6 +23,10 @@ export function handleAnalyzeRecordingCapability() {
 
 export function handleGetComputerAudioSupport() {
   return getComputerAudioSupport()
+}
+
+export function handleGetScreenEncoderStatus(_event: unknown, refresh = false) {
+  return getScreenEncoderStatus(refresh)
 }
 
 export function handleLoadVideoFromFile() {

@@ -27,6 +27,7 @@ Hard scope boundaries for current cycle:
 - API context included only where desktop behavior depends on it.
 - No assumption of multi-track media audio authoring beyond current implemented contracts.
 - Computer audio remains a simple `systemAudioPath` project asset with editor-level volume/mute controls; macOS stays disabled in the recorder UI for now, and we do not introduce `recordingAudioTracks` or per-source `change-sound`.
+- Editor microphone and computer-audio controls are independent. Microphone `volume`/`isMuted` must never alter `systemAudioVolume`/`systemAudioMuted`, preview playback, or computer-audio export.
 
 ## 2. Runtime Architecture (Main, Preload, Renderer, IPC Boundaries)
 
@@ -126,9 +127,12 @@ Media URL invariant:
 - File/project handlers: `electron/main/ipc/handlers/file-system.ts`
 - Auth handlers: `electron/main/ipc/handlers/auth.ts`
 - Preload API surface: `electron/preload.ts`
+- Screen encoder resolver/probes: `electron/main/features/screen-encoder.ts`
+- Windows monitor capture mapper: `electron/main/features/windows-screen-capture.ts`
 
 ### 3.6 Types and contracts
 - Canonical app types: `src/types/index.ts`
+- Screen encoder settings/status contract: `src/types/screen-encoder.ts`
 
 ### 3.7 Release automation
 - Release workflow: `.github/workflows/release.yml`
@@ -523,6 +527,7 @@ Escalation path:
 | `.rsproj` load/save compatibility issue | `src/store/slices/projectSlice.ts`, `src/store/slices/presetSlice.ts`, `electron/main/ipc/handlers/file-system.ts`, `src/types/index.ts` | Critical | Load legacy project/preset data with missing fields and confirm safe defaults plus preset fallback precedence |
 | Auth/session desktop behavior issue | `electron/main/ipc/handlers/auth.ts`, `electron/main/ipc/index.ts`, `electron/preload.ts` | High | Session fetch/login/logout still works through IPC boundary |
 | Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |
+| Screen capture/encoder selection issue | `electron/main/features/windows-screen-capture.ts`, `electron/main/features/screen-encoder.ts`, `electron/main/features/recording-manager.ts`, `src/components/settings/PerformanceTab.tsx`, `src/pages/RecorderPage.tsx` | Critical | Probe selected encoder, verify Automatic/manual/Generic warnings, record secondary monitors with mixed DPI, confirm cursor appears once, and compare hardware versus Generic CPU usage |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
 | Release CI / artifact publishing change | `.github/workflows/release.yml`, `.releaserc.json`, `package.json` | High | Confirm release tag/version handoff, public asset names, and GitHub Release upload behavior |
 

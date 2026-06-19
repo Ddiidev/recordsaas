@@ -1,4 +1,12 @@
 // --- Types ---
+export type {
+  ScreenEncoderPreference,
+  ScreenEncoderProbeResult,
+  ScreenEncoderSelectionMode,
+  ScreenEncoderStatus,
+  ScreenEncoderVendor,
+} from './screen-encoder'
+
 export type BackgroundType = 'color' | 'gradient' | 'image' | 'wallpaper'
 export type AspectRatio = '16:9' | '9:16' | '4:3' | '3:4' | '1:1'
 export type SidePanelTab = 'general' | 'camera' | 'cursor' | 'audio' | 'media' | 'animation' | 'settings'

@@ -40,6 +40,7 @@ export function AudioSettings() {
     toggleMute,
     hasAudioTrack,
     setIsMuted,
+    audioUrl,
     systemAudioUrl,
     systemAudioVolume,
     systemAudioMuted,
@@ -52,6 +53,7 @@ export function AudioSettings() {
       toggleMute: state.toggleMute,
       hasAudioTrack: state.hasAudioTrack,
       setIsMuted: state.setIsMuted,
+      audioUrl: state.audioUrl,
       systemAudioUrl: state.systemAudioUrl,
       systemAudioVolume: state.systemAudioVolume,
       systemAudioMuted: state.systemAudioMuted,
@@ -97,51 +99,53 @@ export function AudioSettings() {
           />
         ) : (
           <div className="p-6 space-y-6">
-            <Collapse
-              title="Master Volume"
-              description="Control the overall volume of the video"
-              icon={<Volume className="w-4 h-4 text-primary" />}
-              defaultOpen={true}
-              onReset={handleResetVolume}
-            >
-              <div className="space-y-4 pt-2">
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={toggleMute}
-                    className="flex-shrink-0 h-10 w-10 text-foreground dark:text-white"
-                    aria-label={isMuted ? 'Unmute' : 'Mute'}
-                  >
-                    <VolumeIcon className="w-5 h-5" />
-                  </Button>
-                  <div className="flex-1">
-                    <Slider
-                      min={DEFAULTS.AUDIO.VOLUME.min}
-                      max={DEFAULTS.AUDIO.VOLUME.max}
-                      step={DEFAULTS.AUDIO.VOLUME.step}
-                      value={isMuted ? 0 : volume}
-                      onChange={(value) => setVolume(value)}
-                      disabled={isMuted}
-                    />
+            {audioUrl && (
+              <Collapse
+                title="Microphone"
+                description="Control captured microphone audio separately"
+                icon={<Microphone className="w-4 h-4 text-primary" />}
+                defaultOpen={true}
+                onReset={handleResetVolume}
+              >
+                <div className="space-y-4 pt-2">
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={toggleMute}
+                      className="flex-shrink-0 h-10 w-10 text-foreground dark:text-white"
+                      aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                    >
+                      <VolumeIcon className="w-5 h-5" />
+                    </Button>
+                    <div className="flex-1">
+                      <Slider
+                        min={DEFAULTS.AUDIO.VOLUME.min}
+                        max={DEFAULTS.AUDIO.VOLUME.max}
+                        step={DEFAULTS.AUDIO.VOLUME.step}
+                        value={isMuted ? 0 : volume}
+                        onChange={(value) => setVolume(value)}
+                        disabled={isMuted}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-primary tabular-nums w-10 text-right">
+                      {Math.round((isMuted ? 0 : volume) * 100)}%
+                    </span>
                   </div>
-                  <span className="text-xs font-semibold text-primary tabular-nums w-10 text-right">
-                    {Math.round((isMuted ? 0 : volume) * 100)}%
-                  </span>
+                  <Button
+                    onClick={() => setVolume(1)}
+                    disabled={isMuted}
+                    className={cn(
+                      'w-full h-11 font-semibold transition-all duration-300',
+                      'bg-primary hover:bg-primary/90 text-primary-foreground',
+                    )}
+                  >
+                    <MaxVolume className="w-4 h-4 mr-2" />
+                    Set to Max Volume
+                  </Button>
                 </div>
-                <Button
-                  onClick={() => setVolume(1)}
-                  disabled={isMuted}
-                  className={cn(
-                    'w-full h-11 font-semibold transition-all duration-300',
-                    'bg-primary hover:bg-primary/90 text-primary-foreground',
-                  )}
-                >
-                  <MaxVolume className="w-4 h-4 mr-2" />
-                  Set to Max Volume
-                </Button>
-              </div>
-            </Collapse>
+              </Collapse>
+            )}
 
             {systemAudioUrl && (
               <Collapse

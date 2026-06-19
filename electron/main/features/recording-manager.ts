@@ -6,7 +6,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { constants as osConstants, cpus, setPriority } from 'node:os'
-import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
+import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences } from 'electron'
 import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
@@ -17,6 +17,14 @@ import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './
 import { createEditorWindow, cleanupEditorFiles } from '../windows/editor-window'
 import { createSavingWindow, createSelectionWindow } from '../windows/temporary-windows'
 import type { RecordingSession, RecordingGeometry } from '../state'
+import type { ScreenEncoderStatus } from '../../../src/types/screen-encoder'
+import {
+  getWindowsPhysicalAreaRect,
+  getWindowsPhysicalDisplayRect,
+  getWindowsScreenCaptureCandidates,
+  selectWindowsScreenCaptureCandidate,
+} from './windows-screen-capture'
+import { getScreenEncoderDefinition, getScreenEncoderStatus } from './screen-encoder'
 
 const FFMPEG_PATH = getFFmpegPath()
 const WINDOWS_SYSTEM_AUDIO_HELPER_PATH = process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
@@ -144,8 +152,9 @@ type RecordingProfileRuntime = {
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
   screenFps?: RecordingScreenFps
-  screenNeedsHwDownload?: boolean
   screenCaptureBackend?: string
+  screenCaptureDisplay?: RecordingSession['screenCaptureDisplay']
+  screenEncoderStatus?: ScreenEncoderStatus
 }
 type FfmpegProcessRole = 'main' | 'webcam' | 'system-audio'
 type ComputerAudioBackend = 'windows-helper' | 'pulse'
@@ -166,7 +175,7 @@ type SplitRecordingInputArgs = {
   webcamInputArgs: string[]
   screenInputArgs: string[]
 }
-type RecordingCapabilityProbeBackend = 'ddagrab' | 'gdigrab' | 'x11grab'
+type RecordingCapabilityProbeBackend = 'gfxcapture' | 'gdigrab' | 'x11grab'
 type RecordingCapabilityProbeResult = {
   backend: RecordingCapabilityProbeBackend
   ok: boolean
@@ -181,13 +190,6 @@ type WebcamInputOptions = {
   fps: 30 | 60
   size?: { width: number; height: number }
 }
-type PhysicalCaptureRect = {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
 const LINUX_MIC_PROBE_DURATION_SECONDS = '0.15'
@@ -637,89 +639,6 @@ function getPlatformPhysicalOffset(value: number, scaleFactor: number): number {
     return getLinuxScaledOffset(value, scaleFactor)
   }
   return value
-}
-
-function getWindowsPhysicalDisplayRect(display: Display): PhysicalCaptureRect {
-  const scaleFactor = display.scaleFactor || 1
-  const { x, y, width, height } = display.bounds
-  return {
-    x: Math.floor(x * scaleFactor),
-    y: Math.floor(y * scaleFactor),
-    width: toEvenPhysicalDimension(width * scaleFactor),
-    height: toEvenPhysicalDimension(height * scaleFactor),
-  }
-}
-
-function getWindowsGdigrabVirtualOrigin(displays: Display[]): { x: number; y: number } {
-  if (displays.length === 0) {
-    return { x: 0, y: 0 }
-  }
-
-  const rects = displays.map(getWindowsPhysicalDisplayRect)
-  return {
-    x: Math.min(...rects.map((rect) => rect.x)),
-    y: Math.min(...rects.map((rect) => rect.y)),
-  }
-}
-
-function normalizeWindowsGdigrabOffset(value: number, origin: number): number {
-  return value < 0 ? value - origin : value
-}
-
-function getWindowsGdigrabDisplayRect(display: Display, displays: Display[]): PhysicalCaptureRect {
-  const rect = getWindowsPhysicalDisplayRect(display)
-  const origin = getWindowsGdigrabVirtualOrigin(displays)
-  return {
-    ...rect,
-    x: normalizeWindowsGdigrabOffset(rect.x, origin.x),
-    y: normalizeWindowsGdigrabOffset(rect.y, origin.y),
-  }
-}
-
-function getDisplayIndex(display: Display, displays: Display[]): number {
-  return Math.max(
-    0,
-    displays.findIndex((item) => item.id === display.id),
-  )
-}
-
-function buildWindowsDdagrabInput(displayIndex: number, fps: RecordingScreenFps, rect: PhysicalCaptureRect): string {
-  return [
-    `ddagrab=output_idx=${displayIndex}`,
-    `framerate=${fps}`,
-    'draw_mouse=0',
-    `video_size=${rect.width}x${rect.height}`,
-    `offset_x=${Math.max(0, rect.x)}`,
-    `offset_y=${Math.max(0, rect.y)}`,
-    'dup_frames=1',
-  ].join(':')
-}
-
-function getWindowsDdagrabDisplayRect(display: Display): PhysicalCaptureRect {
-  const rect = getWindowsPhysicalDisplayRect(display)
-  return {
-    ...rect,
-    x: 0,
-    y: 0,
-  }
-}
-
-function getWindowsDdagrabAreaRect(geometry: RecordingGeometry, containingDisplay: Display): PhysicalCaptureRect {
-  const scaleFactor = containingDisplay.scaleFactor || 1
-  const displayRect = getWindowsPhysicalDisplayRect(containingDisplay)
-  const relativeX = Math.floor((geometry.x - containingDisplay.bounds.x) * scaleFactor)
-  const relativeY = Math.floor((geometry.y - containingDisplay.bounds.y) * scaleFactor)
-  const x = Math.max(0, relativeX)
-  const y = Math.max(0, relativeY)
-  const maxWidth = Math.max(2, displayRect.width - x)
-  const maxHeight = Math.max(2, displayRect.height - y)
-
-  return {
-    x,
-    y,
-    width: Math.min(toEvenPhysicalDimension(geometry.width * scaleFactor), maxWidth),
-    height: Math.min(toEvenPhysicalDimension(geometry.height * scaleFactor), maxHeight),
-  }
 }
 
 function isFFmpegRecordingReadyMessage(message: string): boolean {
@@ -1261,6 +1180,19 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
         dialog.showErrorBox('Recording Validation Failed', errorMessage)
         return false
       }
+
+      const probe = spawnSync(
+        FFMPEG_PATH,
+        ['-hide_banner', '-loglevel', 'error', '-i', filePath, '-map', '0', '-t', '0.1', '-f', 'null', '-'],
+        { encoding: 'utf-8', timeout: 15000, windowsHide: true },
+      )
+      if (probe.error || probe.status !== 0) {
+        const detail = (probe.stderr || probe.error?.message || `FFmpeg exited with ${probe.status}`).trim()
+        const errorMessage = `The recorded file is structurally invalid: ${path.basename(filePath)}.`
+        log.error(`[Validation] ${errorMessage} ${detail}`)
+        dialog.showErrorBox('Recording Validation Failed', errorMessage)
+        return false
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         const errorMessage = `The recording process failed to create the video file: ${path.basename(filePath)}.`
@@ -1275,7 +1207,7 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
     }
   }
 
-  log.info('[Validation] All recorded files appear valid (exist and are not empty).')
+  log.info('[Validation] All recorded files exist, are non-empty, and can be parsed by FFmpeg.')
   return true
 }
 
@@ -1396,8 +1328,8 @@ async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: num
  * @param inputArgs - Platform-specific FFmpeg input arguments.
  * @param hasWebcam - Flag indicating if webcam recording is enabled.
  * @param hasMic - Flag indicating if microphone recording is enabled.
- * @param recordingGeometry - The logical dimensions and position of the recording area.
- * @param scaleFactor - The display scale factor (for Windows DPI scaling).
+ * @param recordingGeometry - Capture bounds in the same coordinate space used by mouse events.
+ * @param scaleFactor - Linux display scale. Windows capture geometry is already physical.
  */
 async function startActualRecording(
   inputArgs: string[],
@@ -1429,7 +1361,7 @@ async function startActualRecording(
     : undefined
   const metadataPath = path.join(recordingDir, `${baseName}.json`)
 
-  // Store recordingGeometry and scaleFactor in the session
+  const screenEncoderStatus = outputOptions.screenEncoderStatus
   appState.currentRecordingSession = {
     screenVideoPath,
     webcamVideoPath,
@@ -1439,7 +1371,13 @@ async function startActualRecording(
     recordingGeometry,
     scaleFactor,
     screenCaptureBackend: outputOptions.screenCaptureBackend,
+    screenCaptureDisplay: outputOptions.screenCaptureDisplay,
     requestedScreenFps: outputOptions.screenFps,
+    screenEncoderPreference: screenEncoderStatus?.preference,
+    screenEncoderDetectedVendor: screenEncoderStatus?.detectedVendor,
+    screenEncoder: screenEncoderStatus?.encoder,
+    screenEncoderMode: screenEncoderStatus?.selectionMode,
+    screenEncoderFallbackReason: screenEncoderStatus?.fallbackReason,
     recordingAudioCodec: audioConfig.audioCodec,
     recordingAudioBitrateKbps: audioConfig.audioBitrateKbps,
     recordingAudioSampleRate: audioConfig.audioSampleRate,
@@ -1454,20 +1392,13 @@ async function startActualRecording(
 
   if (appState.mouseTracker) {
     appState.mouseTracker.on('data', (data: any) => {
-      // Normalize mouse coordinates based on platform
-      // On Windows, mouse events come in physical pixels (with DPI scaling)
-      // On other platforms, they're in logical pixels
       let normalizedX = data.x
       let normalizedY = data.y
 
-      if (process.platform === 'win32') {
-        normalizedX = data.x / scaleFactor
-        normalizedY = data.y / scaleFactor
-      } else if (shouldApplyLinuxDisplayScale(scaleFactor)) {
+      if (shouldApplyLinuxDisplayScale(scaleFactor)) {
         normalizedX = data.x / scaleFactor
         normalizedY = data.y / scaleFactor
       }
-
       // Check if the mouse event is within the recording geometry bounds
       if (
         normalizedX >= recordingGeometry.x &&
@@ -1793,38 +1724,48 @@ function appendScreenOutputArgs(
   screenOut: string,
   outputOptions: RecordingOutputOptions = {},
 ): void {
+  const encoderDefinition = getScreenEncoderDefinition(outputOptions.screenEncoderStatus)
+  const effectiveEncoder = outputOptions.screenEncoderStatus?.encoder || 'libx264'
   log.info(
-    `[RecordingManager] Screen recording encode config: output=${screenOut} codec=libx264 preset=ultrafast crf=18 fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
+    `[RecordingManager] Screen recording encode config: output=${screenOut} preference=${outputOptions.screenEncoderStatus?.preference || 'auto'} detected=${outputOptions.screenEncoderStatus?.detectedVendor || 'unknown'} codec=${effectiveEncoder} mode=${outputOptions.screenEncoderStatus?.selectionMode || 'fallback'} fallback=${outputOptions.screenEncoderStatus?.fallbackReason || 'none'} capture=${outputOptions.screenCaptureBackend || 'unknown'} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr`,
   )
-  args.push(
-    '-map',
-    `${screenIndex}:v`,
-    '-c:v',
-    'libx264',
-    '-preset',
-    'ultrafast', // Lowest CPU usage
-    '-crf',
-    '18', // Good quality
-    '-tune',
-    'zerolatency', // Optimize for real-time
-    '-profile:v',
-    'high',
-    '-level',
-    '5.1',
-    '-pix_fmt',
-    'yuv420p',
-  )
-  if (outputOptions.screenScale) {
-    const screenFilters = outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : []
-    screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
-    args.push('-vf', screenFilters.join(','))
-  } else if (outputOptions.screenNeedsHwDownload) {
-    args.push('-vf', 'hwdownload,format=bgra')
-  }
+  args.unshift(...encoderDefinition.prefixArgs)
+  args.push('-map', `${screenIndex}:v`, ...encoderDefinition.codecArgs)
+  const screenFilters = buildScreenVideoFilters(outputOptions)
+  if (screenFilters.length > 0) args.push('-vf', screenFilters.join(','))
+  if (effectiveEncoder === 'libx264') args.push('-pix_fmt', 'yuv420p')
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
+  args.push('-movflags', '+frag_keyframe+empty_moov+default_base_moof')
   args.push(screenOut)
+}
+
+function buildScreenVideoFilters(outputOptions: RecordingOutputOptions): string[] {
+  const filters: string[] = []
+  const encoder = outputOptions.screenEncoderStatus?.encoder || 'libx264'
+  const hardwareCapture = outputOptions.screenCaptureBackend === 'gfxcapture'
+  const scale = outputOptions.screenScale
+
+  if (encoder === 'libx264') {
+    if (hardwareCapture) filters.push('hwdownload', 'format=bgra')
+    if (scale) filters.push(`scale=${scale.width}:${scale.height}`)
+    filters.push('format=yuv420p')
+  } else if (encoder === 'h264_qsv' && hardwareCapture) {
+    // Direct D3D11 -> QSV mapping can stall on hybrid Intel systems.
+    filters.push('hwdownload', 'format=bgra')
+    if (scale) filters.push(`scale=${scale.width}:${scale.height}`)
+    filters.push('format=nv12')
+  } else if (encoder === 'h264_vaapi') {
+    if (scale) filters.push(`scale=${scale.width}:${scale.height}`)
+    filters.push('format=nv12', 'hwupload')
+  } else {
+    if (hardwareCapture && scale) filters.push('hwdownload', 'format=bgra')
+    if (scale) filters.push(`scale=${scale.width}:${scale.height}`)
+    if (!hardwareCapture || scale || encoder === 'h264_videotoolbox') filters.push('format=nv12')
+  }
+
+  return filters
 }
 
 function buildSystemAudioFfmpegArgs(
@@ -2017,9 +1958,11 @@ export async function startRecording(options: any) {
     audioSampleRate: recordingProfile.audioSampleRate,
   }
   const screenFps = recordingProfile.screenFps
-  const outputOptions: RecordingOutputOptions = { screenFps }
+  const screenEncoderStatus = await getScreenEncoderStatus()
+  const outputOptions: RecordingOutputOptions = { screenFps, screenEncoderStatus }
   log.info('[RecordingManager] Received start recording request with options:', options)
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
+  log.info('[RecordingManager] Resolved screen encoder:', screenEncoderStatus)
 
   const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig() : null
   if (computerAudioEnabled && !computerAudioCapture?.supported) {
@@ -2085,9 +2028,10 @@ export async function startRecording(options: any) {
     const targetDisplay = allDisplays.find((d) => d.id === displayId) || screen.getPrimaryDisplay()
     const { width, height } = targetDisplay.bounds
     const scaleFactor = targetDisplay.scaleFactor || 1
+    const windowsDisplayRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(targetDisplay) : null
     webcamInputContext = {
-      screenWidth: getPlatformPhysicalDimension(width, scaleFactor),
-      screenHeight: getPlatformPhysicalDimension(height, scaleFactor),
+      screenWidth: windowsDisplayRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor),
+      screenHeight: windowsDisplayRect?.height ?? getPlatformPhysicalDimension(height, scaleFactor),
     }
   } else if (source === 'area' && options.geometry) {
     const selectedGeometry = options.geometry
@@ -2104,9 +2048,16 @@ export async function startRecording(options: any) {
         )
       }) || screen.getPrimaryDisplay()
     const scaleFactor = containingDisplay.scaleFactor || 1
+    const windowsAreaRect =
+      process.platform === 'win32'
+        ? getWindowsPhysicalAreaRect(
+            { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight },
+            containingDisplay,
+          )
+        : null
     webcamInputContext = {
-      screenWidth: getPlatformPhysicalDimension(safeWidth, scaleFactor),
-      screenHeight: getPlatformPhysicalDimension(safeHeight, scaleFactor),
+      screenWidth: windowsAreaRect?.width ?? getPlatformPhysicalDimension(safeWidth, scaleFactor),
+      screenHeight: windowsAreaRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor),
     }
   }
 
@@ -2162,8 +2113,8 @@ export async function startRecording(options: any) {
     const targetDisplay = allDisplays.find((d) => d.id === displayId) || screen.getPrimaryDisplay()
     const { x, y, width, height } = targetDisplay.bounds
     const scaleFactor = targetDisplay.scaleFactor || 1
-    const windowsCaptureRect = process.platform === 'win32' ? getWindowsDdagrabDisplayRect(targetDisplay) : null
-    recordingScaleFactor = scaleFactor // Store for metadata processing
+    const windowsCaptureRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(targetDisplay) : null
+    recordingScaleFactor = process.platform === 'win32' ? 1 : scaleFactor
 
     // For Windows, ddagrab captures physical pixels from a single display via Desktop Duplication.
     const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor)
@@ -2171,12 +2122,18 @@ export async function startRecording(options: any) {
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(x, scaleFactor)
     const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(y, scaleFactor)
 
-    // Store the logical dimensions for mouse tracking
     const safeWidth = Math.floor(width / 2) * 2
     const safeHeight = Math.floor(height / 2) * 2
-    recordingGeometry = { x, y, width: safeWidth, height: safeHeight }
+    recordingGeometry = windowsCaptureRect || { x, y, width: safeWidth, height: safeHeight }
     outputOptions.screenScale =
-      resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
+      resolveScaledDimensions(physicalWidth, physicalHeight, recordingProfile.screenResolution) || undefined
+    outputOptions.screenCaptureDisplay = {
+      id: targetDisplay.id,
+      label: targetDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === targetDisplay.id) + 1}`,
+      bounds: targetDisplay.bounds,
+      scaleFactor,
+      physicalBounds: windowsCaptureRect || { x: physicalX, y: physicalY, width: physicalWidth, height: physicalHeight },
+    }
 
     switch (process.platform) {
       case 'linux':
@@ -2195,19 +2152,11 @@ export async function startRecording(options: any) {
         )
         break
       case 'win32':
-        outputOptions.screenNeedsHwDownload = true
-        outputOptions.screenCaptureBackend = 'ddagrab'
-        screenInputArgs.push(
-          '-f',
-          'lavfi',
-          '-i',
-          buildWindowsDdagrabInput(getDisplayIndex(targetDisplay, allDisplays), screenFps, {
-            x: physicalX,
-            y: physicalY,
-            width: physicalWidth,
-            height: physicalHeight,
-          }),
-        )
+        {
+          const capture = selectWindowsScreenCaptureCandidate(targetDisplay, recordingGeometry, screenFps)
+          outputOptions.screenCaptureBackend = capture.backend
+          screenInputArgs.push(...capture.inputArgs)
+        }
         break
       case 'darwin':
         outputOptions.screenCaptureBackend = 'avfoundation'
@@ -2227,10 +2176,6 @@ export async function startRecording(options: any) {
 
     const safeWidth = Math.floor(selectedGeometry.width / 2) * 2
     const safeHeight = Math.floor(selectedGeometry.height / 2) * 2
-    recordingGeometry = { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
-    outputOptions.screenScale =
-      resolveScaledDimensions(safeWidth, safeHeight, recordingProfile.screenResolution) || undefined
-
     // Get scale factor for the display containing the selection
     const allDisplays = screen.getAllDisplays()
     const containingDisplay =
@@ -2246,18 +2191,32 @@ export async function startRecording(options: any) {
     const scaleFactor = containingDisplay.scaleFactor || 1
     const windowsCaptureRect =
       process.platform === 'win32'
-        ? getWindowsDdagrabAreaRect(
+        ? getWindowsPhysicalAreaRect(
             { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight },
             containingDisplay,
           )
         : null
-    recordingScaleFactor = scaleFactor // Store for metadata processing
+    recordingScaleFactor = process.platform === 'win32' ? 1 : scaleFactor
 
     // For Windows, convert the selected area to physical pixels relative to the selected display.
     const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(safeWidth, scaleFactor)
     const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor)
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(selectedGeometry.x, scaleFactor)
     const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(selectedGeometry.y, scaleFactor)
+    recordingGeometry =
+      windowsCaptureRect || { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
+    outputOptions.screenScale =
+      resolveScaledDimensions(physicalWidth, physicalHeight, recordingProfile.screenResolution) || undefined
+    const windowsDisplayRect =
+      process.platform === 'win32' ? getWindowsPhysicalDisplayRect(containingDisplay) : null
+    outputOptions.screenCaptureDisplay = {
+      id: containingDisplay.id,
+      label: containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
+      bounds: containingDisplay.bounds,
+      scaleFactor,
+      physicalBounds:
+        windowsDisplayRect || { x: physicalX, y: physicalY, width: physicalWidth, height: physicalHeight },
+    }
 
     switch (process.platform) {
       case 'linux':
@@ -2276,19 +2235,11 @@ export async function startRecording(options: any) {
         )
         break
       case 'win32':
-        outputOptions.screenNeedsHwDownload = true
-        outputOptions.screenCaptureBackend = 'ddagrab'
-        screenInputArgs.push(
-          '-f',
-          'lavfi',
-          '-i',
-          buildWindowsDdagrabInput(getDisplayIndex(containingDisplay, allDisplays), screenFps, {
-            x: physicalX,
-            y: physicalY,
-            width: physicalWidth,
-            height: physicalHeight,
-          }),
-        )
+        {
+          const capture = selectWindowsScreenCaptureCandidate(containingDisplay, recordingGeometry, screenFps)
+          outputOptions.screenCaptureBackend = capture.backend
+          screenInputArgs.push(...capture.inputArgs)
+        }
         break
       case 'darwin':
         // Note: macOS avfoundation doesn't support area capture like gdigrab/x11grab
@@ -2350,74 +2301,30 @@ export async function analyzeRecordingCapability(): Promise<{
   reason: string
   measuredFps?: number
 }> {
-  const allDisplays = screen.getAllDisplays()
   const targetDisplay = screen.getPrimaryDisplay()
-  const targetDisplayIndex = Math.max(
-    0,
-    allDisplays.findIndex((display) => display.id === targetDisplay.id),
-  )
   const scaleFactor = targetDisplay.scaleFactor || 1
   const { x, y, width, height } = targetDisplay.bounds
-  const windowsCaptureRect =
-    process.platform === 'win32' ? getWindowsGdigrabDisplayRect(targetDisplay, allDisplays) : null
+  const windowsCaptureRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(targetDisplay) : null
   const physicalWidth = windowsCaptureRect?.width ?? getPlatformPhysicalDimension(width, scaleFactor)
   const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(height, scaleFactor)
   const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(x, scaleFactor)
   const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(y, scaleFactor)
 
-  const ddagrabInput = [
-    `ddagrab=output_idx=${targetDisplayIndex}`,
-    'framerate=60',
-    'draw_mouse=0',
-    `video_size=${physicalWidth}x${physicalHeight}`,
-    'offset_x=0',
-    'offset_y=0',
-    'dup_frames=1',
-  ].join(':')
   const probes: Array<{ backend: RecordingCapabilityProbeBackend; args: string[] }> =
     process.platform === 'win32'
-      ? [
-          {
-            backend: 'ddagrab',
-            args: [
-              '-hide_banner',
-              '-f',
-              'lavfi',
-              '-i',
-              ddagrabInput,
-              '-t',
-              String(RECORDING_CAPABILITY_PROBE_SECONDS),
-              '-f',
-              'null',
-              '-',
-            ],
-          },
-          {
-            backend: 'gdigrab',
-            args: [
-              '-hide_banner',
-              '-f',
-              'gdigrab',
-              '-framerate',
-              '60',
-              '-draw_mouse',
-              '0',
-              '-offset_x',
-              String(physicalX),
-              '-offset_y',
-              String(physicalY),
-              '-video_size',
-              `${physicalWidth}x${physicalHeight}`,
-              '-t',
-              String(RECORDING_CAPABILITY_PROBE_SECONDS),
-              '-i',
-              'desktop',
-              '-f',
-              'null',
-              '-',
-            ],
-          },
-        ]
+      ? getWindowsScreenCaptureCandidates(targetDisplay, windowsCaptureRect!, 60).map((candidate) => ({
+          backend: candidate.backend,
+          args: [
+            '-hide_banner',
+            ...candidate.inputArgs,
+            '-t',
+            String(RECORDING_CAPABILITY_PROBE_SECONDS),
+            ...(candidate.needsHwDownload ? ['-vf', 'hwdownload,format=bgra'] : []),
+            '-f',
+            'null',
+            '-',
+          ],
+        }))
       : process.platform === 'linux'
         ? [
             {
@@ -2476,7 +2383,7 @@ export async function analyzeRecordingCapability(): Promise<{
   const measuredFps = lastResult.measuredFps
   const canRecord60Fps = Boolean(measuredFps && measuredFps >= 54)
   const backendLabel =
-    lastResult.backend === 'ddagrab' ? 'Desktop Duplication' : lastResult.backend === 'gdigrab' ? 'GDI' : 'X11'
+    lastResult.backend === 'gfxcapture' ? 'Windows Graphics Capture' : lastResult.backend === 'gdigrab' ? 'GDI' : 'X11'
   return {
     recommendedFps: canRecord60Fps ? 60 : 30,
     canRecord60Fps,
@@ -2740,12 +2647,10 @@ async function cleanupAndSave(): Promise<void> {
  * @returns A promise that resolves to true on success, false on failure.
  */
 /**
- * Helper function to scale recording geometry for display backends that capture in physical pixels
+ * Linux may still need metadata scaling. Windows geometry is physical from capture startup.
  */
 function getScaledGeometry(geometry: RecordingGeometry, scaleFactor: number): RecordingGeometry {
-  const shouldScaleForMetadata =
-    (process.platform === 'win32' && scaleFactor !== 1) || shouldApplyLinuxDisplayScale(scaleFactor)
-  if (!shouldScaleForMetadata) {
+  if (!shouldApplyLinuxDisplayScale(scaleFactor)) {
     return geometry
   }
   return {
@@ -2766,12 +2671,11 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
     const videoStartTime = await getVideoStartTime(session.screenVideoPath)
     log.info(`[SYNC] Precise video start time from ffprobe: ${new Date(videoStartTime).toISOString()}`)
 
-    // On Windows, scale mouse coordinates to match physical video dimensions
     const scaleFactor = session.scaleFactor || 1
     const finalEvents = appState.recordedMouseEvents.map((event) => {
       const shouldScaleLinuxEvent = shouldApplyLinuxDisplayScale(scaleFactor)
-      const scaledX = process.platform === 'win32' || shouldScaleLinuxEvent ? event.x * scaleFactor : event.x
-      const scaledY = process.platform === 'win32' || shouldScaleLinuxEvent ? event.y * scaleFactor : event.y
+      const scaledX = shouldScaleLinuxEvent ? event.x * scaleFactor : event.x
+      const scaledY = shouldScaleLinuxEvent ? event.y * scaleFactor : event.y
       return {
         ...event,
         x: scaledX,
@@ -2780,7 +2684,6 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       }
     })
 
-    // On Windows, also scale the recording geometry to match video dimensions
     const scaledGeometry = getScaledGeometry(session.recordingGeometry, scaleFactor)
 
     const primaryDisplay = screen.getPrimaryDisplay()
@@ -2789,7 +2692,13 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       screenSize: primaryDisplay.size,
       geometry: scaledGeometry,
       screenCaptureBackend: session.screenCaptureBackend,
+      screenCaptureDisplay: session.screenCaptureDisplay,
       requestedScreenFps: session.requestedScreenFps,
+      screenEncoderPreference: session.screenEncoderPreference,
+      screenEncoderDetectedVendor: session.screenEncoderDetectedVendor,
+      screenEncoder: session.screenEncoder,
+      screenEncoderMode: session.screenEncoderMode,
+      screenEncoderFallbackReason: session.screenEncoderFallbackReason,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
       cursorImages: Object.fromEntries(appState.runtimeCursorImageMap || []),
@@ -2810,7 +2719,13 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       geometry: scaledGeometry,
       screenSize: screen.getPrimaryDisplay().size,
       screenCaptureBackend: session.screenCaptureBackend,
+      screenCaptureDisplay: session.screenCaptureDisplay,
       requestedScreenFps: session.requestedScreenFps,
+      screenEncoderPreference: session.screenEncoderPreference,
+      screenEncoderDetectedVendor: session.screenEncoderDetectedVendor,
+      screenEncoder: session.screenEncoder,
+      screenEncoderMode: session.screenEncoderMode,
+      screenEncoderFallbackReason: session.screenEncoderFallbackReason,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
     }

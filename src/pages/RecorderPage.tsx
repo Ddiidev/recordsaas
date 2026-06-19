@@ -30,6 +30,10 @@ import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder
 import { cn } from '../lib/utils'
 import type { AuthSession } from '../types/auth'
 import {
+  HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY,
+  type ScreenEncoderStatus,
+} from '../types/screen-encoder'
+import {
   NATIVE_RECORDING_ANALYSIS_SETTING_KEY,
   NATIVE_RECORDING_PROFILE_ID,
   RECORDING_PROFILES_SETTING_KEY,
@@ -71,6 +75,7 @@ type ActionInProgress = 'none' | 'recording' | 'loading'
 type RecordingSource = 'area' | 'fullscreen' | 'window'
 type ToolbarSelectKey = 'display' | 'webcam' | 'mic' | 'profile'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
+type EncoderWarningDecision = 'continue' | 'configure'
 
 export function RecorderPage() {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
@@ -88,6 +93,9 @@ export function RecorderPage() {
   const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
+  const [highlightScreenEncoderRequestId, setHighlightScreenEncoderRequestId] = useState(0)
+  const [encoderWarningStatus, setEncoderWarningStatus] = useState<ScreenEncoderStatus | null>(null)
+  const [suppressGenericEncoderWarning, setSuppressGenericEncoderWarning] = useState(false)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
@@ -109,11 +117,16 @@ export function RecorderPage() {
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
   const hasRequestedInitialRecordingAnalysisRef = useRef(false)
+  const encoderWarningResolverRef = useRef<((decision: EncoderWarningDecision) => void) | null>(null)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset =
-    isSettingsModalOpen || isImportProjectModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+    isSettingsModalOpen || isImportProjectModalOpen || encoderWarningStatus
+      ? 'settings'
+      : isWebcamPreviewVisible
+        ? 'preview'
+        : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -476,6 +489,39 @@ export function RecorderPage() {
     setPreparationSecondsLeft(null)
   }
 
+  const requestEncoderWarning = (status: ScreenEncoderStatus) =>
+    new Promise<EncoderWarningDecision>((resolve) => {
+      encoderWarningResolverRef.current = resolve
+      setSuppressGenericEncoderWarning(false)
+      setEncoderWarningStatus(status)
+    })
+
+  const resolveEncoderWarning = (decision: EncoderWarningDecision) => {
+    if (
+      decision === 'continue' &&
+      encoderWarningStatus?.preference === 'auto' &&
+      suppressGenericEncoderWarning
+    ) {
+      window.electronAPI.setSetting(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY, true)
+    }
+
+    setEncoderWarningStatus(null)
+    const resolver = encoderWarningResolverRef.current
+    encoderWarningResolverRef.current = null
+    resolver?.(decision)
+  }
+
+  const openEncoderSettings = () => {
+    resolveEncoderWarning('configure')
+    setActionInProgress('none')
+    setRecordingState('idle')
+    setIsRecording(false)
+    clearPreparationCountdown()
+    setSettingsDefaultTab('performance')
+    setHighlightScreenEncoderRequestId((current) => current + 1)
+    setSettingsModalOpen(true)
+  }
+
   const resolvePreparationCountdownSeconds = async () => {
     try {
       const savedPreparationCountdown = await window.electronAPI.getSetting<number>(
@@ -563,6 +609,22 @@ export function RecorderPage() {
     setRecordingState('preparing')
 
     try {
+      const [encoderStatus, hideGenericWarning] = await Promise.all([
+        window.electronAPI.getScreenEncoderStatus(false),
+        window.electronAPI.getSetting<boolean>(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY),
+      ])
+      const automaticGenericWarning =
+        encoderStatus.preference === 'auto' && !encoderStatus.isHardware && hideGenericWarning !== true
+      const manualFallbackWarning =
+        encoderStatus.preference !== 'auto' &&
+        encoderStatus.preference !== 'generic' &&
+        encoderStatus.selectionMode === 'fallback'
+
+      if (automaticGenericWarning || manualFallbackWarning) {
+        const decision = await requestEncoderWarning(encoderStatus)
+        if (decision === 'configure') return
+      }
+
       let selectedAreaGeometry:
         | {
             x: number
@@ -1052,6 +1114,34 @@ export function RecorderPage() {
         }}
       />
 
+      {encoderWarningStatus && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-background/80 p-6">
+          <div className="w-full max-w-xl rounded-lg border border-border bg-card p-6 shadow-2xl">
+            <h2 className="text-lg font-semibold">
+              {encoderWarningStatus.preference !== 'auto' ? 'Selected encoder is unavailable' : 'Generic screen encoder'}
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              {encoderWarningStatus.fallbackReason ||
+                'Generic CPU mode can increase CPU usage and reduce FPS in games.'}
+            </p>
+            {encoderWarningStatus.preference === 'auto' && (
+              <label className="mt-5 flex items-center gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={suppressGenericEncoderWarning}
+                  onChange={(event) => setSuppressGenericEncoderWarning(event.target.checked)}
+                />
+                Do not show again
+              </label>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <Button variant="secondary" onClick={openEncoderSettings}>Configure</Button>
+              <Button onClick={() => resolveEncoderWarning('continue')}>Continue with Generic</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={handleSettingsClose}
@@ -1059,6 +1149,7 @@ export function RecorderPage() {
         defaultTab={settingsDefaultTab}
         recordingProfileCreateRequestId={recordingProfileCreateRequestId}
         recordingProfileAnalyzeRequestId={recordingProfileAnalyzeRequestId}
+        highlightScreenEncoderRequestId={highlightScreenEncoderRequestId}
         onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
         onRecordingProfileAnalyzeRequestHandled={() => {
           setRecordingProfileAnalyzeRequestId(0)

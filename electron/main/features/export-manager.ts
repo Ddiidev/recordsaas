@@ -1403,6 +1403,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   try {
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
+    const recordingVolume =
+      typeof projectStateRecord.volume === 'number' && Number.isFinite(projectStateRecord.volume)
+        ? Math.max(0, Math.min(projectStateRecord.volume, 1))
+        : 1
+    const recordingMuted = projectStateRecord.isMuted === true || recordingVolume <= 0
     const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
     const systemAudioVolume =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
@@ -1442,6 +1447,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       Math.abs(recordingTimelineSegments[0].start) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].duration - duration) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].speed - 1) < 0.01 &&
+      Math.abs(recordingVolume - 1) < 0.001 &&
       changeSoundRegions.length === 0
     const systemAudioHasNoTransform =
       baseTimelineSegments.length === 1 &&
@@ -1455,8 +1461,15 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     let systemTrackPath: string | null = null
     let mediaTrackPath: string | null = null
 
-    if (recordingPath) {
-      const recordingSegments = buildRecordingExportAudioSegments(recordingTimelineSegments, changeSoundRegions, timelineLanes)
+    if (recordingPath && !recordingMuted) {
+      const recordingSegments = buildRecordingExportAudioSegments(
+        recordingTimelineSegments,
+        changeSoundRegions,
+        timelineLanes,
+      ).map((segment) => ({
+        ...segment,
+        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * recordingVolume)),
+      }))
       if (recordingSegments.length > 0) {
         if (recordingHasNoTransform) {
           log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')

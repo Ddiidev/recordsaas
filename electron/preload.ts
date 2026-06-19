@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import type { ScreenEncoderStatus } from '../src/types/screen-encoder'
 
 // Define the type for the callback value
 type RecordingResult = {
@@ -240,6 +241,8 @@ export const electronAPI = {
     reason: string
     measuredFps?: number
   }> => ipcRenderer.invoke('recording:analyze-capability'),
+  getScreenEncoderStatus: (refresh = false): Promise<ScreenEncoderStatus> =>
+    ipcRenderer.invoke('recording:get-screen-encoder-status', refresh),
 
   onRecordingStarted: (callback: () => void) => {
     const listener = () => callback()
