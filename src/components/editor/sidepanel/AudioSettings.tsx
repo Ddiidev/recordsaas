@@ -143,6 +143,7 @@ export function AudioSettings() {
                   </Button>
                 </div>
               </Collapse>
+            )}
 
             {systemAudioUrl && (
               <Collapse
