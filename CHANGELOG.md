@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/Ddiidev/recordsaas/compare/v2.6.0...v2.6.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* resolve compilation issues after merge ([70bc439](https://github.com/Ddiidev/recordsaas/commit/70bc439125d56b9e6a7cbd35fb96d77455a27af3))
+
 # [2.6.0](https://github.com/Ddiidev/recordsaas/compare/v2.5.10...v2.6.0) (2026-06-21)
 
 
