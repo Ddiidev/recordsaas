@@ -1,3 +1,10 @@
+## [2.6.2](https://github.com/Ddiidev/recordsaas/compare/v2.6.1...v2.6.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* complete JSX syntax fix in AudioSettings ([fcad599](https://github.com/Ddiidev/recordsaas/commit/fcad599443dcd6189fa6752d28a859088e783701))
+
 ## [2.6.1](https://github.com/Ddiidev/recordsaas/compare/v2.6.0...v2.6.1) (2026-06-21)
 
 
