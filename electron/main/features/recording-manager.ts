@@ -2062,15 +2062,6 @@ export async function startRecording(options: any) {
     return { canceled: true }
   }
 
-  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig() : null
-  if (computerAudioEnabled && !computerAudioCapture?.supported) {
-    dialog.showErrorBox(
-      'Computer Audio Unavailable',
-      `${computerAudioCapture?.reason || 'Computer audio capture is unavailable on this platform.'}\n\nBinary:\n${FFMPEG_PATH}`,
-    )
-    return { canceled: true }
-  }
-
   if (webcam) {
     await requestRecorderWebcamRelease()
   }

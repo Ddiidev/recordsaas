@@ -142,19 +142,7 @@ export function AudioSettings() {
                     Set to Max Volume
                   </Button>
                 </div>
-                <Button
-                  onClick={() => setVolume(1)}
-                  disabled={isMuted}
-                  className={cn(
-                    'w-full h-11 font-semibold transition-all duration-300',
-                    'bg-primary hover:bg-primary/90 text-primary-foreground',
-                  )}
-                >
-                  <MaxVolume className="w-4 h-4 mr-2" />
-                  Set to Max Volume
-                </Button>
-              </div>
-            </Collapse>
+              </Collapse>
 
             {systemAudioUrl && (
               <Collapse
