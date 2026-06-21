@@ -93,9 +93,6 @@ export function RecorderPage() {
   const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
-  const [highlightScreenEncoderRequestId, setHighlightScreenEncoderRequestId] = useState(0)
-  const [encoderWarningStatus, setEncoderWarningStatus] = useState<ScreenEncoderStatus | null>(null)
-  const [suppressGenericEncoderWarning, setSuppressGenericEncoderWarning] = useState(false)
   const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
     display: false,
     webcam: false,
@@ -117,16 +114,11 @@ export function RecorderPage() {
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
   const hasRequestedInitialRecordingAnalysisRef = useRef(false)
-  const encoderWarningResolverRef = useRef<((decision: EncoderWarningDecision) => void) | null>(null)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset =
-    isSettingsModalOpen || isImportProjectModalOpen || encoderWarningStatus
-      ? 'settings'
-      : isWebcamPreviewVisible
-        ? 'preview'
-        : 'toolbar'
+    isSettingsModalOpen || isImportProjectModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -1114,34 +1106,6 @@ export function RecorderPage() {
         }}
       />
 
-      {encoderWarningStatus && (
-        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-background/80 p-6">
-          <div className="w-full max-w-xl rounded-lg border border-border bg-card p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold">
-              {encoderWarningStatus.preference !== 'auto' ? 'Selected encoder is unavailable' : 'Generic screen encoder'}
-            </h2>
-            <p className="mt-3 text-sm text-muted-foreground">
-              {encoderWarningStatus.fallbackReason ||
-                'Generic CPU mode can increase CPU usage and reduce FPS in games.'}
-            </p>
-            {encoderWarningStatus.preference === 'auto' && (
-              <label className="mt-5 flex items-center gap-3 text-sm">
-                <input
-                  type="checkbox"
-                  checked={suppressGenericEncoderWarning}
-                  onChange={(event) => setSuppressGenericEncoderWarning(event.target.checked)}
-                />
-                Do not show again
-              </label>
-            )}
-            <div className="mt-6 flex justify-end gap-3">
-              <Button variant="secondary" onClick={openEncoderSettings}>Configure</Button>
-              <Button onClick={() => resolveEncoderWarning('continue')}>Continue with Generic</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={handleSettingsClose}
@@ -1149,7 +1113,6 @@ export function RecorderPage() {
         defaultTab={settingsDefaultTab}
         recordingProfileCreateRequestId={recordingProfileCreateRequestId}
         recordingProfileAnalyzeRequestId={recordingProfileAnalyzeRequestId}
-        highlightScreenEncoderRequestId={highlightScreenEncoderRequestId}
         onRecordingProfileCreateRequestHandled={() => setRecordingProfileCreateRequestId(0)}
         onRecordingProfileAnalyzeRequestHandled={() => {
           setRecordingProfileAnalyzeRequestId(0)

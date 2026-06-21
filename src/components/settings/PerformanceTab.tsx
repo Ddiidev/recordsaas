@@ -108,7 +108,7 @@ const formatGiB = (bytes: number | null): string => {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`
 }
 
-export function PerformanceTab(_props: { highlightScreenEncoderRequestId?: number } = {}) {
+export function PerformanceTab() {
   const [forceGPU, setForceGPU] = useState(false)
   const [recordingProcessPriority, setRecordingProcessPriority] =
     useState<RecordingProcessPriorityMode>(DEFAULT_RECORDING_PROCESS_PRIORITY_MODE)

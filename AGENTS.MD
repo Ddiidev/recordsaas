@@ -27,7 +27,6 @@ Hard scope boundaries for current cycle:
 - API context included only where desktop behavior depends on it.
 - No assumption of multi-track media audio authoring beyond current implemented contracts.
 - Computer audio remains a simple `systemAudioPath` project asset with editor-level volume/mute controls; macOS stays disabled in the recorder UI for now, and we do not introduce `recordingAudioTracks` or per-source `change-sound`.
-- Editor microphone and computer-audio controls are independent. Microphone `volume`/`isMuted` must never alter `systemAudioVolume`/`systemAudioMuted`, preview playback, or computer-audio export.
 
 ## 2. Runtime Architecture (Main, Preload, Renderer, IPC Boundaries)
 
@@ -410,8 +409,6 @@ Functional baseline for current roadmap item:
 - Media tab exists with categories `Audio`, `Image`, `Video`.
 - Audio path supports import, timeline insertion, playback preview, and export integration.
 - Windows computer audio is captured through the bundled native WASAPI loopback helper and streamed directly into the configured compressed `systemAudioPath` (`AAC` or `MP3`); Linux captures through FFmpeg PulseAudio/PipeWire monitor sources directly into the configured compressed output, and preview/export reuse the same simple full-length source flow.
-- Windows helper PCM input must use wall-clock timestamps plus asynchronous resampling so WASAPI silence gaps remain silence instead of shortening the computer-audio timeline.
-- If optional computer-audio capture produces an empty file, discard only `systemAudioPath` and continue with valid screen, microphone, and webcam outputs.
 - One media-audio clip per project baseline.
 - Mix includes recording track, optional computer audio, and media audio with lane-aware media/recording region behavior.
 - `change-sound` supports local recording-track control (volume, mute, fade).

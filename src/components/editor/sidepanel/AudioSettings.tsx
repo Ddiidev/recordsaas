@@ -40,7 +40,6 @@ export function AudioSettings() {
     toggleMute,
     hasAudioTrack,
     setIsMuted,
-    audioUrl,
     systemAudioUrl,
     systemAudioVolume,
     systemAudioMuted,
@@ -53,7 +52,6 @@ export function AudioSettings() {
       toggleMute: state.toggleMute,
       hasAudioTrack: state.hasAudioTrack,
       setIsMuted: state.setIsMuted,
-      audioUrl: state.audioUrl,
       systemAudioUrl: state.systemAudioUrl,
       systemAudioVolume: state.systemAudioVolume,
       systemAudioMuted: state.systemAudioMuted,
@@ -144,8 +142,19 @@ export function AudioSettings() {
                     Set to Max Volume
                   </Button>
                 </div>
-              </Collapse>
-            )}
+                <Button
+                  onClick={() => setVolume(1)}
+                  disabled={isMuted}
+                  className={cn(
+                    'w-full h-11 font-semibold transition-all duration-300',
+                    'bg-primary hover:bg-primary/90 text-primary-foreground',
+                  )}
+                >
+                  <MaxVolume className="w-4 h-4 mr-2" />
+                  Set to Max Volume
+                </Button>
+              </div>
+            </Collapse>
 
             {systemAudioUrl && (
               <Collapse

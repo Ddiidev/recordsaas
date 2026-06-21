@@ -27,21 +27,9 @@ export interface RecordingSession {
   systemAudioTempPath?: string
   mediaAudioPath?: string
   recordingGeometry: RecordingGeometry
-  scaleFactor: number // Linux display scale; Windows sessions use physical coordinates with scale 1.
+  scaleFactor: number // Display scale factor (for Windows DPI scaling)
   screenCaptureBackend?: string
-  screenCaptureDisplay?: {
-    id: number
-    label: string
-    bounds: RecordingGeometry
-    scaleFactor: number
-    physicalBounds: RecordingGeometry
-  }
   requestedScreenFps?: number
-  screenEncoderPreference?: ScreenEncoderPreference
-  screenEncoderDetectedVendor?: Exclude<ScreenEncoderVendor, 'generic'> | null
-  screenEncoder?: string
-  screenEncoderMode?: ScreenEncoderSelectionMode
-  screenEncoderFallbackReason?: string
   recordingAudioCodec?: 'aac' | 'mp3'
   recordingAudioBitrateKbps?: 128 | 192 | 320
   recordingAudioSampleRate?: 44100 | 48000

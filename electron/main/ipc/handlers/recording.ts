@@ -25,10 +25,6 @@ export function handleGetComputerAudioSupport() {
   return getComputerAudioSupport()
 }
 
-export function handleGetScreenEncoderStatus(_event: unknown, refresh = false) {
-  return getScreenEncoderStatus(refresh)
-}
-
 export function handleLoadVideoFromFile() {
   return loadVideoFromFile()
 }

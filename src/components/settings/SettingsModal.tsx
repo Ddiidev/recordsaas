@@ -26,7 +26,6 @@ interface SettingsModalProps {
   defaultTab?: SettingsTab
   recordingProfileCreateRequestId?: number
   recordingProfileAnalyzeRequestId?: number
-  highlightScreenEncoderRequestId?: number
   onRecordingProfileCreateRequestHandled?: () => void
   onRecordingProfileAnalyzeRequestHandled?: () => void
 }
@@ -49,7 +48,6 @@ export function SettingsModal({
   defaultTab = 'general',
   recordingProfileCreateRequestId = 0,
   recordingProfileAnalyzeRequestId = 0,
-  highlightScreenEncoderRequestId = 0,
   onRecordingProfileCreateRequestHandled,
   onRecordingProfileAnalyzeRequestHandled,
 }: SettingsModalProps) {
@@ -77,7 +75,7 @@ export function SettingsModal({
           />
         )
       case 'performance':
-        return <PerformanceTab highlightScreenEncoderRequestId={highlightScreenEncoderRequestId} />
+        return <PerformanceTab />
       case 'shortcuts':
         return <ShortcutsTab />
       case 'account':

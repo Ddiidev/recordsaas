@@ -1403,11 +1403,6 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   try {
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
-    const recordingVolume =
-      typeof projectStateRecord.volume === 'number' && Number.isFinite(projectStateRecord.volume)
-        ? Math.max(0, Math.min(projectStateRecord.volume, 1))
-        : 1
-    const recordingMuted = projectStateRecord.isMuted === true || recordingVolume <= 0
     const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
     const systemAudioVolume =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)

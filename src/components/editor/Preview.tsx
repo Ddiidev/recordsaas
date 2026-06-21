@@ -399,7 +399,7 @@ export const Preview = memo(
             systemAudio.currentTime = video.currentTime
           }
           systemAudio.playbackRate = video.playbackRate
-          systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+          systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
           systemAudio.play().catch(console.error)
         }
         if (mediaAudio) {
@@ -460,12 +460,12 @@ export const Preview = memo(
       if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
         systemAudio.currentTime = video.currentTime
       }
-        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
-        systemAudio.muted = systemAudioMuted
+      systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+      systemAudio.muted = isMuted || systemAudioMuted
       if (!isPlaying) {
         systemAudio.pause()
       }
-    }, [systemAudioUrl, isPlaying, videoRef, systemAudioVolume, systemAudioMuted])
+    }, [systemAudioUrl, isPlaying, videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
 
     useEffect(() => {
       const video = videoRef.current
@@ -511,8 +511,8 @@ export const Preview = memo(
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
-        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
-        systemAudio.muted = systemAudioMuted
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+        systemAudio.muted = isMuted || systemAudioMuted
       }
       if (mediaAudio) {
         const playbackTime = video?.currentTime ?? currentTime
@@ -629,7 +629,7 @@ export const Preview = memo(
         if (Math.abs(systemAudio.currentTime - playbackTime) > 0.1) {
           systemAudio.currentTime = playbackTime
         }
-      systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
         systemAudio.playbackRate = video.playbackRate
         if (isPlaying && systemAudio.paused) {
           systemAudio.play().catch(console.error)
@@ -765,15 +765,15 @@ export const Preview = memo(
       if (video && systemAudio) {
         console.info(`[Preview] Computer audio metadata loaded: duration=${systemAudio.duration} src=${systemAudio.currentSrc}`)
         systemAudio.currentTime = video.currentTime
-      systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
-      systemAudio.muted = systemAudioMuted
+        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
+        systemAudio.muted = isMuted || systemAudioMuted
         if (video.paused) {
           systemAudio.pause()
         } else {
           systemAudio.play().catch(console.error)
         }
       }
-    }, [videoRef, systemAudioVolume, systemAudioMuted])
+    }, [videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
