@@ -1,3 +1,22 @@
+# [2.6.0](https://github.com/Ddiidev/recordsaas/compare/v2.5.10...v2.6.0) (2026-06-21)
+
+
+### Bug Fixes
+
+* align switch radius with controls ([dd092a3](https://github.com/Ddiidev/recordsaas/commit/dd092a3a15de37af38cb776bd881aee9ff28df46))
+* clip switch track corners ([1026cb1](https://github.com/Ddiidev/recordsaas/commit/1026cb1b7218c9cee25a01b4d3263a91bc18fe60))
+* refine switch thumb styling ([1f045e8](https://github.com/Ddiidev/recordsaas/commit/1f045e8d0765f28a9e6a4fcd5a7b20b194064fb7))
+* restore switch track styling ([a5126ee](https://github.com/Ddiidev/recordsaas/commit/a5126ee3926217ec488809aa88481f8fe9677810))
+* round switch inner track ([ac76bc4](https://github.com/Ddiidev/recordsaas/commit/ac76bc486a429e9939c4563d10a364c00d9f86fa))
+* soften switch corner radius ([eb9ef38](https://github.com/Ddiidev/recordsaas/commit/eb9ef38c6ba6e7e79c5e4c445160521e5c8cfb56))
+
+
+### Features
+
+* add performance settings and recorder modal fixes ([07a64f9](https://github.com/Ddiidev/recordsaas/commit/07a64f9082426c71937af7d487feb5e42e0c3503))
+* add project library save and import flow ([29c4913](https://github.com/Ddiidev/recordsaas/commit/29c49134bbed5763025dfc54894b2841be0560c8))
+* improve Windows recording and webcam handling ([f274cb3](https://github.com/Ddiidev/recordsaas/commit/f274cb3089cdfc1bc2b9bb67d068a8f07b87ec9d))
+
 ## [2.5.10](https://github.com/Ddiidev/recordsaas/compare/v2.5.9...v2.5.10) (2026-06-19)
 
 
