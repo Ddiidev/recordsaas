@@ -1,3 +1,10 @@
+## [2.6.3](https://github.com/Ddiidev/recordsaas/compare/v2.6.2...v2.6.3) (2026-06-21)
+
+
+### Bug Fixes
+
+* restore registration of recording:get-screen-encoder-status IPC handler ([8c3b0b9](https://github.com/Ddiidev/recordsaas/commit/8c3b0b9db4fc656f624f71382b3eebea9de3dc9f))
+
 ## [2.6.2](https://github.com/Ddiidev/recordsaas/compare/v2.6.1...v2.6.2) (2026-06-21)
 
 
