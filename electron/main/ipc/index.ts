@@ -46,6 +46,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('recording:start', recordingHandlers.handleStartRecording)
   ipcMain.handle('recording:analyze-capability', recordingHandlers.handleAnalyzeRecordingCapability)
   ipcMain.handle('recording:get-computer-audio-support', recordingHandlers.handleGetComputerAudioSupport)
+  ipcMain.handle('recording:get-screen-encoder-status', recordingHandlers.handleGetScreenEncoderStatus)
   ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
