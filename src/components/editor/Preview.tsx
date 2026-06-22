@@ -117,7 +117,8 @@ export const Preview = memo(
       })),
     )
 
-    const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack, setMediaAudioDuration } = useEditorStore.getState()
+    const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack, setMediaAudioDuration } =
+      useEditorStore.getState()
     const isPlaying = useEditorStore((state) => state.isPlaying)
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
@@ -271,7 +272,9 @@ export const Preview = memo(
         img.onload = () => {
           setBgImage(img)
         }
-        const finalUrl = background.imageUrl.startsWith('blob:') ? background.imageUrl : toMediaUrl(background.imageUrl) || ''
+        const finalUrl = background.imageUrl.startsWith('blob:')
+          ? background.imageUrl
+          : toMediaUrl(background.imageUrl) || ''
         img.src = finalUrl
       } else {
         setBgImage(null)
@@ -365,10 +368,7 @@ export const Preview = memo(
         lastUiSyncAtRef.current = 0
         setPlaybackUiTime(currentTime)
       }
-    }, [
-      isPlaying,
-      currentTime,
-    ])
+    }, [isPlaying, currentTime])
 
     useEffect(() => {
       const video = videoRef.current
@@ -409,7 +409,7 @@ export const Preview = memo(
               mediaAudio.currentTime = resolvedMedia.sourceTime
             }
             mediaAudio.playbackRate = video.playbackRate
-            mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+            mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
             mediaAudio.play().catch(console.error)
           } else {
             mediaAudio.pause()
@@ -460,8 +460,8 @@ export const Preview = memo(
       if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
         systemAudio.currentTime = video.currentTime
       }
-      systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
-      systemAudio.muted = isMuted || systemAudioMuted
+      systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+      systemAudio.muted = systemAudioMuted
       if (!isPlaying) {
         systemAudio.pause()
       }
@@ -482,11 +482,11 @@ export const Preview = memo(
       if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
         mediaAudio.currentTime = resolvedMedia.sourceTime
       }
-      mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+      mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
       if (!isPlaying) {
         mediaAudio.pause()
       }
-    }, [mediaAudioClip?.url, isPlaying, resolveMediaForTime, videoRef, volume])
+    }, [resolveMediaForTime, videoRef])
 
     // Effect to handle volume and mute state
     useEffect(() => {
@@ -511,13 +511,13 @@ export const Preview = memo(
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
-        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
-        systemAudio.muted = isMuted || systemAudioMuted
+        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+        systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
         const playbackTime = video?.currentTime ?? currentTime
         const resolvedMedia = resolveMediaForTime(playbackTime)
-        mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+        mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
         mediaAudio.muted = false
       }
     }, [
@@ -603,7 +603,10 @@ export const Preview = memo(
       }
       if (webcamVideoRef.current) {
         webcamVideoRef.current.playbackRate = video.playbackRate // Sync webcam speed
-        if (!isPlaying && Math.abs(webcamVideoRef.current.currentTime - playbackTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+        if (
+          !isPlaying &&
+          Math.abs(webcamVideoRef.current.currentTime - playbackTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+        ) {
           webcamVideoRef.current.currentTime = playbackTime
         }
       }
@@ -641,7 +644,7 @@ export const Preview = memo(
           if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
             mediaAudio.currentTime = resolvedMedia.sourceTime
           }
-          mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+          mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
           mediaAudio.playbackRate = video.playbackRate
           if (isPlaying && mediaAudio.paused) {
             mediaAudio.play().catch(console.error)
@@ -742,7 +745,9 @@ export const Preview = memo(
       const video = videoRef.current
       const recordingAudio = recordingAudioRef.current
       if (video && recordingAudio) {
-        console.info(`[Preview] Recording audio metadata loaded: duration=${recordingAudio.duration} src=${recordingAudio.currentSrc}`)
+        console.info(
+          `[Preview] Recording audio metadata loaded: duration=${recordingAudio.duration} src=${recordingAudio.currentSrc}`,
+        )
         const resolvedRecording = resolveRecordingForTime(video.currentTime)
         if (!resolvedRecording.isActive) {
           recordingAudio.pause()
@@ -763,23 +768,27 @@ export const Preview = memo(
       const video = videoRef.current
       const systemAudio = systemAudioRef.current
       if (video && systemAudio) {
-        console.info(`[Preview] Computer audio metadata loaded: duration=${systemAudio.duration} src=${systemAudio.currentSrc}`)
+        console.info(
+          `[Preview] Computer audio metadata loaded: duration=${systemAudio.duration} src=${systemAudio.currentSrc}`,
+        )
         systemAudio.currentTime = video.currentTime
-        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
-        systemAudio.muted = isMuted || systemAudioMuted
+        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+        systemAudio.muted = systemAudioMuted
         if (video.paused) {
           systemAudio.pause()
         } else {
           systemAudio.play().catch(console.error)
         }
       }
-    }, [videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
+    }, [videoRef, systemAudioVolume, systemAudioMuted])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
       const mediaAudio = mediaAudioRef.current
       if (video && mediaAudio) {
-        console.info(`[Preview] Media audio metadata loaded: duration=${mediaAudio.duration} src=${mediaAudio.currentSrc}`)
+        console.info(
+          `[Preview] Media audio metadata loaded: duration=${mediaAudio.duration} src=${mediaAudio.currentSrc}`,
+        )
         if (mediaAudioClip && Number.isFinite(mediaAudio.duration)) {
           setMediaAudioDuration(mediaAudio.duration)
         }
@@ -790,7 +799,7 @@ export const Preview = memo(
           mediaAudio.currentTime = 0
         } else {
           mediaAudio.currentTime = resolvedMedia.sourceTime
-          mediaAudio.volume = Math.max(0, Math.min(1, volume * resolvedMedia.volumeMultiplier))
+          mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
           if (video.paused) {
             mediaAudio.pause()
           } else {
