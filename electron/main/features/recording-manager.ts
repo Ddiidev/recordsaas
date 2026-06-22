@@ -23,6 +23,7 @@ import {
   getWindowsPhysicalDisplayRect,
   getWindowsScreenCaptureCandidates,
   selectWindowsScreenCaptureCandidate,
+  PhysicalCaptureRect,
 } from './windows-screen-capture'
 import { getScreenEncoderDefinition, getScreenEncoderStatus } from './screen-encoder'
 
@@ -154,6 +155,8 @@ type RecordingOutputOptions = {
   screenFps?: RecordingScreenFps
   screenNeedsHwDownload?: boolean
   screenCaptureBackend?: string
+  screenEncoderStatus?: ScreenEncoderStatus
+  screenCaptureDisplay?: any
 }
 type FfmpegProcessRole = 'main' | 'webcam' | 'system-audio'
 type ComputerAudioBackend = 'windows-helper' | 'pulse'
@@ -162,6 +165,7 @@ type FfmpegProcessSpec = {
   args: string[]
 }
 type WindowsSystemAudioProbe = {
+  id?: string
   deviceName: string
   sampleRate: number
   channels: number
@@ -169,31 +173,23 @@ type WindowsSystemAudioProbe = {
   encoding: string
   sampleFormat?: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le'
 }
-type SplitRecordingInputArgs = {
-  micInputArgs: string[]
-  webcamInputArgs: string[]
-  screenInputArgs: string[]
-}
-type FfmpegProcessRole = 'main' | 'webcam' | 'system-audio'
-type ComputerAudioBackend = 'windows-helper' | 'pulse'
-type FfmpegProcessSpec = {
-  role: FfmpegProcessRole
-  args: string[]
-}
-type WindowsSystemAudioProbe = {
-  deviceName: string
+
+type WindowsAudioDevice = {
+  id: string
+  name: string
+  isDefault: boolean
   sampleRate: number
   channels: number
   bitsPerSample: number
-  encoding: string
-  sampleFormat?: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le'
+  sampleFormat: string
 }
 type SplitRecordingInputArgs = {
   micInputArgs: string[]
   webcamInputArgs: string[]
   screenInputArgs: string[]
 }
-type RecordingCapabilityProbeBackend = 'gfxcapture' | 'gdigrab' | 'x11grab'
+
+type RecordingCapabilityProbeBackend = 'gfxcapture' | 'gdigrab' | 'x11grab' | 'ddagrab'
 type RecordingCapabilityProbeResult = {
   backend: RecordingCapabilityProbeBackend
   ok: boolean
@@ -659,17 +655,26 @@ function getPlatformPhysicalOffset(value: number, scaleFactor: number): number {
   return value
 }
 
-function getWindowsPhysicalDisplayRect(display: Display): PhysicalCaptureRect {
-  const scaleFactor = display.scaleFactor || 1
-  const { x, y, width, height } = display.bounds
-  return {
-    x: Math.floor(x * scaleFactor),
-    y: Math.floor(y * scaleFactor),
-    width: toEvenPhysicalDimension(width * scaleFactor),
-    height: toEvenPhysicalDimension(height * scaleFactor),
-  }
+
+
+function getDisplayIndex(display: Display, displays: Display[]): number {
+  return Math.max(
+    0,
+    displays.findIndex((item) => item.id === display.id),
+  )
 }
 
+function buildWindowsDdagrabInput(displayIndex: number, fps: RecordingScreenFps, rect: PhysicalCaptureRect): string {
+  return [
+    `ddagrab=output_idx=${displayIndex}`,
+    `framerate=${fps}`,
+    'draw_mouse=0',
+    `video_size=${rect.width}x${rect.height}`,
+    `offset_x=${Math.max(0, rect.x)}`,
+    `offset_y=${Math.max(0, rect.y)}`,
+    'dup_frames=1',
+  ].join(':')
+}
 function getWindowsGdigrabVirtualOrigin(displays: Display[]): { x: number; y: number } {
   if (displays.length === 0) {
     return { x: 0, y: 0 }
@@ -694,25 +699,6 @@ function getWindowsGdigrabDisplayRect(display: Display, displays: Display[]): Ph
     x: normalizeWindowsGdigrabOffset(rect.x, origin.x),
     y: normalizeWindowsGdigrabOffset(rect.y, origin.y),
   }
-}
-
-function getDisplayIndex(display: Display, displays: Display[]): number {
-  return Math.max(
-    0,
-    displays.findIndex((item) => item.id === display.id),
-  )
-}
-
-function buildWindowsDdagrabInput(displayIndex: number, fps: RecordingScreenFps, rect: PhysicalCaptureRect): string {
-  return [
-    `ddagrab=output_idx=${displayIndex}`,
-    `framerate=${fps}`,
-    'draw_mouse=0',
-    `video_size=${rect.width}x${rect.height}`,
-    `offset_x=${Math.max(0, rect.x)}`,
-    `offset_y=${Math.max(0, rect.y)}`,
-    'dup_frames=1',
-  ].join(':')
 }
 
 function getWindowsDdagrabDisplayRect(display: Display): PhysicalCaptureRect {
@@ -741,7 +727,6 @@ function getWindowsDdagrabAreaRect(geometry: RecordingGeometry, containingDispla
     height: Math.min(toEvenPhysicalDimension(geometry.height * scaleFactor), maxHeight),
   }
 }
-
 function isFFmpegRecordingReadyMessage(message: string): boolean {
   return message.includes('Press [q] to stop') || message.includes('Output #0,') || message.includes('frame=')
 }
@@ -791,10 +776,11 @@ function normalizeWindowsSystemAudioSampleFormat(
   }
 }
 
-function probeWindowsSystemAudioHelper():
+function probeWindowsSystemAudioHelper(deviceId?: string):
   | { supported: true; probe: WindowsSystemAudioProbe }
   | { supported: false; reason?: string } {
-  const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, ['--probe'], {
+  const probeArgs = deviceId ? ['--probe', '--device-id', deviceId] : ['--probe']
+  const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, probeArgs, {
     encoding: 'utf-8',
     timeout: 4000,
     windowsHide: true,
@@ -839,6 +825,24 @@ function probeWindowsSystemAudioHelper():
       supported: false,
       reason: `Could not parse Windows system-audio helper probe: ${(error as Error).message}`,
     }
+  }
+}
+
+export function listWindowsAudioDevices(): WindowsAudioDevice[] {
+  if (process.platform !== 'win32') return []
+  const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, ['--probe-all'], {
+    encoding: 'utf-8',
+    timeout: 5000,
+    windowsHide: true,
+  })
+  if (result.error || result.status !== 0) {
+    log.warn('[SystemAudio] probe-all failed:', result.error?.message || result.stderr)
+    return []
+  }
+  try {
+    return JSON.parse((result.stdout || '').trim()) as WindowsAudioDevice[]
+  } catch {
+    return []
   }
 }
 
@@ -916,6 +920,7 @@ type ComputerAudioCaptureConfig =
       inputFormat?: 's16le' | 's24le' | 's32le' | 'f32le' | 'f64le'
       inputSampleRate?: number
       inputChannels?: number
+      deviceId?: string
     }
   | {
       supported: false
@@ -925,9 +930,9 @@ type ComputerAudioCaptureConfig =
 
 type SupportedComputerAudioCaptureConfig = Extract<ComputerAudioCaptureConfig, { supported: true }>
 
-function resolveComputerAudioCaptureConfig(): ComputerAudioCaptureConfig {
+function resolveComputerAudioCaptureConfig(deviceId?: string): ComputerAudioCaptureConfig {
   if (process.platform === 'win32') {
-    const helperProbe = probeWindowsSystemAudioHelper()
+    const helperProbe = probeWindowsSystemAudioHelper(deviceId)
     if (!helperProbe.supported) {
       return {
         supported: false,
@@ -943,6 +948,7 @@ function resolveComputerAudioCaptureConfig(): ComputerAudioCaptureConfig {
       inputFormat: helperProbe.probe.sampleFormat,
       inputSampleRate: helperProbe.probe.sampleRate,
       inputChannels: helperProbe.probe.channels,
+      deviceId,
     }
   }
 
@@ -1608,7 +1614,11 @@ async function startActualRecording(
 
   if (systemAudioPath && systemAudioCapture?.backend === 'windows-helper') {
     log.info('[SystemAudioHelper] Starting helper in stdout mode.')
-    const helperProcess = spawn(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, ['--stdout'], { windowsHide: true })
+    const helperArgs = ['--stdout']
+    if (systemAudioCapture.deviceId) {
+      helperArgs.push('--device-id', systemAudioCapture.deviceId)
+    }
+    const helperProcess = spawn(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, helperArgs, { windowsHide: true })
     appState.systemAudioHelperProcess = helperProcess
     systemAudioHelperRun = {
       role: 'system-audio',
@@ -1823,27 +1833,16 @@ function appendScreenOutputArgs(
   screenOut: string,
   outputOptions: RecordingOutputOptions = {},
 ): void {
+  const encoderDef = getScreenEncoderDefinition(outputOptions.screenEncoderStatus)
+
+  if (encoderDef.prefixArgs && encoderDef.prefixArgs.length > 0) {
+    args.unshift(...encoderDef.prefixArgs)
+  }
+
   log.info(
-    `[RecordingManager] Screen recording encode config: output=${screenOut} codec=libx264 preset=ultrafast crf=18 fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
+    `[RecordingManager] Screen recording encode config: output=${screenOut} codecArgs=${encoderDef.codecArgs.join(' ')} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
   )
-  args.push(
-    '-map',
-    `${screenIndex}:v`,
-    '-c:v',
-    'libx264',
-    '-preset',
-    'ultrafast', // Lowest CPU usage
-    '-crf',
-    '18', // Good quality
-    '-tune',
-    'zerolatency', // Optimize for real-time
-    '-profile:v',
-    'high',
-    '-level',
-    '5.1',
-    '-pix_fmt',
-    'yuv420p',
-  )
+  args.push('-map', `${screenIndex}:v`, ...encoderDef.codecArgs)
   if (outputOptions.screenScale) {
     const screenFilters = outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : []
     screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
@@ -1883,6 +1882,8 @@ function buildWindowsHelperSystemAudioFfmpegArgs(
     '-i',
     'pipe:0',
     '-vn',
+    '-af',
+    'pan=stereo|c0=FL|c1=FR,aresample=async=1',
     ...getRecordedAudioCodecArgs(config),
     audioOut,
   ]
@@ -2053,7 +2054,7 @@ export async function startRecording(options: any) {
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
   log.info('[RecordingManager] Resolved screen encoder:', screenEncoderStatus)
 
-  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig() : null
+  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig(options.computerAudioDeviceId) : null
   if (computerAudioEnabled && !computerAudioCapture?.supported) {
     dialog.showErrorBox(
       'Computer Audio Unavailable',
@@ -2405,10 +2406,6 @@ export async function analyzeRecordingCapability(): Promise<{
   measuredFps?: number
 }> {
   const targetDisplay = screen.getPrimaryDisplay()
-  const targetDisplayIndex = Math.max(
-    0,
-    allDisplays.findIndex((display) => display.id === targetDisplay.id),
-  )
   const scaleFactor = targetDisplay.scaleFactor || 1
   const { x, y, width, height } = targetDisplay.bounds
   const windowsCaptureRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(targetDisplay) : null
