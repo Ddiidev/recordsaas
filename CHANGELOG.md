@@ -1,3 +1,10 @@
+# [2.7.0](https://github.com/Ddiidev/recordsaas/compare/v2.6.3...v2.7.0) (2026-06-22)
+
+
+### Features
+
+* **system-audio:** add missing native WASAPI provider and writer classes ([09a2bc8](https://github.com/Ddiidev/recordsaas/commit/09a2bc8155c7d60ace35ae21de3c1848eb87d1cc))
+
 ## [2.6.3](https://github.com/Ddiidev/recordsaas/compare/v2.6.2...v2.6.3) (2026-06-21)
 
 
