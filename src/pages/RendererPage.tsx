@@ -110,7 +110,10 @@ const resolveExportMemoryBudget = async (
   const maxBytes = Math.floor(totalMemoryBytes * EXPORT_MEMORY_HARD_CAP_FRACTION * (limitPercent / 100))
   const safeProviderCount = Math.max(1, providerCount)
   const frameBytes = estimateFrameBytes(outputWidth, outputHeight)
-  const frameQueueBytes = Math.max(frameBytes * safeProviderCount * MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES, maxBytes * 0.35)
+  const frameQueueBytes = Math.max(
+    frameBytes * safeProviderCount * MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
+    maxBytes * 0.35,
+  )
   const maxBufferedFramesPerProvider = clampNumber(
     Math.floor(frameQueueBytes / (frameBytes * safeProviderCount)),
     MIN_VIDEO_FRAME_PROVIDER_MAX_BUFFERED_FRAMES,
@@ -156,13 +159,9 @@ const createExportMemoryController = (memoryBudget: ExportMemoryBudget): ExportM
     try {
       const current = await window.electronAPI.getCurrentProcessMemoryInfo()
       const residentKilobytes =
-        typeof current?.residentSet === 'number' && current.residentSet > 0
-          ? current.residentSet
-          : current?.private
+        typeof current?.residentSet === 'number' && current.residentSet > 0 ? current.residentSet : current?.private
       lastResidentBytes =
-        typeof residentKilobytes === 'number' && Number.isFinite(residentKilobytes)
-          ? residentKilobytes * 1024
-          : null
+        typeof residentKilobytes === 'number' && Number.isFinite(residentKilobytes) ? residentKilobytes * 1024 : null
       return lastResidentBytes
     } catch (error) {
       log.warn('[RendererPage] Failed to read renderer process memory info:', error)
@@ -347,7 +346,8 @@ async function createVideoFrameProvider(
 
   const getDecoderDescription = (track: any, isoFile: any): Uint8Array | undefined => {
     const isAvc = typeof track?.codec === 'string' && (track.codec.startsWith('avc1') || track.codec.startsWith('avc3'))
-    const isHevc = typeof track?.codec === 'string' && (track.codec.startsWith('hvc1') || track.codec.startsWith('hev1'))
+    const isHevc =
+      typeof track?.codec === 'string' && (track.codec.startsWith('hvc1') || track.codec.startsWith('hev1'))
     if (!isAvc && !isHevc) return undefined
 
     const desc =
@@ -426,8 +426,10 @@ async function createVideoFrameProvider(
         })
 
         const description = getDecoderDescription(track, mp4boxfile)
-        const isAvc = typeof track?.codec === 'string' && (track.codec.startsWith('avc1') || track.codec.startsWith('avc3'))
-        const isHevc = typeof track?.codec === 'string' && (track.codec.startsWith('hvc1') || track.codec.startsWith('hev1'))
+        const isAvc =
+          typeof track?.codec === 'string' && (track.codec.startsWith('avc1') || track.codec.startsWith('avc3'))
+        const isHevc =
+          typeof track?.codec === 'string' && (track.codec.startsWith('hvc1') || track.codec.startsWith('hev1'))
         if ((isAvc || isHevc) && !description) {
           const trackKeys = Object.keys(track || {})
           const sampleDescKeys = Object.keys(track?.sampleDescriptions?.[0] || {})
@@ -528,7 +530,9 @@ async function createVideoFrameProvider(
         })
         if (closed) break
         if (chunk.byteLength === 0) {
-          log.warn(`[RendererPage] MP4 chunk pump received an empty chunk at offset=${offset} for ${normalizedVideoPath}.`)
+          log.warn(
+            `[RendererPage] MP4 chunk pump received an empty chunk at offset=${offset} for ${normalizedVideoPath}.`,
+          )
           break
         }
 
@@ -542,11 +546,7 @@ async function createVideoFrameProvider(
         bytesFetched += chunk.byteLength
         chunkCount += 1
 
-        if (
-          chunkCount === 1 ||
-          nextOffset >= fileSize ||
-          chunkCount % VIDEO_FILE_PUMP_PROGRESS_INTERVAL_CHUNKS === 0
-        ) {
+        if (chunkCount === 1 || nextOffset >= fileSize || chunkCount % VIDEO_FILE_PUMP_PROGRESS_INTERVAL_CHUNKS === 0) {
           log.info(
             `[RendererPage] MP4 chunk pump progress path=${normalizedVideoPath} bytesFetched=${formatBytes(bytesFetched)} chunks=${chunkCount} nextOffset=${formatBytes(nextOffset)}`,
           )
@@ -593,7 +593,9 @@ async function createVideoFrameProvider(
     notifyFrameDrain()
     try {
       decoder?.close()
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     throw e instanceof Error ? e : new Error('Failed to initialize MP4Box/VideoDecoder.')
   }
 
@@ -747,441 +749,460 @@ export function RendererPage() {
   useEffect(() => {
     log.info('[RendererPage] Component mounted. Setting up listeners.')
 
-    const cleanup = window.electronAPI.onRenderStart(async ({ projectState, exportSettings, exportSessionId }: RenderStartPayload) => {
-      const renderLogPrefix = exportSessionId ? `[RendererPage][${exportSessionId}]` : '[RendererPage]'
-      const canvas = canvasRef.current
-      const video = videoRef.current
-      const webcamVideo = webcamVideoRef.current
-      let frameProvider: VideoFrameProvider | null = null
-      let webcamFrameProvider: VideoFrameProvider | null = null
-      let bgImage: ExportBackgroundImage | null = null
+    const cleanup = window.electronAPI.onRenderStart(
+      async ({ projectState, exportSettings, exportSessionId }: RenderStartPayload) => {
+        const renderLogPrefix = exportSessionId ? `[RendererPage][${exportSessionId}]` : '[RendererPage]'
+        const canvas = canvasRef.current
+        const video = videoRef.current
+        const webcamVideo = webcamVideoRef.current
+        let frameProvider: VideoFrameProvider | null = null
+        let webcamFrameProvider: VideoFrameProvider | null = null
+        let bgImage: ExportBackgroundImage | null = null
 
-      try {
-        log.info(`${renderLogPrefix} Received "render:start" event.`, { exportSettings })
-        if (!canvas || !video) throw new Error('Canvas or Video ref is not available.')
-
-        // --- 1. SETUP CANVAS AND CONTEXT ---
-        const { resolution } = exportSettings
-        const [ratioW, ratioH] = projectState.aspectRatio.split(':').map(Number)
-        const baseHeight = RESOLUTIONS[resolution as keyof typeof RESOLUTIONS].height
-        let outputWidth = Math.round(baseHeight * (ratioW / ratioH))
-        outputWidth = outputWidth % 2 === 0 ? outputWidth : outputWidth + 1
-        let outputHeight = baseHeight
-
-        if (exportSettings.adaptiveRender) {
-          const adaptiveWidth = exportSettings.effectiveWidth || projectState.videoDimensions.width
-          const adaptiveHeight = exportSettings.effectiveHeight || projectState.videoDimensions.height
-          if (adaptiveWidth > 0 && adaptiveHeight > 0) {
-            outputWidth = adaptiveWidth % 2 === 0 ? adaptiveWidth : adaptiveWidth + 1
-            outputHeight = adaptiveHeight % 2 === 0 ? adaptiveHeight : adaptiveHeight + 1
-          }
-        }
-
-        canvas.width = outputWidth
-        canvas.height = outputHeight
-        const ctx = canvas.getContext('2d', {
-          alpha: false,
-          desynchronized: true,
-        })
-        if (!ctx) throw new Error('Failed to get 2D context from canvas.')
-
-        // --- 2. PREPARE STATE AND ASSETS ---
-        useEditorStore.setState(projectState)
-        let finalCursorBitmaps = new Map<string, CursorImageBitmap>()
-        if (projectState.platform === 'win32' || projectState.platform === 'darwin') {
-          if (projectState.cursorTheme) {
-            const scale = (await window.electronAPI.getSetting<number>('recorder.cursorScale')) || 2
-            log.info(`[RendererPage] Regenerating bitmaps for ${projectState.platform} at scale ${scale}x`)
-            if (projectState.platform === 'win32') {
-              finalCursorBitmaps = await prepareWindowsCursorBitmaps(projectState.cursorTheme, scale)
-            } else {
-              finalCursorBitmaps = await prepareMacOSCursorBitmaps(projectState.cursorTheme, scale)
-            }
-          }
-        } else {
-          log.info('[RendererPage] Preparing Linux bitmaps from project state.')
-          finalCursorBitmaps = await prepareCursorBitmaps(projectState.cursorImages)
-        }
-        const projectStateWithCursorBitmaps = { ...projectState, cursorBitmapsToRender: finalCursorBitmaps }
-        bgImage = await loadBackgroundImage(projectState.frameStyles.background)
-
-        // --- 2.5 SETUP VIDEO DECODER (Optimization) ---
-        frameProvider = null
-        webcamFrameProvider = null
-        const isSecure = typeof window !== 'undefined' ? window.isSecureContext : false
-        const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
-        const hasVideoDecoder = 'VideoDecoder' in window
-        const hasVideoEncoder = 'VideoEncoder' in window
-        log.info('[RendererPage] WebCodecs availability', {
-          isSecure,
-          hasVideoDecoder,
-          hasVideoEncoder,
-          ua,
-        })
-        if (!hasVideoDecoder) {
-          throw new Error(
-            `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, hasVideoEncoder=${hasVideoEncoder}, ua=${ua}). Export requires decoder-only mode.`,
-          )
-        }
-        const hasWebcam = Boolean(projectStateWithCursorBitmaps.webcamVideoPath && typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string')
-        const memoryBudget = await resolveExportMemoryBudget(outputWidth, outputHeight, hasWebcam ? 2 : 1)
-        const memoryController = createExportMemoryController(memoryBudget)
-        log.info(
-          `${renderLogPrefix} Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
-        )
         try {
-          if (projectStateWithCursorBitmaps.videoPath) {
-            frameProvider = await createVideoFrameProvider(projectStateWithCursorBitmaps.videoPath, memoryBudget, memoryController)
-            if (frameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for main video.')
-          }
-          if (hasWebcam) {
-            webcamFrameProvider = await createVideoFrameProvider(
-              projectStateWithCursorBitmaps.webcamVideoPath!,
-              memoryBudget,
-              memoryController,
-            )
-            if (webcamFrameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for webcam video.')
-          }
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : 'Unknown decoder initialization error'
-          throw new Error(
-            `Decoder initialization failed (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}): ${msg}`,
-          )
-        }
-        const useDecoder = Boolean(frameProvider)
-        const useWebcamDecoder = Boolean(webcamFrameProvider)
-        if (!useDecoder) {
-          throw new Error(
-            `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}). Export requires decoder-only mode.`,
-          )
-        }
-        const fps = Math.max(
-          1,
-          Math.min(
-            120,
-            Number.isFinite(exportSettings.effectiveFps)
-              ? Number(exportSettings.effectiveFps)
-              : exportSettings.adaptiveRender && frameProvider?.fps
-                ? frameProvider.fps
-                : exportSettings.fps,
-          ),
-        )
-        log.info(
-          `${renderLogPrefix} Effective export settings: adaptive=${exportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
-        )
+          log.info(`${renderLogPrefix} Received "render:start" event.`, { exportSettings })
+          if (!canvas || !video) throw new Error('Canvas or Video ref is not available.')
 
-        // --- 3. LOAD VIDEO SOURCES ---
-        const loadVideo = (videoElement: HTMLVideoElement, source: string, path: string): Promise<void> =>
-          new Promise((resolve, reject) => {
-            videoElement.onloadedmetadata = () => {
-              log.info(`[RendererPage] ${source} metadata loaded.`)
-              resolve()
+          // --- 1. SETUP CANVAS AND CONTEXT ---
+          const { resolution } = exportSettings
+          const [ratioW, ratioH] = projectState.aspectRatio.split(':').map(Number)
+          const baseHeight = RESOLUTIONS[resolution as keyof typeof RESOLUTIONS].height
+          let outputWidth = Math.round(baseHeight * (ratioW / ratioH))
+          outputWidth = outputWidth % 2 === 0 ? outputWidth : outputWidth + 1
+          let outputHeight = baseHeight
+
+          if (exportSettings.adaptiveRender) {
+            const adaptiveWidth = exportSettings.effectiveWidth || projectState.videoDimensions.width
+            const adaptiveHeight = exportSettings.effectiveHeight || projectState.videoDimensions.height
+            if (adaptiveWidth > 0 && adaptiveHeight > 0) {
+              outputWidth = adaptiveWidth % 2 === 0 ? adaptiveWidth : adaptiveWidth + 1
+              outputHeight = adaptiveHeight % 2 === 0 ? adaptiveHeight : adaptiveHeight + 1
             }
-            videoElement.onerror = (e) => reject(new Error(`Failed to load ${source}: ${e}`))
-            const mediaUrl = toMediaUrl(path)
-            if (!mediaUrl) {
-              reject(new Error(`Failed to resolve ${source} media URL from path: ${path}`))
-              return
-            }
-            videoElement.src = mediaUrl
-            videoElement.muted = true
-            videoElement.load()
+          }
+
+          canvas.width = outputWidth
+          canvas.height = outputHeight
+          const ctx = canvas.getContext('2d', {
+            alpha: false,
+            desynchronized: true,
           })
+          if (!ctx) throw new Error('Failed to get 2D context from canvas.')
 
-        const loadPromises: Promise<void>[] = [loadVideo(video, 'Main video', projectStateWithCursorBitmaps.videoPath!)]
-        if (hasWebcam && webcamVideo) {
-          loadPromises.push(loadVideo(webcamVideo, 'Webcam video', projectStateWithCursorBitmaps.webcamVideoPath!))
-        }
-        await Promise.all(loadPromises)
-
-        const mainDuration = video.duration || projectState.duration
-        const webcamDuration = hasWebcam && webcamVideo ? webcamVideo.duration : 0
-        if (hasWebcam) {
-          log.info('[RendererPage] Webcam timing sync', {
-            mainDuration,
-            webcamDuration,
-            durationDelta: Math.abs(webcamDuration - mainDuration),
-            alignedToSourceTimeline: true,
-          })
-        }
-
-        // --- 4. CALCULATE EXPORT DURATION AND FRAMES ---
-        const effectiveDuration = mainDuration || projectState.duration
-        const exportDuration = Math.max(
-          0,
-          calculateExportDuration(
-            effectiveDuration,
-            projectState.cutRegions,
-            projectState.speedRegions,
-            projectState.timelineLanes || [],
-          ),
-        )
-        const totalFrames = Math.floor(exportDuration * fps)
-        log.info(
-          `[RendererPage] Starting seek-driven rendering. Total frames: ${totalFrames}, Export duration: ${exportDuration.toFixed(2)}s`,
-        )
-
-        // --- SETUP ENCODER (Optimization) ---
-        let videoEncoder: any = null
-        let lastProgress = 0
-        let lastProgressLogBucket = -1
-        let lastProgressIpcAt = 0
-        let lastProgressIpcValue = -1
-        const emitRenderProgress = (progress: number, force = false) => {
-          const safeProgress = Math.max(0, Math.min(99, Number.isFinite(progress) ? progress : 0))
-          const bucket = Math.floor(safeProgress / 5)
-          if (bucket !== lastProgressLogBucket || force) {
-            lastProgressLogBucket = bucket
-            log.info(`${renderLogPrefix}[Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
-          }
-          const now = performance.now()
-          const shouldSend =
-            force ||
-            lastProgressIpcAt === 0 ||
-            now - lastProgressIpcAt >= RENDER_PROGRESS_IPC_INTERVAL_MS ||
-            Math.abs(safeProgress - lastProgressIpcValue) >= RENDER_PROGRESS_IPC_STEP_PERCENT
-          if (!shouldSend) return
-          lastProgressIpcAt = now
-          lastProgressIpcValue = safeProgress
-          window.electronAPI.sendRenderProgress({ progress: safeProgress })
-        }
-        const useHardwareEncoding = exportSettings.format === 'mp4' && 'VideoEncoder' in window
-
-        if (useHardwareEncoding) {
-          log.info('[RendererPage] Initializing hardware encoder (VideoEncoder)')
-          
-          const calculateBitrate = (res: string, qual: string, f: number, profile: 'high' | 'baseline') => {
-            const baseBitrates: Record<string, number> = {
-              '720p': 5_000_000,
-              '1080p': 8_000_000,
-              '2k': 14_000_000,
-            }
-            const qualityMultipliers: Record<string, number> = {
-              'low': 0.6,
-              'medium': 1.0,
-              'high': 2.0, // Significant boost for high quality
-              'ultra high': 2.0, // Same bitrate as high, difference is in imageSmoothingQuality
-            }
-            const fpsMultiplier = f >= 60 ? 1.4 : 1.0 // Higher FPS needs more data
-            const codecPenalty = profile === 'baseline' ? 1.3 : 1.0 // Baseline needs more bitrate than High profile
-
-             const base = baseBitrates[res] || 8_000_000
-             const qualMult = qualityMultipliers[qual] || 1.0
-              
-             return Math.floor(base * qualMult * fpsMultiplier * codecPenalty)
-          }
-
-          const bitrateResolution = outputHeight > 1080 ? '2k' : outputHeight > 720 ? '1080p' : outputHeight > 576 ? '720p' : outputHeight > 480 ? '576p' : '480p'
-          const highProfileBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'high')
-          const baselineBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'baseline')
-          const encoderConfigCandidates = [
-            {
-              codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
-              width: outputWidth,
-              height: outputHeight,
-              bitrate: baselineBitrate,
-              framerate: fps,
-              avc: { format: 'annexb' },
-              hardwareAcceleration: 'prefer-hardware',
-            },
-            {
-              codec: 'avc1.640033', // H.264 High Profile Level 5.1
-              width: outputWidth,
-              height: outputHeight,
-              bitrate: highProfileBitrate,
-              framerate: fps,
-              avc: { format: 'annexb' },
-              hardwareAcceleration: 'prefer-hardware',
-            },
-          ]
-          let selectedEncoderConfig = encoderConfigCandidates[encoderConfigCandidates.length - 1]
-          for (const candidate of encoderConfigCandidates) {
-            const support =
-              typeof (window as any).VideoEncoder.isConfigSupported === 'function'
-                ? await (window as any).VideoEncoder.isConfigSupported(candidate)
-                : { supported: true }
-            if (support?.supported) {
-              selectedEncoderConfig = support.config ?? candidate
-              break
-            }
-          }
-          log.info(
-            `[RendererPage] Configured encoder: codec=${selectedEncoderConfig.codec}, bitrate=${(selectedEncoderConfig.bitrate / 1_000_000).toFixed(2)} Mbps`,
-          )
-
-          videoEncoder = new (window as any).VideoEncoder({
-            output: (chunk: any) => {
-              const buffer = new ArrayBuffer(chunk.byteLength)
-              chunk.copyTo(buffer)
-              window.electronAPI.sendFrameToMain({ frame: Buffer.from(buffer), progress: lastProgress })
-            },
-            error: (e: any) => log.error('[RendererPage] Encoder error:', e),
-          })
-
-          videoEncoder.configure(selectedEncoderConfig)
-        }
-        const keyFrameIntervalFrames = Math.max(1, Math.round(fps * 2))
-
-        const perfStats = {
-          startedAt: performance.now(),
-          lastLoggedAt: performance.now(),
-          frames: 0,
-          waitMs: 0,
-          mainDecodeMs: 0,
-          webcamDecodeMs: 0,
-          drawMs: 0,
-          encodeMs: 0,
-          totalMs: 0,
-        }
-
-        for (let frame = 0; frame < totalFrames; frame++) {
-          const frameStartedAt = performance.now()
-          await memoryController.waitForBudget('render-loop')
-          // Backpressure handling using MessageChannel for sub-millisecond polling
-          // (setTimeout has ~15ms minimum resolution on Windows)
-          if (videoEncoder && videoEncoder.encodeQueueSize > memoryBudget.maxEncoderQueueSize) {
-            const waitStartedAt = performance.now()
-            await new Promise<void>((resolve) => {
-              const ch = new MessageChannel()
-              ch.port1.onmessage = () => {
-                if (videoEncoder.encodeQueueSize <= memoryBudget.maxEncoderQueueSize) {
-                  ch.port1.close()
-                  resolve()
-                } else {
-                  ch.port2.postMessage(null)
-                }
+          // --- 2. PREPARE STATE AND ASSETS ---
+          useEditorStore.setState(projectState)
+          let finalCursorBitmaps = new Map<string, CursorImageBitmap>()
+          if (projectState.platform === 'win32' || projectState.platform === 'darwin') {
+            if (projectState.cursorTheme) {
+              const scale = (await window.electronAPI.getSetting<number>('recorder.cursorScale')) || 2
+              log.info(`[RendererPage] Regenerating bitmaps for ${projectState.platform} at scale ${scale}x`)
+              if (projectState.platform === 'win32') {
+                finalCursorBitmaps = await prepareWindowsCursorBitmaps(projectState.cursorTheme, scale)
+              } else {
+                finalCursorBitmaps = await prepareMacOSCursorBitmaps(projectState.cursorTheme, scale)
               }
-              ch.port2.postMessage(null)
-            })
-            perfStats.waitMs += performance.now() - waitStartedAt
-          }
-
-          lastProgress = Math.min(99, ((frame + 1) / totalFrames) * 100)
-          emitRenderProgress(lastProgress, frame + 1 === totalFrames)
-          const exportTimestamp = frame / fps
-          const sourceTimestamp = mapExportTimeToSourceTime(
-            exportTimestamp,
-            effectiveDuration,
-            projectState.cutRegions,
-            projectState.speedRegions,
-            projectState.timelineLanes || [],
-          )
-
-          let mainFrame: VideoFrame | null = null
-          let webcamFrame: VideoFrame | null = null
-
-          if (useDecoder && frameProvider) {
-            const mainDecodeStartedAt = performance.now()
-            mainFrame = await frameProvider.getFrameForTime(sourceTimestamp)
-            perfStats.mainDecodeMs += performance.now() - mainDecodeStartedAt
+            }
           } else {
-            throw new Error('Decoder-only mode: main video decoder not available.')
+            log.info('[RendererPage] Preparing Linux bitmaps from project state.')
+            finalCursorBitmaps = await prepareCursorBitmaps(projectState.cursorImages)
+          }
+          const projectStateWithCursorBitmaps = { ...projectState, cursorBitmapsToRender: finalCursorBitmaps }
+          bgImage = await loadBackgroundImage(projectState.frameStyles.background)
+
+          // --- 2.5 SETUP VIDEO DECODER (Optimization) ---
+          frameProvider = null
+          webcamFrameProvider = null
+          const isSecure = typeof window !== 'undefined' ? window.isSecureContext : false
+          const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
+          const hasVideoDecoder = 'VideoDecoder' in window
+          const hasVideoEncoder = 'VideoEncoder' in window
+          log.info('[RendererPage] WebCodecs availability', {
+            isSecure,
+            hasVideoDecoder,
+            hasVideoEncoder,
+            ua,
+          })
+          if (!hasVideoDecoder) {
+            throw new Error(
+              `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, hasVideoEncoder=${hasVideoEncoder}, ua=${ua}). Export requires decoder-only mode.`,
+            )
+          }
+          const hasWebcam = Boolean(
+            projectStateWithCursorBitmaps.webcamVideoPath &&
+            typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string',
+          )
+          const memoryBudget = await resolveExportMemoryBudget(outputWidth, outputHeight, hasWebcam ? 2 : 1)
+          const memoryController = createExportMemoryController(memoryBudget)
+          log.info(
+            `${renderLogPrefix} Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
+          )
+          try {
+            if (projectStateWithCursorBitmaps.videoPath) {
+              frameProvider = await createVideoFrameProvider(
+                projectStateWithCursorBitmaps.videoPath,
+                memoryBudget,
+                memoryController,
+              )
+              if (frameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for main video.')
+            }
+            if (hasWebcam) {
+              webcamFrameProvider = await createVideoFrameProvider(
+                projectStateWithCursorBitmaps.webcamVideoPath!,
+                memoryBudget,
+                memoryController,
+              )
+              if (webcamFrameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for webcam video.')
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : 'Unknown decoder initialization error'
+            throw new Error(
+              `Decoder initialization failed (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}): ${msg}`,
+            )
+          }
+          const useDecoder = Boolean(frameProvider)
+          const useWebcamDecoder = Boolean(webcamFrameProvider)
+          if (!useDecoder) {
+            throw new Error(
+              `WebCodecs VideoDecoder is unavailable (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}). Export requires decoder-only mode.`,
+            )
+          }
+          const fps = Math.max(
+            1,
+            Math.min(
+              120,
+              Number.isFinite(exportSettings.effectiveFps)
+                ? Number(exportSettings.effectiveFps)
+                : exportSettings.adaptiveRender && frameProvider?.fps
+                  ? frameProvider.fps
+                  : exportSettings.fps,
+            ),
+          )
+          log.info(
+            `${renderLogPrefix} Effective export settings: adaptive=${exportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
+          )
+
+          // --- 3. LOAD VIDEO SOURCES ---
+          const loadVideo = (videoElement: HTMLVideoElement, source: string, path: string): Promise<void> =>
+            new Promise((resolve, reject) => {
+              videoElement.onloadedmetadata = () => {
+                log.info(`[RendererPage] ${source} metadata loaded.`)
+                resolve()
+              }
+              videoElement.onerror = (e) => reject(new Error(`Failed to load ${source}: ${e}`))
+              const mediaUrl = toMediaUrl(path)
+              if (!mediaUrl) {
+                reject(new Error(`Failed to resolve ${source} media URL from path: ${path}`))
+                return
+              }
+              videoElement.src = mediaUrl
+              videoElement.muted = true
+              videoElement.load()
+            })
+
+          const loadPromises: Promise<void>[] = [
+            loadVideo(video, 'Main video', projectStateWithCursorBitmaps.videoPath!),
+          ]
+          if (hasWebcam && webcamVideo) {
+            loadPromises.push(loadVideo(webcamVideo, 'Webcam video', projectStateWithCursorBitmaps.webcamVideoPath!))
+          }
+          await Promise.all(loadPromises)
+
+          const mainDuration = video.duration || projectState.duration
+          const webcamDuration = hasWebcam && webcamVideo ? webcamVideo.duration : 0
+          if (hasWebcam) {
+            log.info('[RendererPage] Webcam timing sync', {
+              mainDuration,
+              webcamDuration,
+              durationDelta: Math.abs(webcamDuration - mainDuration),
+              alignedToSourceTimeline: true,
+            })
           }
 
-          if (hasWebcam && webcamVideo) {
-            const webcamTimestamp = Math.max(0, sourceTimestamp)
-            if (useWebcamDecoder && webcamFrameProvider) {
-              const webcamDecodeStartedAt = performance.now()
-              webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)
-              perfStats.webcamDecodeMs += performance.now() - webcamDecodeStartedAt
+          // --- 4. CALCULATE EXPORT DURATION AND FRAMES ---
+          const effectiveDuration = mainDuration || projectState.duration
+          const exportDuration = Math.max(
+            0,
+            calculateExportDuration(
+              effectiveDuration,
+              projectState.cutRegions,
+              projectState.speedRegions,
+              projectState.timelineLanes || [],
+            ),
+          )
+          const totalFrames = Math.floor(exportDuration * fps)
+          log.info(
+            `[RendererPage] Starting seek-driven rendering. Total frames: ${totalFrames}, Export duration: ${exportDuration.toFixed(2)}s`,
+          )
+
+          // --- SETUP ENCODER (Optimization) ---
+          let videoEncoder: any = null
+          let lastProgress = 0
+          let lastProgressLogBucket = -1
+          let lastProgressIpcAt = 0
+          let lastProgressIpcValue = -1
+          const emitRenderProgress = (progress: number, force = false) => {
+            const safeProgress = Math.max(0, Math.min(99, Number.isFinite(progress) ? progress : 0))
+            const bucket = Math.floor(safeProgress / 5)
+            if (bucket !== lastProgressLogBucket || force) {
+              lastProgressLogBucket = bucket
+              log.info(`${renderLogPrefix}[Progress] Sending export:render-progress ${safeProgress.toFixed(2)}%.`)
+            }
+            const now = performance.now()
+            const shouldSend =
+              force ||
+              lastProgressIpcAt === 0 ||
+              now - lastProgressIpcAt >= RENDER_PROGRESS_IPC_INTERVAL_MS ||
+              Math.abs(safeProgress - lastProgressIpcValue) >= RENDER_PROGRESS_IPC_STEP_PERCENT
+            if (!shouldSend) return
+            lastProgressIpcAt = now
+            lastProgressIpcValue = safeProgress
+            window.electronAPI.sendRenderProgress({ progress: safeProgress })
+          }
+          const useHardwareEncoding = exportSettings.format === 'mp4' && 'VideoEncoder' in window
+
+          if (useHardwareEncoding) {
+            log.info('[RendererPage] Initializing hardware encoder (VideoEncoder)')
+
+            const calculateBitrate = (res: string, qual: string, f: number, profile: 'high' | 'baseline') => {
+              const baseBitrates: Record<string, number> = {
+                '720p': 5_000_000,
+                '1080p': 8_000_000,
+                '2k': 14_000_000,
+              }
+              const qualityMultipliers: Record<string, number> = {
+                low: 0.6,
+                medium: 1.0,
+                high: 2.0, // Significant boost for high quality
+                'ultra high': 2.0, // Same bitrate as high, difference is in imageSmoothingQuality
+              }
+              const fpsMultiplier = f >= 60 ? 1.4 : 1.0 // Higher FPS needs more data
+              const codecPenalty = profile === 'baseline' ? 1.3 : 1.0 // Baseline needs more bitrate than High profile
+
+              const base = baseBitrates[res] || 8_000_000
+              const qualMult = qualityMultipliers[qual] || 1.0
+
+              return Math.floor(base * qualMult * fpsMultiplier * codecPenalty)
+            }
+
+            const bitrateResolution =
+              outputHeight > 1080
+                ? '2k'
+                : outputHeight > 720
+                  ? '1080p'
+                  : outputHeight > 576
+                    ? '720p'
+                    : outputHeight > 480
+                      ? '576p'
+                      : '480p'
+            const highProfileBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'high')
+            const baselineBitrate = calculateBitrate(bitrateResolution, exportSettings.quality, fps, 'baseline')
+            const encoderConfigCandidates = [
+              {
+                codec: 'avc1.420033', // H.264 Baseline Profile Level 5.1
+                width: outputWidth,
+                height: outputHeight,
+                bitrate: baselineBitrate,
+                framerate: fps,
+                avc: { format: 'annexb' },
+                hardwareAcceleration: 'prefer-hardware',
+              },
+              {
+                codec: 'avc1.640033', // H.264 High Profile Level 5.1
+                width: outputWidth,
+                height: outputHeight,
+                bitrate: highProfileBitrate,
+                framerate: fps,
+                avc: { format: 'annexb' },
+                hardwareAcceleration: 'prefer-hardware',
+              },
+            ]
+            let selectedEncoderConfig = encoderConfigCandidates[encoderConfigCandidates.length - 1]
+            for (const candidate of encoderConfigCandidates) {
+              const support =
+                typeof (window as any).VideoEncoder.isConfigSupported === 'function'
+                  ? await (window as any).VideoEncoder.isConfigSupported(candidate)
+                  : { supported: true }
+              if (support?.supported) {
+                selectedEncoderConfig = support.config ?? candidate
+                break
+              }
+            }
+            log.info(
+              `[RendererPage] Configured encoder: codec=${selectedEncoderConfig.codec}, bitrate=${(selectedEncoderConfig.bitrate / 1_000_000).toFixed(2)} Mbps`,
+            )
+
+            videoEncoder = new (window as any).VideoEncoder({
+              output: (chunk: any) => {
+                const buffer = new ArrayBuffer(chunk.byteLength)
+                chunk.copyTo(buffer)
+                window.electronAPI.sendFrameToMain({ frame: Buffer.from(buffer), progress: lastProgress })
+              },
+              error: (e: any) => log.error('[RendererPage] Encoder error:', e),
+            })
+
+            videoEncoder.configure(selectedEncoderConfig)
+          }
+          const keyFrameIntervalFrames = Math.max(1, Math.round(fps * 2))
+
+          const perfStats = {
+            startedAt: performance.now(),
+            lastLoggedAt: performance.now(),
+            frames: 0,
+            waitMs: 0,
+            mainDecodeMs: 0,
+            webcamDecodeMs: 0,
+            drawMs: 0,
+            encodeMs: 0,
+            totalMs: 0,
+          }
+
+          for (let frame = 0; frame < totalFrames; frame++) {
+            const frameStartedAt = performance.now()
+            await memoryController.waitForBudget('render-loop')
+            // Backpressure handling using MessageChannel for sub-millisecond polling
+            // (setTimeout has ~15ms minimum resolution on Windows)
+            if (videoEncoder && videoEncoder.encodeQueueSize > memoryBudget.maxEncoderQueueSize) {
+              const waitStartedAt = performance.now()
+              await new Promise<void>((resolve) => {
+                const ch = new MessageChannel()
+                ch.port1.onmessage = () => {
+                  if (videoEncoder.encodeQueueSize <= memoryBudget.maxEncoderQueueSize) {
+                    ch.port1.close()
+                    resolve()
+                  } else {
+                    ch.port2.postMessage(null)
+                  }
+                }
+                ch.port2.postMessage(null)
+              })
+              perfStats.waitMs += performance.now() - waitStartedAt
+            }
+
+            lastProgress = Math.min(99, ((frame + 1) / totalFrames) * 100)
+            emitRenderProgress(lastProgress, frame + 1 === totalFrames)
+            const exportTimestamp = frame / fps
+            const sourceTimestamp = mapExportTimeToSourceTime(
+              exportTimestamp,
+              effectiveDuration,
+              projectState.cutRegions,
+              projectState.speedRegions,
+              projectState.timelineLanes || [],
+            )
+
+            let mainFrame: VideoFrame | null = null
+            let webcamFrame: VideoFrame | null = null
+
+            if (useDecoder && frameProvider) {
+              const mainDecodeStartedAt = performance.now()
+              mainFrame = await frameProvider.getFrameForTime(sourceTimestamp)
+              perfStats.mainDecodeMs += performance.now() - mainDecodeStartedAt
             } else {
-              throw new Error('Decoder-only mode: webcam decoder not available.')
+              throw new Error('Decoder-only mode: main video decoder not available.')
+            }
+
+            if (hasWebcam && webcamVideo) {
+              const webcamTimestamp = Math.max(0, sourceTimestamp)
+              if (useWebcamDecoder && webcamFrameProvider) {
+                const webcamDecodeStartedAt = performance.now()
+                webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)
+                perfStats.webcamDecodeMs += performance.now() - webcamDecodeStartedAt
+              } else {
+                throw new Error('Decoder-only mode: webcam decoder not available.')
+              }
+            }
+
+            if (!mainFrame) {
+              throw new Error('No decoded frame available for main video.')
+            }
+
+            const webcamFrameToUse = webcamFrame
+
+            // Now that videos are at the correct time, draw the scene
+            const drawStartedAt = performance.now()
+            const webcamFrameDimensions = webcamFrame
+              ? {
+                  width: (webcamFrame as any).displayWidth || (webcamFrame as any).codedWidth,
+                  height: (webcamFrame as any).displayHeight || (webcamFrame as any).codedHeight,
+                }
+              : undefined
+
+            await drawScene(
+              ctx,
+              projectStateWithCursorBitmaps,
+              mainFrame,
+              webcamFrameToUse,
+              sourceTimestamp, // Use the precise source timestamp for drawing
+              outputWidth,
+              outputHeight,
+              bgImage,
+              webcamFrameDimensions,
+              exportSettings.quality,
+            )
+            perfStats.drawMs += performance.now() - drawStartedAt
+
+            if (videoEncoder) {
+              const encodeStartedAt = performance.now()
+              const timestamp = (frame / fps) * 1e6
+              const vFrame = new VideoFrame(canvas, { timestamp })
+              const keyFrame = frame % keyFrameIntervalFrames === 0
+              videoEncoder.encode(vFrame, { keyFrame })
+              vFrame.close()
+              perfStats.encodeMs += performance.now() - encodeStartedAt
+            } else {
+              // Send the rendered frame to the main process
+              const encodeStartedAt = performance.now()
+              const imageData = ctx.getImageData(0, 0, outputWidth, outputHeight)
+              const frameBuffer = Buffer.from(imageData.data.buffer)
+              const progress = Math.min(99, ((frame + 1) / totalFrames) * 100)
+              window.electronAPI.sendFrameToMain({ frame: frameBuffer, progress })
+              perfStats.encodeMs += performance.now() - encodeStartedAt
+            }
+
+            perfStats.frames += 1
+            const now = performance.now()
+            perfStats.totalMs += now - frameStartedAt
+            if (now - perfStats.lastLoggedAt >= RENDER_PERF_LOG_INTERVAL_MS || frame + 1 === totalFrames) {
+              const elapsedSec = Math.max(0.001, (now - perfStats.startedAt) / 1000)
+              const frames = Math.max(1, perfStats.frames)
+              const perfPayload = {
+                frame: frame + 1,
+                totalFrames,
+                fps: Number((perfStats.frames / elapsedSec).toFixed(2)),
+                progress: Number(lastProgress.toFixed(2)),
+                avgMs: {
+                  backpressure: Number((perfStats.waitMs / frames).toFixed(3)),
+                  mainDecode: Number((perfStats.mainDecodeMs / frames).toFixed(3)),
+                  webcamDecode: Number((perfStats.webcamDecodeMs / frames).toFixed(3)),
+                  draw: Number((perfStats.drawMs / frames).toFixed(3)),
+                  encode: Number((perfStats.encodeMs / frames).toFixed(3)),
+                  totalLoop: Number((perfStats.totalMs / frames).toFixed(3)),
+                },
+                encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
+              }
+              log.info(`${renderLogPrefix}[Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
+              perfStats.lastLoggedAt = now
             }
           }
-
-          if (!mainFrame) {
-            throw new Error('No decoded frame available for main video.')
-          }
-
-          const webcamFrameToUse = webcamFrame
-
-          // Now that videos are at the correct time, draw the scene
-          const drawStartedAt = performance.now()
-          const webcamFrameDimensions = webcamFrame
-            ? {
-                width: (webcamFrame as any).displayWidth || (webcamFrame as any).codedWidth,
-                height: (webcamFrame as any).displayHeight || (webcamFrame as any).codedHeight,
-              }
-            : undefined
-
-          await drawScene(
-            ctx,
-            projectStateWithCursorBitmaps,
-            mainFrame,
-            webcamFrameToUse,
-            sourceTimestamp, // Use the precise source timestamp for drawing
-            outputWidth,
-            outputHeight,
-            bgImage,
-            webcamFrameDimensions,
-            exportSettings.quality,
-          )
-          perfStats.drawMs += performance.now() - drawStartedAt
 
           if (videoEncoder) {
-            const encodeStartedAt = performance.now()
-            const timestamp = (frame / fps) * 1e6
-            const vFrame = new VideoFrame(canvas, { timestamp })
-            const keyFrame = frame % keyFrameIntervalFrames === 0
-            videoEncoder.encode(vFrame, { keyFrame })
-            vFrame.close()
-            perfStats.encodeMs += performance.now() - encodeStartedAt
-          } else {
-            // Send the rendered frame to the main process
-            const encodeStartedAt = performance.now()
-            const imageData = ctx.getImageData(0, 0, outputWidth, outputHeight)
-            const frameBuffer = Buffer.from(imageData.data.buffer)
-            const progress = Math.min(99, ((frame + 1) / totalFrames) * 100)
-            window.electronAPI.sendFrameToMain({ frame: frameBuffer, progress })
-            perfStats.encodeMs += performance.now() - encodeStartedAt
+            await videoEncoder.flush()
           }
 
-          perfStats.frames += 1
-          const now = performance.now()
-          perfStats.totalMs += now - frameStartedAt
-          if (now - perfStats.lastLoggedAt >= RENDER_PERF_LOG_INTERVAL_MS || frame + 1 === totalFrames) {
-            const elapsedSec = Math.max(0.001, (now - perfStats.startedAt) / 1000)
-            const frames = Math.max(1, perfStats.frames)
-            const perfPayload = {
-              frame: frame + 1,
-              totalFrames,
-              fps: Number((perfStats.frames / elapsedSec).toFixed(2)),
-              progress: Number(lastProgress.toFixed(2)),
-              avgMs: {
-                backpressure: Number((perfStats.waitMs / frames).toFixed(3)),
-                mainDecode: Number((perfStats.mainDecodeMs / frames).toFixed(3)),
-                webcamDecode: Number((perfStats.webcamDecodeMs / frames).toFixed(3)),
-                draw: Number((perfStats.drawMs / frames).toFixed(3)),
-                encode: Number((perfStats.encodeMs / frames).toFixed(3)),
-                totalLoop: Number((perfStats.totalMs / frames).toFixed(3)),
-              },
-              encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
-            }
-            log.info(`${renderLogPrefix}[Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
-            perfStats.lastLoggedAt = now
-          }
+          // --- 6. FINISH ---
+          log.info('[RendererPage] Render loop finished. Sending "finishRender" signal.')
+          window.electronAPI.finishRender()
+          bgImage?.close()
+          if (frameProvider) frameProvider.close()
+          if (webcamFrameProvider) webcamFrameProvider.close()
+        } catch (error) {
+          log.error('[RendererPage] CRITICAL ERROR during render process:', error)
+          bgImage?.close()
+          if (frameProvider) frameProvider.close()
+          if (webcamFrameProvider) webcamFrameProvider.close()
+          const message = error instanceof Error ? error.message : 'Unknown render error'
+          window.electronAPI.sendRenderError({ error: message })
         }
-
-        if (videoEncoder) {
-          await videoEncoder.flush()
-        }
-
-
-        // --- 6. FINISH ---
-        log.info('[RendererPage] Render loop finished. Sending "finishRender" signal.')
-        window.electronAPI.finishRender()
-        bgImage?.close()
-        if (frameProvider) frameProvider.close()
-        if (webcamFrameProvider) webcamFrameProvider.close()
-      } catch (error) {
-        log.error('[RendererPage] CRITICAL ERROR during render process:', error)
-        bgImage?.close()
-        if (frameProvider) frameProvider.close()
-        if (webcamFrameProvider) webcamFrameProvider.close()
-        const message = error instanceof Error ? error.message : 'Unknown render error'
-        window.electronAPI.sendRenderError({ error: message })
-      }
-    })
+      },
+    )
 
     if (!rendererReadySignalSent) {
       rendererReadySignalSent = true

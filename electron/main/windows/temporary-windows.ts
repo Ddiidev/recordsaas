@@ -144,7 +144,9 @@ export function createExportProgressWindow() {
     { width, height, x, y, show: false, minimizable: true, movable: true },
     'export-progress/index.html',
   )
-  log.info(`[TemporaryWindow:export-progress/index.html] Created export progress window at ${x},${y} ${width}x${height}.`)
+  log.info(
+    `[TemporaryWindow:export-progress/index.html] Created export progress window at ${x},${y} ${width}x${height}.`,
+  )
 
   appState.exportProgressWin.once('ready-to-show', () => {
     log.info('[TemporaryWindow:export-progress/index.html] ready-to-show. Showing progress window.')

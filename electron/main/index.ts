@@ -142,9 +142,10 @@ const createFileResponse = (request: Request, filePath: string): Response => {
   const start = range?.start ?? 0
   const end = range?.end ?? Math.max(0, fileSize - 1)
   const contentLength = Math.max(0, end - start + 1)
-  const body = request.method === 'HEAD'
-    ? null
-    : Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>
+  const body =
+    request.method === 'HEAD'
+      ? null
+      : (Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>)
 
   const headers: Record<string, string> = {
     'Accept-Ranges': 'bytes',
@@ -280,7 +281,9 @@ app.whenReady().then(async () => {
     if (resourcePath && fsSync.existsSync(resourcePath)) {
       if (!loggedMediaRequestPaths.has(resourcePath)) {
         loggedMediaRequestPaths.add(resourcePath)
-        log.info(`[Protocol] Serving media file: ${request.url} -> ${resourcePath} range=${request.headers.get('range') || 'none'}`)
+        log.info(
+          `[Protocol] Serving media file: ${request.url} -> ${resourcePath} range=${request.headers.get('range') || 'none'}`,
+        )
       }
       return createFileResponse(request, resourcePath)
     }

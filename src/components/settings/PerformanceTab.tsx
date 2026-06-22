@@ -3,6 +3,12 @@ import { ChevronDown } from '@icons'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Switch } from '../ui/switch'
 import { Slider } from '../ui/slider'
+import {
+  SCREEN_ENCODER_PREFERENCE_SETTING_KEY,
+  type ScreenEncoderPreference,
+  type ScreenEncoderStatus,
+  normalizeScreenEncoderPreference,
+} from '../../types/screen-encoder'
 
 const EXPORT_MEMORY_LIMIT_SETTING_KEY = 'export.memoryLimitPercent'
 const RECORDING_PROCESS_PRIORITY_SETTING_KEY = 'general.recordingProcessPriority'
@@ -110,14 +116,17 @@ const formatGiB = (bytes: number | null): string => {
 
 export function PerformanceTab() {
   const [forceGPU, setForceGPU] = useState(false)
-  const [recordingProcessPriority, setRecordingProcessPriority] =
-    useState<RecordingProcessPriorityMode>(DEFAULT_RECORDING_PROCESS_PRIORITY_MODE)
+  const [recordingProcessPriority, setRecordingProcessPriority] = useState<RecordingProcessPriorityMode>(
+    DEFAULT_RECORDING_PROCESS_PRIORITY_MODE,
+  )
   const [recordingProcessPriorities, setRecordingProcessPriorities] = useState<RecordingProcessPriorities>(
     DEFAULT_RECORDING_PROCESS_PRIORITIES,
   )
   const [granularOpen, setGranularOpen] = useState(false)
   const [exportMemoryLimitPercent, setExportMemoryLimitPercent] = useState(DEFAULT_EXPORT_MEMORY_LIMIT_PERCENT)
   const [totalMemoryBytes, setTotalMemoryBytes] = useState<number | null>(null)
+  const [screenEncoderPreference, setScreenEncoderPreference] = useState<ScreenEncoderPreference>('auto')
+  const [screenEncoderStatus, setScreenEncoderStatus] = useState<ScreenEncoderStatus | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -130,12 +139,16 @@ export function PerformanceTab() {
           savedRecordingProcessPriorities,
           savedExportMemoryLimitPercent,
           systemMemoryInfo,
+          savedScreenEncoderPreference,
+          encoderStatus,
         ] = await Promise.all([
           window.electronAPI.getSetting<boolean>('general.forceHighPerformanceGpu'),
           window.electronAPI.getSetting<RecordingProcessPriorityMode>(RECORDING_PROCESS_PRIORITY_SETTING_KEY),
           window.electronAPI.getSetting<RecordingProcessPriorities>(RECORDING_PROCESS_PRIORITIES_SETTING_KEY),
           window.electronAPI.getSetting<number>(EXPORT_MEMORY_LIMIT_SETTING_KEY),
           window.electronAPI.getSystemMemoryInfo(),
+          window.electronAPI.getSetting<unknown>(SCREEN_ENCODER_PREFERENCE_SETTING_KEY),
+          window.electronAPI.getScreenEncoderStatus(false),
         ])
 
         if (!isMounted) return
@@ -151,6 +164,8 @@ export function PerformanceTab() {
             ? systemMemoryInfo.totalMemoryBytes
             : null,
         )
+        setScreenEncoderPreference(normalizeScreenEncoderPreference(savedScreenEncoderPreference))
+        setScreenEncoderStatus(encoderStatus)
       } catch (error) {
         console.error('Failed to load performance settings:', error)
       }
@@ -199,6 +214,20 @@ export function PerformanceTab() {
     window.electronAPI.setSetting(EXPORT_MEMORY_LIMIT_SETTING_KEY, nextValue)
   }
 
+  const handleScreenEncoderChange = async (value: string) => {
+    const nextValue = normalizeScreenEncoderPreference(value)
+    setScreenEncoderPreference(nextValue)
+    window.electronAPI.setSetting(SCREEN_ENCODER_PREFERENCE_SETTING_KEY, nextValue)
+
+    // Refresh status to see if the chosen encoder is available
+    try {
+      const newStatus = await window.electronAPI.getScreenEncoderStatus(true)
+      setScreenEncoderStatus(newStatus)
+    } catch (err) {
+      console.error('Failed to probe encoder status:', err)
+    }
+  }
+
   return (
     <div className="p-8">
       <h2 className="mb-6 text-lg font-semibold text-foreground">Performance Settings</h2>
@@ -212,6 +241,31 @@ export function PerformanceTab() {
             </p>
           </div>
           <Switch checked={forceGPU} onCheckedChange={handleForceGPUChange} />
+        </div>
+
+        <div className="flex items-center justify-between gap-6 p-4 bg-muted/50 rounded-lg border border-border">
+          <div>
+            <h3 className="font-medium text-foreground">Video Encoder</h3>
+            <p className="text-sm text-muted-foreground max-w-md">
+              {screenEncoderStatus?.isHardware ? 'Hardware acceleration is active.' : 'Using software encoding.'}
+              {screenEncoderStatus?.fallbackReason ? ` (${screenEncoderStatus.fallbackReason})` : ''}
+              {screenEncoderStatus?.detectedDevice && screenEncoderStatus.selectionMode !== 'manual'
+                ? ` (Detected: ${screenEncoderStatus.detectedDevice})`
+                : ''}
+            </p>
+          </div>
+          <Select value={screenEncoderPreference} onValueChange={handleScreenEncoderChange}>
+            <SelectTrigger className="w-48 h-10 bg-background/50">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Automatic</SelectItem>
+              <SelectItem value="nvidia">NVIDIA (NVENC)</SelectItem>
+              <SelectItem value="amd">AMD (AMF / VAAPI)</SelectItem>
+              <SelectItem value="intel">Intel (QSV)</SelectItem>
+              <SelectItem value="generic">Software (x264)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-3 rounded-lg border border-border bg-muted/50 p-4">
@@ -297,8 +351,8 @@ export function PerformanceTab() {
             <div>
               <h3 className="font-medium text-foreground">Export RAM Budget</h3>
               <p className="text-sm text-muted-foreground">
-                Limits renderer buffering during export. 100% equals {formatGiB(exportMemoryMaxBudgetBytes)}, below
-                70% of total system RAM.
+                Limits renderer buffering during export. 100% equals {formatGiB(exportMemoryMaxBudgetBytes)}, below 70%
+                of total system RAM.
               </p>
             </div>
             <div className="shrink-0 text-right">

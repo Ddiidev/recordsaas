@@ -15,7 +15,7 @@ import { normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam
 
 const DEFAULT_PRESET_ID = 'default-preset-v1'
 
-const cloneDeep = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
+const cloneDeep = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value))
 
 const DEFAULT_PRESET_STYLES: FrameStyles = initialFrameState.frameStyles
@@ -86,11 +86,7 @@ const normalizeSwapPresetDefaults = (value: Partial<SwapPresetDefaults> | undefi
       : DEFAULT_SWAP_PRESET_DEFAULTS.transition,
   transitionDuration:
     typeof value?.transitionDuration === 'number' && Number.isFinite(value.transitionDuration)
-      ? clamp(
-          value.transitionDuration,
-          SWAP_REGION.TRANSITION_DURATION.min,
-          SWAP_REGION.TRANSITION_DURATION.max,
-        )
+      ? clamp(value.transitionDuration, SWAP_REGION.TRANSITION_DURATION.min, SWAP_REGION.TRANSITION_DURATION.max)
       : DEFAULT_SWAP_PRESET_DEFAULTS.transitionDuration,
 })
 
@@ -166,8 +162,8 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
           wasModified = true
         }
         if (p.webcamStyles && p.webcamStyles.sizeOnZoom === undefined) {
-          p.webcamStyles.sizeOnZoom = DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.defaultValue;
-          wasModified = true;
+          p.webcamStyles.sizeOnZoom = DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.defaultValue
+          wasModified = true
         }
         if (p.webcamStyles && p.webcamStyles.smartPosition === undefined) {
           p.webcamStyles.smartPosition = DEFAULTS.CAMERA.SMART_POSITION.ENABLED.defaultValue
@@ -318,7 +314,16 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
   },
   saveCurrentStyleAsPreset: (name) => {
     const id = `preset-${Date.now()}`
-    const { frameStyles, aspectRatio, webcamLayout, webcamPosition, webcamStyles, isWebcamVisible, activePresetId, presets } = get()
+    const {
+      frameStyles,
+      aspectRatio,
+      webcamLayout,
+      webcamPosition,
+      webcamStyles,
+      isWebcamVisible,
+      activePresetId,
+      presets,
+    } = get()
     const activePreset = activePresetId ? presets[activePresetId] : null
     const newPreset: Preset = {
       id,
@@ -341,7 +346,16 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   updateActivePreset: () => {
-    const { activePresetId, presets, frameStyles, aspectRatio, webcamLayout, webcamPosition, webcamStyles, isWebcamVisible } = get()
+    const {
+      activePresetId,
+      presets,
+      frameStyles,
+      aspectRatio,
+      webcamLayout,
+      webcamPosition,
+      webcamStyles,
+      isWebcamVisible,
+    } = get()
     if (activePresetId && presets[activePresetId]) {
       set((state) => {
         const active = state.presets[activePresetId]

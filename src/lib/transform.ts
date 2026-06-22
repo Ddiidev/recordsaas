@@ -116,7 +116,7 @@ function getSmoothedMousePosition(
     // Apply dead zone: reduce smoothing factor for small movements
     // This prevents camera from following tiny cursor adjustments
     const effectiveSmoothingFactor = movementDistance > deadZone ? smoothingFactor : smoothingFactor * 0.3
-    
+
     smoothedX = lerp(smoothedX, currentX, effectiveSmoothingFactor)
     smoothedY = lerp(smoothedY, currentY, effectiveSmoothingFactor)
   }
@@ -211,12 +211,12 @@ export const calculateZoomTransform = (
 
   // If no region or big time jump, reset tracking
   if (!activeRegion || Math.abs(currentTime - lastPanUpdateTime) > 0.5) {
-     if (activeRegion) {
-        // Just reset to 0 or we could try to re-initialize if we had context
-        // But simply resetting means next frame will "snap" or "converge"
-        previousPanX = 0
-        previousPanY = 0
-     }
+    if (activeRegion) {
+      // Just reset to 0 or we could try to re-initialize if we had context
+      // But simply resetting means next frame will "snap" or "converge"
+      previousPanX = 0
+      previousPanY = 0
+    }
   }
 
   if (!activeRegion) return defaultTransform
@@ -240,7 +240,13 @@ export const calculateZoomTransform = (
   if (mode === 'auto' && metadata.length > 0 && recordingGeometry.width > 0) {
     // Pan target for the end of the zoom-in transition (cursor position at that time)
     const zoomInEndMousePos = getSmoothedMousePosition(metadata, zoomInEndTime)
-    const zoomInEndPan = calculateBoundedPan(zoomInEndMousePos, fixedOrigin, zoomLevel, recordingGeometry, frameContentDimensions)
+    const zoomInEndPan = calculateBoundedPan(
+      zoomInEndMousePos,
+      fixedOrigin,
+      zoomLevel,
+      recordingGeometry,
+      frameContentDimensions,
+    )
     initialPan = zoomInEndPan
 
     // Live pan target for the hold phase (DYNAMIC)
@@ -262,7 +268,7 @@ export const calculateZoomTransform = (
     currentScale = lerp(1, zoomLevel, t)
     currentTranslateX = lerp(0, initialPan.tx, t)
     currentTranslateY = lerp(0, initialPan.ty, t)
-    
+
     // Snap our smoother to the current calculation so Phase 2 starts correctly
     previousPanX = currentTranslateX
     previousPanY = currentTranslateY
@@ -270,7 +276,7 @@ export const calculateZoomTransform = (
   // Phase 2: PAN/HOLD (Apply extra smoothing for fluid camera feeling)
   else if (currentTime >= zoomInEndTime && currentTime < zoomOutStartTime) {
     currentScale = zoomLevel
-    
+
     // Smooth interpolation towards the live target
     const timeDelta = currentTime - lastPanUpdateTime
     // Normalize smoothing to frame rate roughly (assuming ~60fps if delta is ~0.016)
@@ -304,12 +310,12 @@ export const calculateZoomTransform = (
         recordingGeometry,
         frameContentDimensions,
       )
-      
-      // User request optimization: 
+
+      // User request optimization:
       // First 5% of zoom-out: gradually release cursor tracking (decay from 1.0 to 0.0).
       // Remaining 95%: pure movement to center (influence is 0).
-      const cursorInfluence = t <= 0.05 ? 1 - (t / 0.05) : 0
-      
+      const cursorInfluence = t <= 0.05 ? 1 - t / 0.05 : 0
+
       targetTx = dynamicPan.tx * cursorInfluence
       targetTy = dynamicPan.ty * cursorInfluence
     } else {
@@ -320,10 +326,10 @@ export const calculateZoomTransform = (
     // Apply same smoothing as Phase 2 to prevent jump in velocity
     // But ensure we converge to 0 if target is 0?
     // Actually, dynamicPan converges to 0. So smoothing towards it is safe.
-    
+
     const timeDelta = currentTime - lastPanUpdateTime
     const baseAlpha = timeDelta > 0 ? (timeDelta / 0.016) * PAN_SMOOTHING_FACTOR : 0
-    
+
     // CRITICAL FIX: As zoom-out finishes (t -> 1), force convergence to the target.
     // Otherwise, the smoothed value lags behind and causes a jump when the region ends.
     // Using power 4 keeps smoothing active early on, but snaps firmly at the end.
@@ -332,11 +338,11 @@ export const calculateZoomTransform = (
 
     currentTranslateX = lerp(previousPanX, targetTx, fluidAlpha)
     currentTranslateY = lerp(previousPanY, targetTy, fluidAlpha)
-    
+
     previousPanX = currentTranslateX
     previousPanY = currentTranslateY
   }
-  
+
   lastPanUpdateTime = currentTime
 
   return { scale: currentScale, translateX: currentTranslateX, translateY: currentTranslateY, transformOrigin }

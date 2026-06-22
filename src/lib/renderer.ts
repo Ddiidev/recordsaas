@@ -48,7 +48,7 @@ const roundedRectPathCache = new Map<string, Path2D>()
 const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
 const objectValuesCache = new WeakMap<object, unknown[]>()
 
-const getObjectValuesCached = <T,>(source: Record<string, T> | null | undefined): T[] => {
+const getObjectValuesCached = <T>(source: Record<string, T> | null | undefined): T[] => {
   if (!source) return []
   const cached = objectValuesCache.get(source)
   if (cached) return cached as T[]
@@ -300,7 +300,11 @@ const fitRectWithinBounds = (bounds: Rect, aspectRatio: number): Rect => {
   }
 }
 
-const createFrameConfig = (rect: Rect, frameStyles: RenderableState['frameStyles'], zIndex: number): MediaRectConfig => ({
+const createFrameConfig = (
+  rect: Rect,
+  frameStyles: RenderableState['frameStyles'],
+  zIndex: number,
+): MediaRectConfig => ({
   ...rect,
   radius: frameStyles.borderRadius,
   shadowBlur: frameStyles.shadowBlur,
@@ -347,9 +351,17 @@ const buildOverlayCameraConfig = ({
     const zoomOutStartTime = startTime + duration - transitionDuration
     const easingFn = EASING_MAP[activeZoomRegion.easing as keyof typeof EASING_MAP] || EASING_MAP.Balanced
     if (currentTime < zoomInEndTime) {
-      finalWebcamScale = lerp(1, DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, easingFn((currentTime - startTime) / transitionDuration))
+      finalWebcamScale = lerp(
+        1,
+        DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT,
+        easingFn((currentTime - startTime) / transitionDuration),
+      )
     } else if (currentTime >= zoomOutStartTime) {
-      finalWebcamScale = lerp(DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT, 1, easingFn((currentTime - zoomOutStartTime) / transitionDuration))
+      finalWebcamScale = lerp(
+        DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT,
+        1,
+        easingFn((currentTime - zoomOutStartTime) / transitionDuration),
+      )
     } else {
       finalWebcamScale = DEFAULTS.CAMERA.SCALE_ON_ZOOM_AMOUNT
     }
@@ -478,7 +490,9 @@ const resolveLayoutConfig = ({
 
   if (webcamLayout.mode === 'side-by-side') {
     const cameraBounds = hasFramePadding ? insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75) : sidebarArea
-    const cameraRect = hasFramePadding ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape)) : cameraBounds
+    const cameraRect = hasFramePadding
+      ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+      : cameraBounds
     return {
       mode: 'side-by-side',
       desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),
@@ -506,10 +520,7 @@ const drawBackground = (
   preloadedImage: BackgroundImageSource | null,
 ): void => {
   const imageReady = preloadedImage && ('complete' in preloadedImage ? preloadedImage.complete : true)
-  const imageKey =
-    preloadedImage && imageReady
-      ? `${preloadedImage.width}x${preloadedImage.height}`
-      : 'no-image'
+  const imageKey = preloadedImage && imageReady ? `${preloadedImage.width}x${preloadedImage.height}` : 'no-image'
   const cacheKey = JSON.stringify({
     width,
     height,
@@ -918,10 +929,7 @@ export const drawScene = (
     const mediaLayerHeight = Math.ceil(config.height)
     const sourceFrameKey = getSourceFrameKey(source)
     const canUseMediaLayerCache =
-      sourceFrameKey !== null &&
-      globalAlpha === 1 &&
-      mediaLayerWidth > 0 &&
-      mediaLayerHeight > 0
+      sourceFrameKey !== null && globalAlpha === 1 && mediaLayerWidth > 0 && mediaLayerHeight > 0
     const mediaLayerCacheKey = canUseMediaLayerCache
       ? JSON.stringify({
           sourceFrameKey,
@@ -935,8 +943,11 @@ export const drawScene = (
         })
       : null
     const cacheWindow = window as WindowWithScreenCache
-    const hasCachedMediaLayer =
-      Boolean(mediaLayerCacheKey && cacheWindow.__mediaLayerCacheKey === mediaLayerCacheKey && cacheWindow.__mediaLayerCacheCanvas)
+    const hasCachedMediaLayer = Boolean(
+      mediaLayerCacheKey &&
+      cacheWindow.__mediaLayerCacheKey === mediaLayerCacheKey &&
+      cacheWindow.__mediaLayerCacheCanvas,
+    )
 
     if (config.shadowBlur > 0) {
       ctx.save()
@@ -953,13 +964,17 @@ export const drawScene = (
     if (hasCachedMediaLayer && cacheWindow.__mediaLayerCacheCanvas) {
       ctx.drawImage(cacheWindow.__mediaLayerCacheCanvas, config.x, config.y, config.width, config.height)
     } else {
-      const targetCtx = mediaLayerCacheKey ? getOrCreateCanvas('media-layer', mediaLayerWidth, mediaLayerHeight)?.ctx : null
+      const targetCtx = mediaLayerCacheKey
+        ? getOrCreateCanvas('media-layer', mediaLayerWidth, mediaLayerHeight)?.ctx
+        : null
       if (targetCtx) {
         targetCtx.clearRect(0, 0, mediaLayerWidth, mediaLayerHeight)
         targetCtx.save()
         targetCtx.imageSmoothingEnabled = ctx.imageSmoothingEnabled
         targetCtx.imageSmoothingQuality = ctx.imageSmoothingQuality
-        targetCtx.clip(getRoundedRectPath({ x: 0, y: 0, width: mediaLayerWidth, height: mediaLayerHeight }, config.radius))
+        targetCtx.clip(
+          getRoundedRectPath({ x: 0, y: 0, width: mediaLayerWidth, height: mediaLayerHeight }, config.radius),
+        )
       } else {
         ctx.save()
         ctx.clip(getRoundedRectPath(config, config.radius))
@@ -981,7 +996,10 @@ export const drawScene = (
       }
 
       const sourceAR = sourceWidth / sourceHeight
-      let sx = sourceX, sy = sourceY, drawW = sourceWidth, drawH = sourceHeight
+      let sx = sourceX,
+        sy = sourceY,
+        drawW = sourceWidth,
+        drawH = sourceHeight
 
       if (sourceAR > targetAR) {
         drawW = sourceHeight * targetAR
@@ -1026,7 +1044,7 @@ export const drawScene = (
 
   // --- 7. Resolve Final Compositions ---
   const draws: { zIndex: number; draw: () => void }[] = []
-  
+
   // Base states
   const desktopSource = screenCache?.canvas
   const desktopDims = { width: frameContentWidth, height: frameContentHeight }
@@ -1040,14 +1058,19 @@ export const drawScene = (
   const canSwapCamera = Boolean(cameraSource && cameraDims && normalCameraConfig)
   const transitionType = activeSwapRegion?.transition || 'none'
   const isAnimatedTransition = canSwapCamera && swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
-  const progressAnim = transitionType === 'slide' ? EASING_MAP.Balanced(swapProgress) :
-                       transitionType === 'scale' ? EASING_MAP.Balanced(swapProgress) : swapProgress
+  const progressAnim =
+    transitionType === 'slide'
+      ? EASING_MAP.Balanced(swapProgress)
+      : transitionType === 'scale'
+        ? EASING_MAP.Balanced(swapProgress)
+        : swapProgress
 
   if (!isSwapped || !canSwapCamera) {
     if (desktopSource) {
       draws.push({
         zIndex: normalDesktopConfig.zIndex,
-        draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
+        draw: () =>
+          drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
       })
     }
     if (normalCameraConfig && cameraSource && cameraDims) {
@@ -1069,7 +1092,8 @@ export const drawScene = (
     if (desktopSource && effectiveShowDesktopOverlay && normalCameraConfig) {
       draws.push({
         zIndex: normalCameraConfig.zIndex,
-        draw: () => drawMediaToConfig(normalCameraConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
+        draw: () =>
+          drawMediaToConfig(normalCameraConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
       })
     }
     if (cameraSource && cameraDims) {
@@ -1096,7 +1120,15 @@ export const drawScene = (
         if (desktopSource) {
           draws.push({
             zIndex: normalDesktopConfig.zIndex - 0.1,
-            draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal),
+            draw: () =>
+              drawMediaToConfig(
+                normalDesktopConfig,
+                desktopSource,
+                desktopDims.width,
+                desktopDims.height,
+                desktopFlipped,
+                tNormal,
+              ),
           })
         }
         draws.push({
@@ -1130,7 +1162,15 @@ export const drawScene = (
         if (desktopSource) {
           draws.push({
             zIndex: normalDesktopConfig.zIndex,
-            draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, 1 - progressAnim),
+            draw: () =>
+              drawMediaToConfig(
+                normalDesktopConfig,
+                desktopSource,
+                desktopDims.width,
+                desktopDims.height,
+                desktopFlipped,
+                1 - progressAnim,
+              ),
           })
         }
         draws.push({
@@ -1154,7 +1194,15 @@ export const drawScene = (
       if (desktopSource) {
         draws.push({
           zIndex: normalDesktopConfig.zIndex - 0.1,
-          draw: () => drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tNormal),
+          draw: () =>
+            drawMediaToConfig(
+              normalDesktopConfig,
+              desktopSource,
+              desktopDims.width,
+              desktopDims.height,
+              desktopFlipped,
+              tNormal,
+            ),
         })
       }
       draws.push({
@@ -1174,7 +1222,15 @@ export const drawScene = (
       if (desktopSource && effectiveShowDesktopOverlay) {
         draws.push({
           zIndex: normalCameraConfig.zIndex + 0.1,
-          draw: () => drawMediaToConfig(normalCameraConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, tSwapped),
+          draw: () =>
+            drawMediaToConfig(
+              normalCameraConfig,
+              desktopSource,
+              desktopDims.width,
+              desktopDims.height,
+              desktopFlipped,
+              tSwapped,
+            ),
         })
       }
       draws.push({
@@ -1203,7 +1259,15 @@ export const drawScene = (
         const alpha = !effectiveShowDesktopOverlay ? 1 - progressAnim : 1
         draws.push({
           zIndex: currentDesktopConfig.zIndex,
-          draw: () => drawMediaToConfig(currentDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped, alpha),
+          draw: () =>
+            drawMediaToConfig(
+              currentDesktopConfig,
+              desktopSource,
+              desktopDims.width,
+              desktopDims.height,
+              desktopFlipped,
+              alpha,
+            ),
         })
       }
       draws.push({
@@ -1223,5 +1287,5 @@ export const drawScene = (
   }
 
   // Draw layers sorted by zIndex
-  draws.sort((a,b) => a.zIndex - b.zIndex).forEach(d => d.draw())
+  draws.sort((a, b) => a.zIndex - b.zIndex).forEach((d) => d.draw())
 }

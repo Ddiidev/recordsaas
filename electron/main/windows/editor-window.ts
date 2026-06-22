@@ -34,7 +34,7 @@ export function createEditorWindow(
   systemAudioPath?: string,
   mediaAudioPath?: string,
   scaleFactor: number = 1,
-  originalProjectPath?: string
+  originalProjectPath?: string,
 ) {
   const bounds = store.get('windowBounds', { width: 1280, height: 800 }) as {
     x?: number
@@ -212,7 +212,6 @@ export async function cleanupEditorFiles(files: {
   webcamVideoPath?: string
   audioPath?: string
   systemAudioPath?: string
-  systemAudioTempPath?: string
   mediaAudioPath?: string
   originalProjectPath?: string
 }) {
@@ -222,7 +221,6 @@ export async function cleanupEditorFiles(files: {
     files.webcamVideoPath,
     files.audioPath,
     files.systemAudioPath,
-    files.systemAudioTempPath,
     files.mediaAudioPath,
     files.metadataPath,
   ]

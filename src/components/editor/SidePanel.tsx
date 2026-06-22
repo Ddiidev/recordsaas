@@ -47,14 +47,13 @@ function TabButton({ label, icon, isActive, onClick, disabled }: TabButtonProps)
               isActive
                 ? 'border-primary/70 bg-accent/40 text-primary'
                 : 'text-muted-foreground hover:bg-accent/25 hover:text-foreground',
-              disabled && 'cursor-not-allowed border-transparent opacity-50 hover:bg-transparent hover:text-muted-foreground',
+              disabled &&
+                'cursor-not-allowed border-transparent opacity-50 hover:bg-transparent hover:text-muted-foreground',
             )}
             aria-label={label}
             disabled={disabled}
           >
-            <span className="flex h-6 w-6 items-center justify-center">
-              {icon}
-            </span>
+            <span className="flex h-6 w-6 items-center justify-center">{icon}</span>
           </button>
         </TooltipTrigger>
         <TooltipContent
@@ -143,7 +142,16 @@ export function SidePanel() {
       mediaAudioRegions[selectedRegionId] ||
       changeSoundRegions[selectedRegionId]
     )
-  }, [selectedRegionId, zoomRegions, cutRegions, blurRegions, speedRegions, swapRegions, mediaAudioRegions, changeSoundRegions])
+  }, [
+    selectedRegionId,
+    zoomRegions,
+    cutRegions,
+    blurRegions,
+    speedRegions,
+    swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
+  ])
 
   // Auto switch to 'general' tab when a region is selected
   useEffect(() => {
@@ -170,7 +178,13 @@ export function SidePanel() {
         <div className="flex flex-col items-center space-y-2">
           <TabButton
             label="General"
-            icon={<IconSwitch regular={LayoutBoard} active={activeSidePanelTab === 'general'} className="h-[18px] w-[18px]" />}
+            icon={
+              <IconSwitch
+                regular={LayoutBoard}
+                active={activeSidePanelTab === 'general'}
+                className="h-[18px] w-[18px]"
+              />
+            }
             isActive={activeSidePanelTab === 'general'}
             onClick={() => setActiveSidePanelTab('general')}
           />
@@ -230,7 +244,9 @@ export function SidePanel() {
           />
           <TabButton
             label="Cursor"
-            icon={<IconSwitch regular={Pointer} active={activeSidePanelTab === 'cursor'} className="h-[18px] w-[18px]" />}
+            icon={
+              <IconSwitch regular={Pointer} active={activeSidePanelTab === 'cursor'} className="h-[18px] w-[18px]" />
+            }
             isActive={activeSidePanelTab === 'cursor'}
             onClick={() => setActiveSidePanelTab('cursor')}
           />

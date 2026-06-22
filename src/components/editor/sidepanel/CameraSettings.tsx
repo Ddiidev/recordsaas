@@ -31,15 +31,7 @@ import { Switch } from '../../ui/switch'
 import { ControlGroup } from './ControlGroup'
 import { WebcamCropEditor } from '../preview/WebcamCropEditor'
 
-const DisabledPanelPlaceholder = ({
-  icon,
-  title,
-  message,
-}: {
-  icon: ReactNode
-  title: string
-  message: string
-}) => (
+const DisabledPanelPlaceholder = ({ icon, title, message }: { icon: ReactNode; title: string; message: string }) => (
   <div className="flex h-full flex-col items-center justify-center bg-muted/30 p-8 text-center">
     <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-border bg-background/60">
       {icon}
@@ -261,16 +253,34 @@ export function CameraSettings() {
         <ControlGroup label="Visibility" icon={<Eye className="h-4 w-4 text-primary" />}>
           <div className="flex items-center justify-between rounded-lg border border-sidebar-border bg-sidebar-accent/30 p-3">
             <span className="text-sm font-medium text-sidebar-foreground">Visible</span>
-            <Switch checked={isWebcamVisible} onCheckedChange={setWebcamVisibility} className="data-[state=on]:bg-primary" />
+            <Switch
+              checked={isWebcamVisible}
+              onCheckedChange={setWebcamVisibility}
+              className="data-[state=on]:bg-primary"
+            />
           </div>
         </ControlGroup>
 
-        <Collapse title="Layout" description="Choose how webcam and screen share the frame" icon={<Rectangle />} defaultOpen onReset={resetLayout}>
+        <Collapse
+          title="Layout"
+          description="Choose how webcam and screen share the frame"
+          icon={<Rectangle />}
+          defaultOpen
+          onReset={resetLayout}
+        >
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-2">
               {layoutModes.map(({ mode, label, description, icon }) => (
-                <Button key={mode} variant="ghost" onClick={() => updateWebcamLayout({ mode })} className={layoutButtonClass(webcamLayout.mode === mode)}>
-                  <span className="flex w-full items-center gap-2 text-sm font-medium">{icon}{label}</span>
+                <Button
+                  key={mode}
+                  variant="ghost"
+                  onClick={() => updateWebcamLayout({ mode })}
+                  className={layoutButtonClass(webcamLayout.mode === mode)}
+                >
+                  <span className="flex w-full items-center gap-2 text-sm font-medium">
+                    {icon}
+                    {label}
+                  </span>
                   <span className="mt-1 block w-full text-xs leading-relaxed text-muted-foreground">{description}</span>
                 </Button>
               ))}
@@ -280,7 +290,12 @@ export function CameraSettings() {
               <>
                 <div className="grid grid-cols-2 gap-2">
                   {(['left', 'right'] as const).map((side) => (
-                    <Button key={side} variant="ghost" onClick={() => updateWebcamLayout({ side })} className={layoutButtonClass(webcamLayout.side === side)}>
+                    <Button
+                      key={side}
+                      variant="ghost"
+                      onClick={() => updateWebcamLayout({ side })}
+                      className={layoutButtonClass(webcamLayout.side === side)}
+                    >
                       <span className="text-sm font-medium capitalize">{side}</span>
                     </Button>
                   ))}
@@ -288,7 +303,9 @@ export function CameraSettings() {
                 <div className="space-y-3">
                   <label className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
                     <span>Split</span>
-                    <span className="text-xs font-semibold tabular-nums text-primary">{screenWidthPercent} / {webcamLayout.webcamWidthPercent}</span>
+                    <span className="text-xs font-semibold tabular-nums text-primary">
+                      {screenWidthPercent} / {webcamLayout.webcamWidthPercent}
+                    </span>
                   </label>
                   <Slider
                     min={DEFAULTS.CAMERA.LAYOUT.WIDTH_PERCENT.min}
@@ -309,11 +326,21 @@ export function CameraSettings() {
           </div>
         </Collapse>
 
-        <Collapse title="Style" description="Change shape, border, and orientation" icon={<Photo />} onReset={resetStyle}>
+        <Collapse
+          title="Style"
+          description="Change shape, border, and orientation"
+          icon={<Photo />}
+          onReset={resetStyle}
+        >
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-2">
               {shapeOptions.map(({ shape, label, icon }) => (
-                <Button key={shape} variant="ghost" onClick={() => updateWebcamStyle({ shape })} className={shapeButtonClass(webcamStyles.shape === shape)}>
+                <Button
+                  key={shape}
+                  variant="ghost"
+                  onClick={() => updateWebcamStyle({ shape })}
+                  className={shapeButtonClass(webcamStyles.shape === shape)}
+                >
                   <div className="flex flex-col items-center gap-2">
                     {icon}
                     <span className="text-xs font-medium">{label}</span>
@@ -334,14 +361,26 @@ export function CameraSettings() {
             />
 
             <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
-              <span className="flex items-center gap-2.5"><SquareToggle className="h-4 w-4 text-primary" />Flip Horizontal</span>
-              <Switch checked={webcamStyles.isFlipped} onCheckedChange={(value) => updateWebcamStyle({ isFlipped: value })} />
+              <span className="flex items-center gap-2.5">
+                <SquareToggle className="h-4 w-4 text-primary" />
+                Flip Horizontal
+              </span>
+              <Switch
+                checked={webcamStyles.isFlipped}
+                onCheckedChange={(value) => updateWebcamStyle({ isFlipped: value })}
+              />
             </div>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
-                <span className="flex items-center gap-2.5"><Square className="h-4 w-4 text-primary" />Border</span>
-                <Switch checked={webcamStyles.border} onCheckedChange={(value) => updateWebcamStyle({ border: value })} />
+                <span className="flex items-center gap-2.5">
+                  <Square className="h-4 w-4 text-primary" />
+                  Border
+                </span>
+                <Switch
+                  checked={webcamStyles.border}
+                  onCheckedChange={(value) => updateWebcamStyle({ border: value })}
+                />
               </div>
               {webcamStyles.border && (
                 <div className="space-y-4 pl-7">
@@ -355,8 +394,20 @@ export function CameraSettings() {
                     onChange={(value) => updateWebcamStyle({ borderWidth: value })}
                   />
                   <div className="grid grid-cols-2 gap-4">
-                    <ColorPicker label="Color" value={borderHex} onChange={(value) => updateRgbaColor(value, borderAlpha, 'borderColor')} />
-                    <ValueSlider label="Opacity" value={borderAlpha} min={0} max={1} step={0.01} displayValue={`${Math.round(borderAlpha * 100)}%`} onChange={(value) => updateRgbaColor(borderHex, value, 'borderColor')} />
+                    <ColorPicker
+                      label="Color"
+                      value={borderHex}
+                      onChange={(value) => updateRgbaColor(value, borderAlpha, 'borderColor')}
+                    />
+                    <ValueSlider
+                      label="Opacity"
+                      value={borderAlpha}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      displayValue={`${Math.round(borderAlpha * 100)}%`}
+                      onChange={(value) => updateRgbaColor(borderHex, value, 'borderColor')}
+                    />
                   </div>
                 </div>
               )}
@@ -364,25 +415,73 @@ export function CameraSettings() {
           </div>
         </Collapse>
 
-        <Collapse title="Placement" description="Adjust overlay size and position" icon={<TransformPointBottomLeftIcon />} onReset={resetPlacement}>
+        <Collapse
+          title="Placement"
+          description="Adjust overlay size and position"
+          icon={<TransformPointBottomLeftIcon />}
+          onReset={resetPlacement}
+        >
           {isOverlayLayout ? (
             <div className="space-y-6">
-              <ValueSlider label="Size (Normal)" value={webcamStyles.size} min={DEFAULTS.CAMERA.PLACEMENT.SIZE.min} max={DEFAULTS.CAMERA.PLACEMENT.SIZE.max} step={DEFAULTS.CAMERA.PLACEMENT.SIZE.step} suffix="%" onChange={(value) => updateWebcamStyle({ size: value })} />
-              <ValueSlider label="Size (Zoomed)" value={webcamStyles.sizeOnZoom} min={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.min} max={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.max} step={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.step} suffix="%" onChange={(value) => updateWebcamStyle({ sizeOnZoom: value })} />
+              <ValueSlider
+                label="Size (Normal)"
+                value={webcamStyles.size}
+                min={DEFAULTS.CAMERA.PLACEMENT.SIZE.min}
+                max={DEFAULTS.CAMERA.PLACEMENT.SIZE.max}
+                step={DEFAULTS.CAMERA.PLACEMENT.SIZE.step}
+                suffix="%"
+                onChange={(value) => updateWebcamStyle({ size: value })}
+              />
+              <ValueSlider
+                label="Size (Zoomed)"
+                value={webcamStyles.sizeOnZoom}
+                min={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.min}
+                max={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.max}
+                step={DEFAULTS.CAMERA.PLACEMENT.SIZE_ON_ZOOM.step}
+                suffix="%"
+                onChange={(value) => updateWebcamStyle({ sizeOnZoom: value })}
+              />
               <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
-                <span className="flex items-center gap-2.5"><ZoomIn className="h-4 w-4 text-primary" />Scale on Zoom</span>
-                <Switch checked={webcamStyles.scaleOnZoom} onCheckedChange={(value) => updateWebcamStyle({ scaleOnZoom: value })} />
+                <span className="flex items-center gap-2.5">
+                  <ZoomIn className="h-4 w-4 text-primary" />
+                  Scale on Zoom
+                </span>
+                <Switch
+                  checked={webcamStyles.scaleOnZoom}
+                  onCheckedChange={(value) => updateWebcamStyle({ scaleOnZoom: value })}
+                />
               </div>
               <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
-                <span className="flex items-center gap-2.5"><ArrowsUpRight className="h-4 w-4 text-primary" />Smart Position</span>
-                <Switch checked={webcamStyles.smartPosition} onCheckedChange={(value) => updateWebcamStyle({ smartPosition: value })} />
+                <span className="flex items-center gap-2.5">
+                  <ArrowsUpRight className="h-4 w-4 text-primary" />
+                  Smart Position
+                </span>
+                <Switch
+                  checked={webcamStyles.smartPosition}
+                  onCheckedChange={(value) => updateWebcamStyle({ smartPosition: value })}
+                />
               </div>
               <div className="space-y-3">
                 <label className="text-sm font-medium text-sidebar-foreground">Position</label>
                 <div className="relative aspect-video w-full rounded-lg border border-border bg-muted/50 p-2">
                   {positions.map(({ pos, classes }) => (
-                    <button key={pos} onClick={() => setWebcamPosition({ pos })} className={cn('absolute flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-accent', classes)} aria-label={pos}>
-                      <div className={cn('h-4 w-4 rounded-md border-2', webcamPosition.pos === pos ? 'border-primary bg-primary' : 'border-muted-foreground/50 bg-transparent')} />
+                    <button
+                      key={pos}
+                      onClick={() => setWebcamPosition({ pos })}
+                      className={cn(
+                        'absolute flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-accent',
+                        classes,
+                      )}
+                      aria-label={pos}
+                    >
+                      <div
+                        className={cn(
+                          'h-4 w-4 rounded-md border-2',
+                          webcamPosition.pos === pos
+                            ? 'border-primary bg-primary'
+                            : 'border-muted-foreground/50 bg-transparent',
+                        )}
+                      />
                     </button>
                   ))}
                 </div>
@@ -395,28 +494,106 @@ export function CameraSettings() {
           )}
         </Collapse>
 
-        <Collapse title="Crop" description="Trim the webcam source with preview handles" icon={<Marquee2 />} onReset={resetCrop}>
+        <Collapse
+          title="Crop"
+          description="Trim the webcam source with preview handles"
+          icon={<Marquee2 />}
+          onReset={resetCrop}
+        >
           <div className="space-y-6">
-            <WebcamCropEditor webcamVideoUrl={webcamVideoUrl} currentTime={currentTime} crop={webcamStyles.crop} onUpdateCrop={updateCrop} />
+            <WebcamCropEditor
+              webcamVideoUrl={webcamVideoUrl}
+              currentTime={currentTime}
+              crop={webcamStyles.crop}
+              onUpdateCrop={updateCrop}
+            />
             <div className="grid grid-cols-2 gap-4">
-              <ValueSlider label="Top" value={webcamStyles.crop.top} min={DEFAULTS.CAMERA.CROP.TOP.min} max={DEFAULTS.CAMERA.CROP.TOP.max} step={DEFAULTS.CAMERA.CROP.TOP.step} displayValue={`${Math.round(webcamStyles.crop.top * 100)}%`} onChange={(value) => updateCrop({ top: value })} />
-              <ValueSlider label="Right" value={webcamStyles.crop.right} min={DEFAULTS.CAMERA.CROP.RIGHT.min} max={DEFAULTS.CAMERA.CROP.RIGHT.max} step={DEFAULTS.CAMERA.CROP.RIGHT.step} displayValue={`${Math.round(webcamStyles.crop.right * 100)}%`} onChange={(value) => updateCrop({ right: value })} />
-              <ValueSlider label="Bottom" value={webcamStyles.crop.bottom} min={DEFAULTS.CAMERA.CROP.BOTTOM.min} max={DEFAULTS.CAMERA.CROP.BOTTOM.max} step={DEFAULTS.CAMERA.CROP.BOTTOM.step} displayValue={`${Math.round(webcamStyles.crop.bottom * 100)}%`} onChange={(value) => updateCrop({ bottom: value })} />
-              <ValueSlider label="Left" value={webcamStyles.crop.left} min={DEFAULTS.CAMERA.CROP.LEFT.min} max={DEFAULTS.CAMERA.CROP.LEFT.max} step={DEFAULTS.CAMERA.CROP.LEFT.step} displayValue={`${Math.round(webcamStyles.crop.left * 100)}%`} onChange={(value) => updateCrop({ left: value })} />
+              <ValueSlider
+                label="Top"
+                value={webcamStyles.crop.top}
+                min={DEFAULTS.CAMERA.CROP.TOP.min}
+                max={DEFAULTS.CAMERA.CROP.TOP.max}
+                step={DEFAULTS.CAMERA.CROP.TOP.step}
+                displayValue={`${Math.round(webcamStyles.crop.top * 100)}%`}
+                onChange={(value) => updateCrop({ top: value })}
+              />
+              <ValueSlider
+                label="Right"
+                value={webcamStyles.crop.right}
+                min={DEFAULTS.CAMERA.CROP.RIGHT.min}
+                max={DEFAULTS.CAMERA.CROP.RIGHT.max}
+                step={DEFAULTS.CAMERA.CROP.RIGHT.step}
+                displayValue={`${Math.round(webcamStyles.crop.right * 100)}%`}
+                onChange={(value) => updateCrop({ right: value })}
+              />
+              <ValueSlider
+                label="Bottom"
+                value={webcamStyles.crop.bottom}
+                min={DEFAULTS.CAMERA.CROP.BOTTOM.min}
+                max={DEFAULTS.CAMERA.CROP.BOTTOM.max}
+                step={DEFAULTS.CAMERA.CROP.BOTTOM.step}
+                displayValue={`${Math.round(webcamStyles.crop.bottom * 100)}%`}
+                onChange={(value) => updateCrop({ bottom: value })}
+              />
+              <ValueSlider
+                label="Left"
+                value={webcamStyles.crop.left}
+                min={DEFAULTS.CAMERA.CROP.LEFT.min}
+                max={DEFAULTS.CAMERA.CROP.LEFT.max}
+                step={DEFAULTS.CAMERA.CROP.LEFT.step}
+                displayValue={`${Math.round(webcamStyles.crop.left * 100)}%`}
+                onChange={(value) => updateCrop({ left: value })}
+              />
             </div>
           </div>
         </Collapse>
 
         <Collapse title="Effects" description="Add depth to the webcam surface" icon={<Wand />} onReset={resetEffects}>
           <div className="space-y-4">
-            <ValueSlider label="Blur" value={webcamStyles.shadowBlur} min={DEFAULTS.CAMERA.EFFECTS.BLUR.min} max={DEFAULTS.CAMERA.EFFECTS.BLUR.max} step={DEFAULTS.CAMERA.EFFECTS.BLUR.step} suffix="px" onChange={(value) => updateWebcamStyle({ shadowBlur: value })} />
+            <ValueSlider
+              label="Blur"
+              value={webcamStyles.shadowBlur}
+              min={DEFAULTS.CAMERA.EFFECTS.BLUR.min}
+              max={DEFAULTS.CAMERA.EFFECTS.BLUR.max}
+              step={DEFAULTS.CAMERA.EFFECTS.BLUR.step}
+              suffix="px"
+              onChange={(value) => updateWebcamStyle({ shadowBlur: value })}
+            />
             <div className="grid grid-cols-2 gap-4">
-              <ValueSlider label="Offset X" value={webcamStyles.shadowOffsetX} min={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.min} max={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.max} step={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.step} suffix="px" onChange={(value) => updateWebcamStyle({ shadowOffsetX: value })} />
-              <ValueSlider label="Offset Y" value={webcamStyles.shadowOffsetY} min={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.min} max={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.max} step={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.step} suffix="px" onChange={(value) => updateWebcamStyle({ shadowOffsetY: value })} />
+              <ValueSlider
+                label="Offset X"
+                value={webcamStyles.shadowOffsetX}
+                min={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.min}
+                max={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.max}
+                step={DEFAULTS.CAMERA.EFFECTS.OFFSET_X.step}
+                suffix="px"
+                onChange={(value) => updateWebcamStyle({ shadowOffsetX: value })}
+              />
+              <ValueSlider
+                label="Offset Y"
+                value={webcamStyles.shadowOffsetY}
+                min={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.min}
+                max={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.max}
+                step={DEFAULTS.CAMERA.EFFECTS.OFFSET_Y.step}
+                suffix="px"
+                onChange={(value) => updateWebcamStyle({ shadowOffsetY: value })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <ColorPicker label="Color" value={shadowHex} onChange={(value) => updateRgbaColor(value, shadowAlpha, 'shadowColor')} />
-              <ValueSlider label="Opacity" value={shadowAlpha} min={0} max={1} step={0.01} displayValue={`${Math.round(shadowAlpha * 100)}%`} onChange={(value) => updateRgbaColor(shadowHex, value, 'shadowColor')} />
+              <ColorPicker
+                label="Color"
+                value={shadowHex}
+                onChange={(value) => updateRgbaColor(value, shadowAlpha, 'shadowColor')}
+              />
+              <ValueSlider
+                label="Opacity"
+                value={shadowAlpha}
+                min={0}
+                max={1}
+                step={0.01}
+                displayValue={`${Math.round(shadowAlpha * 100)}%`}
+                onChange={(value) => updateRgbaColor(shadowHex, value, 'shadowColor')}
+              />
             </div>
           </div>
         </Collapse>

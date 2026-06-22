@@ -79,11 +79,7 @@ function App() {
     content = <RecorderPage />
   }
 
-  return (
-    <IconoirProvider iconProps={{ width: '1em', height: '1em', strokeWidth: 1.85 }}>
-      {content}
-    </IconoirProvider>
-  )
+  return <IconoirProvider iconProps={{ width: '1em', height: '1em', strokeWidth: 1.85 }}>{content}</IconoirProvider>
 }
 
 export default App

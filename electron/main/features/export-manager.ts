@@ -1,7 +1,17 @@
 // Contains business logic for video export.
 
 import log from 'electron-log/main'
-import { app, BrowserWindow, IpcMainInvokeEvent, ipcMain, Menu, Tray, nativeImage, shell, powerSaveBlocker } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  IpcMainInvokeEvent,
+  ipcMain,
+  Menu,
+  Tray,
+  nativeImage,
+  shell,
+  powerSaveBlocker,
+} from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -20,10 +30,7 @@ const EXPORT_PROGRESS_INTERVAL_MS = 300
 const EXPORT_PROGRESS_STEP_PERCENT = 2
 const MAX_SUPPORTED_EXPORT_FPS = 60
 const POSIX_PRIORITY_CANDIDATES = [-10, -5]
-const WINDOWS_PRIORITY_CANDIDATES = [
-  osConstants.priority.PRIORITY_HIGH,
-  osConstants.priority.PRIORITY_ABOVE_NORMAL,
-]
+const WINDOWS_PRIORITY_CANDIDATES = [osConstants.priority.PRIORITY_HIGH, osConstants.priority.PRIORITY_ABOVE_NORMAL]
 const WINDOWS_NORMAL_PRIORITY = osConstants.priority.PRIORITY_NORMAL
 const store = new Store()
 
@@ -117,7 +124,10 @@ const mapHeightToExportResolution = (height: number): ExportSelectionRequest['re
   return '2k'
 }
 
-const mapFpsToExportTier = (fps: number | null, fallback: ExportSelectionRequest['fps']): ExportSelectionRequest['fps'] => {
+const mapFpsToExportTier = (
+  fps: number | null,
+  fallback: ExportSelectionRequest['fps'],
+): ExportSelectionRequest['fps'] => {
   if (!fps) return fallback
   return fps > 30.5 ? 60 : 30
 }
@@ -134,7 +144,10 @@ const readSourceVideoInfo = async (videoPath: string | null | undefined): Promis
       stderr += data.toString()
     })
     probe.on('error', (error) => {
-      log.warn('[ExportManager] Failed to probe adaptive source video info. Falling back to manual export settings.', error)
+      log.warn(
+        '[ExportManager] Failed to probe adaptive source video info. Falling back to manual export settings.',
+        error,
+      )
       resolve(null)
     })
     probe.on('close', () => {
@@ -153,7 +166,7 @@ const readSourceVideoInfo = async (videoPath: string | null | undefined): Promis
       const averageFps = sanitizeFrameRate(fpsMatch ? Number(fpsMatch[1]) : null)
       const nominalFps = sanitizeNominalFrameRate(tbrMatch ? Number(tbrMatch[1]) : null)
       const shouldUseNominalFps = Boolean(averageFps && averageFps < 10 && nominalFps)
-      const fps = shouldUseNominalFps ? nominalFps : averageFps ?? nominalFps
+      const fps = shouldUseNominalFps ? nominalFps : (averageFps ?? nominalFps)
 
       if (!width || !height) {
         log.warn(`[ExportManager] Adaptive source probe could not parse dimensions from: ${videoLine}`)
@@ -262,10 +275,7 @@ const buildAudioTimelineSegments = (
   return segments
 }
 
-const pushExportSegment = (
-  output: ExportAudioSegment[],
-  segment: Omit<ExportAudioSegment, 'outputDuration'>,
-) => {
+const pushExportSegment = (output: ExportAudioSegment[], segment: Omit<ExportAudioSegment, 'outputDuration'>) => {
   if (!Number.isFinite(segment.sourceDuration) || segment.sourceDuration <= MIN_AUDIO_SEGMENT_DURATION) {
     return
   }
@@ -322,7 +332,9 @@ const parseMediaAudioRegionsFromState = (
           ? Math.max(0, Math.min(parsed.fadeOutDuration, duration))
           : 0
       const volume =
-        typeof parsed.volume === 'number' && Number.isFinite(parsed.volume) ? Math.max(0, Math.min(parsed.volume, 1)) : 1
+        typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)
+          ? Math.max(0, Math.min(parsed.volume, 1))
+          : 1
 
       acc.push({
         id: id || parsed.id || `media-audio-${Date.now()}`,
@@ -334,10 +346,7 @@ const parseMediaAudioRegionsFromState = (
         volume,
         fadeInDuration,
         fadeOutDuration,
-        zIndex:
-          typeof parsed.zIndex === 'number' && Number.isFinite(parsed.zIndex)
-            ? parsed.zIndex
-            : 0,
+        zIndex: typeof parsed.zIndex === 'number' && Number.isFinite(parsed.zIndex) ? parsed.zIndex : 0,
       })
       return acc
     }, [] as MediaAudioRegionLike[])
@@ -350,7 +359,9 @@ const parseMediaAudioRegionsFromState = (
   if (!mediaClip) return []
 
   const legacyStart =
-    typeof mediaClip.startTime === 'number' && Number.isFinite(mediaClip.startTime) ? Math.max(0, mediaClip.startTime) : 0
+    typeof mediaClip.startTime === 'number' && Number.isFinite(mediaClip.startTime)
+      ? Math.max(0, mediaClip.startTime)
+      : 0
   const legacyDuration = clipDuration > 0 ? clipDuration : 0
   if (legacyDuration <= 0) return []
 
@@ -572,10 +583,7 @@ const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
 
   const speed = segment.speed > 0 ? segment.speed : 1
   const localTimeExpr = `${regionLocalStart.toFixed(6)}+t*${speed.toFixed(6)}`
-  const fadeInExpr =
-    fadeInDuration > 0
-      ? `min(1,max(0,(${localTimeExpr})/${fadeInDuration.toFixed(6)}))`
-      : '1'
+  const fadeInExpr = fadeInDuration > 0 ? `min(1,max(0,(${localTimeExpr})/${fadeInDuration.toFixed(6)}))` : '1'
   const fadeOutExpr =
     fadeOutDuration > 0
       ? `min(1,max(0,(${regionDuration.toFixed(6)}-(${localTimeExpr}))/(${fadeOutDuration.toFixed(6)})))`
@@ -612,7 +620,10 @@ const buildAudioFilterChain = (segment: ExportAudioSegment, inputLabel: string, 
     }
   }
 
-  filters.push(`aresample=${AUDIO_SEGMENT_SAMPLE_RATE}`, `aformat=sample_rates=${AUDIO_SEGMENT_SAMPLE_RATE}:channel_layouts=stereo`)
+  filters.push(
+    `aresample=${AUDIO_SEGMENT_SAMPLE_RATE}`,
+    `aformat=sample_rates=${AUDIO_SEGMENT_SAMPLE_RATE}:channel_layouts=stereo`,
+  )
 
   return `${filters.join(',')}[${outputLabel}]`
 }
@@ -964,7 +975,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     progressWindow.on('close', handleProgressWindowClose)
     const sendLatestProgressToWindow = () => {
       if (latestProgressPayload && !progressWindow.isDestroyed()) {
-        log.info(`${sessionLogPrefix}[Progress] Sending latest progress to progress window after load/show.`, latestProgressPayload)
+        log.info(
+          `${sessionLogPrefix}[Progress] Sending latest progress to progress window after load/show.`,
+          latestProgressPayload,
+        )
         progressWindow.webContents.send('export:progress', latestProgressPayload)
         syncProgressWindowDom(progressWindow, latestProgressPayload, 'latest-progress-window-load', true)
       } else {
@@ -1154,7 +1168,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     killAuxiliaryFFmpegProcesses()
     closeRenderWorker()
 
-    sendExportComplete({ success: false, error: 'Export cancelled.', duration: getElapsedDurationSeconds() }, 'cancelled')
+    sendExportComplete(
+      { success: false, error: 'Export cancelled.', duration: getElapsedDurationSeconds() },
+      'cancelled',
+    )
     cleanupExportUi()
 
     if (fs.existsSync(outputPath)) {
@@ -1261,9 +1278,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       resolution: requestedExportSettings.adaptiveRender
         ? requestedExportSettings.resolution
         : authorizedExport.approved.resolution,
-      fps: requestedExportSettings.adaptiveRender
-        ? requestedExportSettings.fps
-        : authorizedExport.approved.fps,
+      fps: requestedExportSettings.adaptiveRender ? requestedExportSettings.fps : authorizedExport.approved.fps,
     }
   } catch (error) {
     if (exportCompleted) return
@@ -1360,7 +1375,6 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     `${sessionLogPrefix} Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
   )
 
-
   // Determine input format based on output format
   // If MP4, we receive H.264 stream from Renderer (WebCodecs)
   // If other (GIF), we receive raw RGBA frames
@@ -1371,24 +1385,25 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   const ffmpegArgs = ['-y']
-  
+
   if (isMp4) {
     // Input is raw H.264 Byte Stream (Annex B)
     // We specify framerate here so FFmpeg knows how to interpret the stream timing
-    ffmpegArgs.push(
-       '-thread_queue_size', '1024',
-       '-f', 'h264', 
-       '-r', fps.toString(), 
-       '-i', '-'
-    )
+    ffmpegArgs.push('-thread_queue_size', '1024', '-f', 'h264', '-r', fps.toString(), '-i', '-')
   } else {
     ffmpegArgs.push(
-      '-f', 'rawvideo',
-      '-vcodec', 'rawvideo',
-      '-pix_fmt', 'rgba',
-      '-s', `${outputWidth}x${outputHeight}`,
-      '-r', fps.toString(),
-      '-i', '-'
+      '-f',
+      'rawvideo',
+      '-vcodec',
+      'rawvideo',
+      '-pix_fmt',
+      'rgba',
+      '-s',
+      `${outputWidth}x${outputHeight}`,
+      '-r',
+      fps.toString(),
+      '-i',
+      '-',
     )
   }
 
@@ -1404,6 +1419,8 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
     const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
+    const recordingVolume = typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume) ? Math.max(0, Math.min(projectStateRecord.recordingVolume, 1)) : 1
+    const recordingMuted = projectStateRecord.recordingMuted === true || recordingVolume <= 0
     const systemAudioVolume =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
         ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, 1))
@@ -1470,7 +1487,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
           log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')
           recordingTrackPath = recordingPath
         } else {
-          const processedRecordingPath = await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)
+          const processedRecordingPath = await renderProcessedAudioFile(
+            recordingPath,
+            recordingSegments,
+            runAuxiliaryFFmpeg,
+          )
           if (!processedRecordingPath) {
             throw new Error('Failed to process recording audio track')
           }
@@ -1481,16 +1502,22 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
 
     if (systemAudioPath && !systemAudioMuted) {
-      const systemSegments = buildRecordingExportAudioSegments(baseTimelineSegments, [], timelineLanes).map((segment) => ({
-        ...segment,
-        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
-      }))
+      const systemSegments = buildRecordingExportAudioSegments(baseTimelineSegments, [], timelineLanes).map(
+        (segment) => ({
+          ...segment,
+          volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
+        }),
+      )
       if (systemSegments.length > 0) {
         if (systemAudioHasNoTransform) {
           log.info('[ExportManager] Reusing original computer audio; no computer audio edits detected.')
           systemTrackPath = systemAudioPath
         } else {
-          const processedSystemPath = await renderProcessedAudioFile(systemAudioPath, systemSegments, runAuxiliaryFFmpeg)
+          const processedSystemPath = await renderProcessedAudioFile(
+            systemAudioPath,
+            systemSegments,
+            runAuxiliaryFFmpeg,
+          )
           if (!processedSystemPath) {
             throw new Error('Failed to process computer audio track')
           }
@@ -1677,7 +1704,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         sendProgressUpdate(100, 'Export completed', true, 'ffmpeg-close')
         sendExportComplete({ success: true, outputPath, duration: renderDuration }, 'success')
       } else {
-        sendExportComplete({ success: false, error: `FFmpeg exited with code ${code}`, duration: renderDuration }, 'error')
+        sendExportComplete(
+          { success: false, error: `FFmpeg exited with code ${code}`, duration: renderDuration },
+          'error',
+        )
       }
     }
 

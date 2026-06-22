@@ -1,8 +1,4 @@
-import {
-  getAuthSession,
-  logoutAuthSession,
-  startDesktopAuthLogin,
-} from '../../features/auth-manager'
+import { getAuthSession, logoutAuthSession, startDesktopAuthLogin } from '../../features/auth-manager'
 
 export async function handleAuthGetSession() {
   return getAuthSession()

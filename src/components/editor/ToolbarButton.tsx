@@ -31,11 +31,7 @@ export const ToolbarButton = React.forwardRef<HTMLButtonElement, ToolbarButtonPr
     )
 
     if (tooltip && !disabled) {
-      return (
-        <SimpleTooltip content={tooltip}>
-          {button}
-        </SimpleTooltip>
-      )
+      return <SimpleTooltip content={tooltip}>{button}</SimpleTooltip>
     }
 
     return button

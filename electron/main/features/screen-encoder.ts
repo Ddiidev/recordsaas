@@ -157,7 +157,7 @@ const runProbe = (
       '-f',
       'lavfi',
       '-i',
-      'color=c=black:s=128x128:r=1',
+      'color=c=black:s=256x256:r=1',
       '-frames:v',
       '1',
       ...(definition.probeFilter ? ['-vf', definition.probeFilter] : []),

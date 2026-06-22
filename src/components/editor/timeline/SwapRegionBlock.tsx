@@ -7,7 +7,11 @@ interface SwapRegionBlockProps {
   region: CameraSwapRegion
   isSelected: boolean
   isBeingDragged?: boolean
-  onMouseDown: (e: React.MouseEvent<HTMLDivElement>, region: CameraSwapRegion, type: 'move' | 'resize-left' | 'resize-right') => void
+  onMouseDown: (
+    e: React.MouseEvent<HTMLDivElement>,
+    region: CameraSwapRegion,
+    type: 'move' | 'resize-left' | 'resize-right',
+  ) => void
   setRef?: (el: HTMLDivElement | null) => void
 }
 
@@ -22,11 +26,16 @@ export const SwapRegionBlock = React.memo(function SwapRegionBlock({
 
   const transitionLabel = useMemo(() => {
     switch (region.transition) {
-      case 'none': return 'No Trans.'
-      case 'fade': return 'Fade'
-      case 'slide': return 'Slide'
-      case 'scale': return 'Scale'
-      default: return 'Swap'
+      case 'none':
+        return 'No Trans.'
+      case 'fade':
+        return 'Fade'
+      case 'slide':
+        return 'Slide'
+      case 'scale':
+        return 'Scale'
+      default:
+        return 'Swap'
     }
   }, [region.transition])
 

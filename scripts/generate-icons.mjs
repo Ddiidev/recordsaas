@@ -48,14 +48,14 @@ console.log('  ✓ icon.ico')
 console.log('Generating ICNS...')
 
 const icnsTypes = [
-  { osType: 'ic07', size: 128 },   // 128x128
-  { osType: 'ic08', size: 256 },   // 256x256
-  { osType: 'ic09', size: 512 },   // 512x512
-  { osType: 'ic10', size: 1024 },  // 1024x1024 (512x512@2x)
-  { osType: 'ic11', size: 32 },    // 16x16@2x
-  { osType: 'ic12', size: 64 },    // 32x32@2x
-  { osType: 'ic13', size: 256 },   // 128x128@2x
-  { osType: 'ic14', size: 512 },   // 256x256@2x
+  { osType: 'ic07', size: 128 }, // 128x128
+  { osType: 'ic08', size: 256 }, // 256x256
+  { osType: 'ic09', size: 512 }, // 512x512
+  { osType: 'ic10', size: 1024 }, // 1024x1024 (512x512@2x)
+  { osType: 'ic11', size: 32 }, // 16x16@2x
+  { osType: 'ic12', size: 64 }, // 32x32@2x
+  { osType: 'ic13', size: 256 }, // 128x128@2x
+  { osType: 'ic14', size: 512 }, // 256x256@2x
 ]
 
 const iconEntries = []

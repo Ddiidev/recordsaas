@@ -37,7 +37,7 @@ const generateFilename = (format: 'mp4' | 'gif') => {
   let filename = `RecordSaaS-${timestamp}.${format}`
   // Fix slashes for Windows
   if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
-     filename = filename.split('/').join('\\')
+    filename = filename.split('/').join('\\')
   }
   return filename
 }
@@ -169,14 +169,16 @@ const SettingsView = ({
   }, [])
 
   const [outputPath, setOutputPath] = useState('')
-  const { originalProjectPath, duration, cutRegions, speedRegions, videoDimensions, videoPath } = useEditorStore((state) => ({
-    originalProjectPath: state.originalProjectPath,
-    duration: state.duration,
-    cutRegions: state.cutRegions,
-    speedRegions: state.speedRegions,
-    videoDimensions: state.videoDimensions,
-    videoPath: state.videoPath,
-  }))
+  const { originalProjectPath, duration, cutRegions, speedRegions, videoDimensions, videoPath } = useEditorStore(
+    (state) => ({
+      originalProjectPath: state.originalProjectPath,
+      duration: state.duration,
+      cutRegions: state.cutRegions,
+      speedRegions: state.speedRegions,
+      videoDimensions: state.videoDimensions,
+      videoPath: state.videoPath,
+    }),
+  )
 
   const estimatedDuration = useMemo(() => {
     if (duration === 0) return 0
@@ -273,7 +275,7 @@ const SettingsView = ({
 
   const isAuthenticated = authSession.isAuthenticated
   const isFreeUser = isAuthenticated && !authSession.license?.active
-  const balanceUnits = isFreeUser ? authSession.credits?.balanceUnits ?? 0 : 0
+  const balanceUnits = isFreeUser ? (authSession.credits?.balanceUnits ?? 0) : 0
   const selectedCostUnits = isFreeUser ? getFreeCostUnits(settings.resolution, settings.fps) : 0
   const hasEnoughCredits = !isFreeUser || selectedCostUnits <= balanceUnits
   const adaptiveResolutionLabel =
@@ -324,7 +326,20 @@ const SettingsView = ({
             className="absolute top-4 right-4 w-8 h-8 rounded-lg text-muted-foreground hover:bg-destructive hover:text-white transition-colors z-50"
           >
             <span className="sr-only">Close</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
           </Button>
         )}
         <div className="flex items-center gap-3">
@@ -379,16 +394,24 @@ const SettingsView = ({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="480p" disabled={!canAffordSelection('480p', settings.fps)}>
-                  {isFreeUser ? `${RESOLUTION_LABELS['480p']} (${getResolutionCostHint('480p')})` : RESOLUTION_LABELS['480p']}
+                  {isFreeUser
+                    ? `${RESOLUTION_LABELS['480p']} (${getResolutionCostHint('480p')})`
+                    : RESOLUTION_LABELS['480p']}
                 </SelectItem>
                 <SelectItem value="576p" disabled={!canAffordSelection('576p', settings.fps)}>
-                  {isFreeUser ? `${RESOLUTION_LABELS['576p']} (${getResolutionCostHint('576p')})` : RESOLUTION_LABELS['576p']}
+                  {isFreeUser
+                    ? `${RESOLUTION_LABELS['576p']} (${getResolutionCostHint('576p')})`
+                    : RESOLUTION_LABELS['576p']}
                 </SelectItem>
                 <SelectItem value="720p" disabled={!canAffordSelection('720p', settings.fps)}>
-                  {isFreeUser ? `${RESOLUTION_LABELS['720p']} (${getResolutionCostHint('720p')})` : RESOLUTION_LABELS['720p']}
+                  {isFreeUser
+                    ? `${RESOLUTION_LABELS['720p']} (${getResolutionCostHint('720p')})`
+                    : RESOLUTION_LABELS['720p']}
                 </SelectItem>
                 <SelectItem value="1080p" disabled={!canAffordSelection('1080p', settings.fps)}>
-                  {isFreeUser ? `${RESOLUTION_LABELS['1080p']} (${getResolutionCostHint('1080p')})` : RESOLUTION_LABELS['1080p']}
+                  {isFreeUser
+                    ? `${RESOLUTION_LABELS['1080p']} (${getResolutionCostHint('1080p')})`
+                    : RESOLUTION_LABELS['1080p']}
                 </SelectItem>
                 <SelectItem value="2k" disabled={!canAffordSelection('2k', settings.fps)}>
                   {isFreeUser ? `${RESOLUTION_LABELS['2k']} (${getResolutionCostHint('2k')})` : RESOLUTION_LABELS['2k']}
@@ -411,13 +434,32 @@ const SettingsView = ({
           </SettingRow>
           {!isGpuEnabled && (settings.quality === 'high' || settings.quality === 'ultra high') && (
             <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-xs text-yellow-600 dark:text-yellow-400">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-              <span>Hardware acceleration is disabled. {settings.quality === 'ultra high' ? 'Ultra High' : 'High'} quality uses more CPU for rendering, which may significantly increase export time. Final file size may also increase by ~6%.</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="flex-shrink-0 mt-0.5"
+              >
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+              <span>
+                Hardware acceleration is disabled. {settings.quality === 'ultra high' ? 'Ultra High' : 'High'} quality
+                uses more CPU for rendering, which may significantly increase export time. Final file size may also
+                increase by ~6%.
+              </span>
             </div>
           )}
           <SettingRow label="FPS">
-            <Select 
-              value={String(settings.fps)} 
+            <Select
+              value={String(settings.fps)}
               onValueChange={(value) => handleValueChange('fps', Number(value) as 30 | 60)}
               disabled={settings.adaptiveRender}
             >
@@ -461,9 +503,7 @@ const SettingsView = ({
                 Free unlimited: 480p/576p at 30 FPS. 60 FPS on 480p/576p uses 0.5 credit.
               </p>
               {!hasEnoughCredits && (
-                <p className="text-xs font-medium text-red-500">
-                  Insufficient credits for this combination.
-                </p>
+                <p className="text-xs font-medium text-red-500">Insufficient credits for this combination.</p>
               )}
             </div>
           )}
@@ -491,7 +531,11 @@ const SettingsView = ({
         <Button variant="secondary" onClick={onClose} className="shadow-sm">
           Cancel
         </Button>
-        <Button onClick={() => void handleStartClick()} disabled={!outputPath || !hasEnoughCredits} className="shadow-sm">
+        <Button
+          onClick={() => void handleStartClick()}
+          disabled={!outputPath || !hasEnoughCredits}
+          className="shadow-sm"
+        >
           Start Export
         </Button>
       </div>
@@ -529,7 +573,9 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
   const estimatedDuration = useMemo(() => {
     if (duration === 0) return 0
     let finalDuration = duration
-    Object.values(cutRegions).forEach((region) => { finalDuration -= region.duration })
+    Object.values(cutRegions).forEach((region) => {
+      finalDuration -= region.duration
+    })
     Object.values(speedRegions).forEach((region) => {
       finalDuration -= region.duration
       finalDuration += region.duration / region.speed
@@ -583,7 +629,9 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
         <p>{getMessage()}</p>
         {typeof result.duration === 'number' && (
           <div className="mt-2 text-foreground font-medium flex flex-col items-center gap-1">
-            {result.success && <span className="tabular-nums">Video length: {formatFullDurationMs(estimatedDuration)}</span>}
+            {result.success && (
+              <span className="tabular-nums">Video length: {formatFullDurationMs(estimatedDuration)}</span>
+            )}
             <span className="tabular-nums">Total time taken: {formatFullDurationMs(result.duration)}</span>
           </div>
         )}
@@ -633,7 +681,10 @@ export function ExportModal({
 
   return (
     <div className="modal-backdrop z-50 flex items-center justify-center backdrop-blur-[2px]" onClick={onClose}>
-      <div className="w-full max-w-2xl m-4 flex flex-col shadow-2xl rounded-xl bg-card border border-border relative" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="w-full max-w-2xl m-4 flex flex-col shadow-2xl rounded-xl bg-card border border-border relative"
+        onClick={(e) => e.stopPropagation()}
+      >
         {renderContent()}
       </div>
     </div>

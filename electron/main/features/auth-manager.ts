@@ -127,7 +127,8 @@ function parseLicense(value: unknown): AuthLicense | null {
     licenseValidUntil: typeof maybeLicense.licenseValidUntil === 'string' ? maybeLicense.licenseValidUntil : null,
     paidAmount: typeof maybeLicense.paidAmount === 'number' ? maybeLicense.paidAmount : null,
     paidCurrency: typeof maybeLicense.paidCurrency === 'string' ? maybeLicense.paidCurrency : null,
-    watermarkRequired: typeof maybeLicense.watermarkRequired === 'boolean' ? maybeLicense.watermarkRequired : !maybeLicense.active,
+    watermarkRequired:
+      typeof maybeLicense.watermarkRequired === 'boolean' ? maybeLicense.watermarkRequired : !maybeLicense.active,
   }
 }
 
@@ -422,9 +423,7 @@ function ensureAudience(audience: string | string[] | undefined, expected: strin
 async function getAuthPublicKeyContext(): Promise<{ key: KeyObject; issuer: string }> {
   const now = Date.now()
   const shouldRefresh =
-    !cachedAuthPublicKey ||
-    !cachedAuthIssuer ||
-    now - cachedAuthPublicKeyLoadedAt > AUTH_PUBLIC_KEY_CACHE_TTL_MS
+    !cachedAuthPublicKey || !cachedAuthIssuer || now - cachedAuthPublicKeyLoadedAt > AUTH_PUBLIC_KEY_CACHE_TTL_MS
 
   if (!shouldRefresh && cachedAuthPublicKey && cachedAuthIssuer) {
     return {

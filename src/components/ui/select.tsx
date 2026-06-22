@@ -137,11 +137,11 @@ const SelectContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
 >(({ className, children, position = 'popper', ...props }, ref) => (
   <SelectPrimitive.Portal>
-      <SelectPrimitive.Content
-        ref={ref}
-        data-interactive="true"
-        className={cn(
-          // Base styling
+    <SelectPrimitive.Content
+      ref={ref}
+      data-interactive="true"
+      className={cn(
+        // Base styling
         'relative z-[1100] max-h-96 min-w-[8rem] overflow-hidden',
         'rounded-md border border-border bg-popover backdrop-blur-xl',
         'text-popover-foreground shadow-md',

@@ -104,7 +104,9 @@ export function getFFmpegPath(): string {
 
   const systemFallback = findExecutableOnPath(process.platform === 'win32' ? ['ffmpeg.exe', 'ffmpeg'] : ['ffmpeg'])
   if (systemFallback && isWorkingFFmpegBinary(systemFallback)) {
-    log.warn(`[FFmpeg] Bundled binary unavailable or invalid at ${bundledPath}. Falling back to PATH binary at: ${systemFallback}`)
+    log.warn(
+      `[FFmpeg] Bundled binary unavailable or invalid at ${bundledPath}. Falling back to PATH binary at: ${systemFallback}`,
+    )
     return systemFallback
   }
 
@@ -144,9 +146,7 @@ export function calculateExportDimensions(
   aspectRatio: string,
 ): { width: number; height: number } {
   const safeResolutionKey =
-    resolutionKey && Object.prototype.hasOwnProperty.call(RESOLUTIONS, resolutionKey)
-      ? resolutionKey
-      : '720p'
+    resolutionKey && Object.prototype.hasOwnProperty.call(RESOLUTIONS, resolutionKey) ? resolutionKey : '720p'
   const baseHeight = RESOLUTIONS[safeResolutionKey].height
   const safeAspectRatio = typeof aspectRatio === 'string' && aspectRatio.includes(':') ? aspectRatio : '16:9'
   const [ratioW, ratioH] = safeAspectRatio.split(':').map(Number)

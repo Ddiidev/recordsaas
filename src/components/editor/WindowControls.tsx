@@ -100,9 +100,7 @@ export function WindowControls() {
     <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
       <WindowControlButton icon={<Minus className="h-3.5 w-3.5" />} label="Minimize" onClick={handleMinimize} />
       <WindowControlButton
-        icon={
-          isMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />
-        }
+        icon={isMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         label={isMaximized ? 'Restore' : 'Maximize'}
         onClick={handleMaximize}
       />

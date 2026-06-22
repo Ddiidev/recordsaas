@@ -7,6 +7,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { getFFmpegPath, getBinaryPath } from '../../lib/utils'
 import { getCursorScale, setCursorScale } from '../../features/cursor-manager'
+import { listWindowsAudioDevices } from '../../features/recording-manager'
 import { loadCursorThemeFromFile } from '../../lib/cursor-theme-parser'
 import { mapCursorNameToIDC } from '../../lib/win-cursor-manager'
 import { CursorTheme } from '../../types'
@@ -148,3 +149,8 @@ export async function loadCursorTheme(
 export function handleMapCursorNameToIDC(_event: IpcMainInvokeEvent, name: string) {
   return mapCursorNameToIDC(name)
 }
+
+export async function getWindowsAudioDevices() {
+  return listWindowsAudioDevices()
+}
+

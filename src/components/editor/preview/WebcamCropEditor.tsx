@@ -16,13 +16,37 @@ interface WebcamCropEditorProps {
   onUpdateCrop: (crop: Partial<WebcamCrop>) => void
 }
 
-const HANDLE_CONFIG: Array<{ handle: CropHandle; cursor: string; getPosition: (cropBox: CropBox) => { left: number; top: number } }> = [
+const HANDLE_CONFIG: Array<{
+  handle: CropHandle
+  cursor: string
+  getPosition: (cropBox: CropBox) => { left: number; top: number }
+}> = [
   { handle: 'top-left', cursor: 'nwse-resize', getPosition: (cropBox) => ({ left: cropBox.x, top: cropBox.y }) },
-  { handle: 'top', cursor: 'ns-resize', getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width / 2, top: cropBox.y }) },
-  { handle: 'right', cursor: 'ew-resize', getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width, top: cropBox.y + cropBox.height / 2 }) },
-  { handle: 'bottom-right', cursor: 'nwse-resize', getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width, top: cropBox.y + cropBox.height }) },
-  { handle: 'bottom', cursor: 'ns-resize', getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width / 2, top: cropBox.y + cropBox.height }) },
-  { handle: 'left', cursor: 'ew-resize', getPosition: (cropBox) => ({ left: cropBox.x, top: cropBox.y + cropBox.height / 2 }) },
+  {
+    handle: 'top',
+    cursor: 'ns-resize',
+    getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width / 2, top: cropBox.y }),
+  },
+  {
+    handle: 'right',
+    cursor: 'ew-resize',
+    getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width, top: cropBox.y + cropBox.height / 2 }),
+  },
+  {
+    handle: 'bottom-right',
+    cursor: 'nwse-resize',
+    getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width, top: cropBox.y + cropBox.height }),
+  },
+  {
+    handle: 'bottom',
+    cursor: 'ns-resize',
+    getPosition: (cropBox) => ({ left: cropBox.x + cropBox.width / 2, top: cropBox.y + cropBox.height }),
+  },
+  {
+    handle: 'left',
+    cursor: 'ew-resize',
+    getPosition: (cropBox) => ({ left: cropBox.x, top: cropBox.y + cropBox.height / 2 }),
+  },
 ]
 
 type CropBox = { x: number; y: number; width: number; height: number }
@@ -123,8 +147,10 @@ export const WebcamCropEditor = memo(({ webcamVideoUrl, currentTime, crop, onUpd
 
       if (handle === 'top-left' || handle === 'left') left = clamp(pointerX, 0, right - minWidth)
       if (handle === 'top-left' || handle === 'top') top = clamp(pointerY, 0, bottom - minHeight)
-      if (handle === 'right' || handle === 'bottom-right') right = clamp(pointerX, left + minWidth, interaction.bounds.width)
-      if (handle === 'bottom' || handle === 'bottom-right') bottom = clamp(pointerY, top + minHeight, interaction.bounds.height)
+      if (handle === 'right' || handle === 'bottom-right')
+        right = clamp(pointerX, left + minWidth, interaction.bounds.width)
+      if (handle === 'bottom' || handle === 'bottom-right')
+        bottom = clamp(pointerY, top + minHeight, interaction.bounds.height)
 
       onUpdateCrop({
         left: roundTo4(left / interaction.bounds.width),
@@ -171,13 +197,27 @@ export const WebcamCropEditor = memo(({ webcamVideoUrl, currentTime, crop, onUpd
 
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute left-0 top-0 w-full bg-black/40" style={{ height: `${cropBox.y}%` }} />
-          <div className="absolute bottom-0 left-0 w-full bg-black/40" style={{ height: `${100 - cropBox.y - cropBox.height}%` }} />
-          <div className="absolute left-0 bg-black/40" style={{ top: `${cropBox.y}%`, width: `${cropBox.x}%`, height: `${cropBox.height}%` }} />
-          <div className="absolute right-0 bg-black/40" style={{ top: `${cropBox.y}%`, width: `${100 - cropBox.x - cropBox.width}%`, height: `${cropBox.height}%` }} />
+          <div
+            className="absolute bottom-0 left-0 w-full bg-black/40"
+            style={{ height: `${100 - cropBox.y - cropBox.height}%` }}
+          />
+          <div
+            className="absolute left-0 bg-black/40"
+            style={{ top: `${cropBox.y}%`, width: `${cropBox.x}%`, height: `${cropBox.height}%` }}
+          />
+          <div
+            className="absolute right-0 bg-black/40"
+            style={{ top: `${cropBox.y}%`, width: `${100 - cropBox.x - cropBox.width}%`, height: `${cropBox.height}%` }}
+          />
 
           <div
             className="absolute border-2 border-white/90 shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
-            style={{ left: `${cropBox.x}%`, top: `${cropBox.y}%`, width: `${cropBox.width}%`, height: `${cropBox.height}%` }}
+            style={{
+              left: `${cropBox.x}%`,
+              top: `${cropBox.y}%`,
+              width: `${cropBox.width}%`,
+              height: `${cropBox.height}%`,
+            }}
           />
 
           {HANDLE_CONFIG.map(({ handle, cursor, getPosition }) => {

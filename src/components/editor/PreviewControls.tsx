@@ -1,4 +1,14 @@
-import { Scissors, ZoomIn, Trash, ArrowBackUp, ArrowForwardUp, PlayerTrackNext, Search, Refresh, AdjustmentsHorizontal } from '@icons'
+import {
+  Scissors,
+  ZoomIn,
+  Trash,
+  ArrowBackUp,
+  ArrowForwardUp,
+  PlayerTrackNext,
+  Search,
+  Refresh,
+  AdjustmentsHorizontal,
+} from '@icons'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
@@ -78,7 +88,12 @@ export function PreviewControls() {
         <div className="h-8 w-px bg-border" />
 
         <div className="flex items-center gap-2">
-          <ToolbarButton variant="icon" tooltip="Undo (Ctrl+Z)" onClick={() => undo()} disabled={pastStates.length === 0}>
+          <ToolbarButton
+            variant="icon"
+            tooltip="Undo (Ctrl+Z)"
+            onClick={() => undo()}
+            disabled={pastStates.length === 0}
+          >
             <ArrowBackUp className="w-4 h-4" />
           </ToolbarButton>
           <ToolbarButton

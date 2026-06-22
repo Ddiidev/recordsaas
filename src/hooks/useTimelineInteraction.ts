@@ -117,39 +117,46 @@ export const useTimelineInteraction = ({
         const calcMovedRegion = (dragRegion: DraggingRegionState, dTime: number, clientY: number | null) => {
           const maxStartTime = duration - dragRegion.initialDuration
           const intendedStartTime = dragRegion.initialStartTime + dTime
-          let targetLaneId = clientY !== null ? (resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId) : (draggedLaneIdRef.current || dragRegion.initialLaneId)
+          let targetLaneId =
+            clientY !== null
+              ? resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId
+              : draggedLaneIdRef.current || dragRegion.initialLaneId
           let newStartTime = Math.max(0, Math.min(intendedStartTime, maxStartTime))
 
           if (!dragRegion.isCut) {
             const state = useEditorStore.getState()
-            const getObstacles = (lane: string) => [
-              ...Object.values(state.zoomRegions),
-              ...Object.values(state.speedRegions),
-              ...Object.values(state.blurRegions),
-              ...Object.values(state.swapRegions),
-              ...Object.values(state.mediaAudioRegions),
-              ...Object.values(state.changeSoundRegions),
-            ].filter(r => r.id !== dragRegion.id && r.laneId === lane)
-            
+            const getObstacles = (lane: string) =>
+              [
+                ...Object.values(state.zoomRegions),
+                ...Object.values(state.speedRegions),
+                ...Object.values(state.blurRegions),
+                ...Object.values(state.swapRegions),
+                ...Object.values(state.mediaAudioRegions),
+                ...Object.values(state.changeSoundRegions),
+              ].filter((r) => r.id !== dragRegion.id && r.laneId === lane)
+
             const findValid = (lane: string) => {
               const obs = getObstacles(lane).sort((a, b) => a.startTime - b.startTime)
-              const gaps: {start: number, end: number}[] = []
+              const gaps: { start: number; end: number }[] = []
               let lastEnd = 0
               for (const o of obs) {
-                if (o.startTime > lastEnd + 0.001) gaps.push({start: lastEnd, end: o.startTime})
+                if (o.startTime > lastEnd + 0.001) gaps.push({ start: lastEnd, end: o.startTime })
                 lastEnd = Math.max(lastEnd, o.startTime + o.duration)
               }
-              if (duration > lastEnd + 0.001) gaps.push({start: lastEnd, end: duration})
-              
-              const validGaps = gaps.filter(g => g.end - g.start >= dragRegion.initialDuration - 0.001)
+              if (duration > lastEnd + 0.001) gaps.push({ start: lastEnd, end: duration })
+
+              const validGaps = gaps.filter((g) => g.end - g.start >= dragRegion.initialDuration - 0.001)
               if (!validGaps.length) return null
-              
+
               let best = intendedStartTime
               let minDist = Infinity
               for (const g of validGaps) {
                 const c = Math.max(g.start, Math.min(intendedStartTime, g.end - dragRegion.initialDuration))
                 const d = Math.abs(c - intendedStartTime)
-                if (d < minDist) { minDist = d; best = c }
+                if (d < minDist) {
+                  minDist = d
+                  best = c
+                }
               }
               return best
             }
@@ -179,16 +186,24 @@ export const useTimelineInteraction = ({
               ...Object.values(state.swapRegions),
               ...Object.values(state.mediaAudioRegions),
               ...Object.values(state.changeSoundRegions),
-            ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001)
+            ].filter(
+              (r) =>
+                r.id !== dragRegion.id &&
+                r.laneId === dragRegion.initialLaneId &&
+                r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001,
+            )
             if (obstacles.length > 0) {
-              const nextObs = obstacles.reduce((min, o) => o.startTime < min.startTime ? o : min, obstacles[0])
+              const nextObs = obstacles.reduce((min, o) => (o.startTime < min.startTime ? o : min), obstacles[0])
               maxDuration = Math.min(maxDuration, nextObs.startTime - dragRegion.initialStartTime)
             }
           }
           if (dragRegion.regionType === 'media-audio') {
             const sourceClipDuration = state.mediaAudioClip?.duration || 0
             if (sourceClipDuration > 0 && dragRegion.initialSourceStart !== null) {
-              maxDuration = Math.min(maxDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart))
+              maxDuration = Math.min(
+                maxDuration,
+                Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart),
+              )
             }
           }
           const intendedDuration = dragRegion.initialDuration + dTime
@@ -207,9 +222,17 @@ export const useTimelineInteraction = ({
               ...Object.values(state.swapRegions),
               ...Object.values(state.mediaAudioRegions),
               ...Object.values(state.changeSoundRegions),
-            ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime + r.duration <= dragRegion.initialStartTime + 0.001)
+            ].filter(
+              (r) =>
+                r.id !== dragRegion.id &&
+                r.laneId === dragRegion.initialLaneId &&
+                r.startTime + r.duration <= dragRegion.initialStartTime + 0.001,
+            )
             if (obstacles.length > 0) {
-              const prevObs = obstacles.reduce((max, o) => (o.startTime + o.duration) > (max.startTime + max.duration) ? o : max, obstacles[0])
+              const prevObs = obstacles.reduce(
+                (max, o) => (o.startTime + o.duration > max.startTime + max.duration ? o : max),
+                obstacles[0],
+              )
               minStartTime = prevObs.startTime + prevObs.duration
             }
           }
@@ -217,7 +240,10 @@ export const useTimelineInteraction = ({
             const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
             minStartTime = Math.max(minStartTime, sourceBoundStart)
           }
-          const tentativeStartTime = Math.max(minStartTime, Math.min(dragRegion.initialStartTime + dTime, initialEndTime))
+          const tentativeStartTime = Math.max(
+            minStartTime,
+            Math.min(dragRegion.initialStartTime + dTime, initialEndTime),
+          )
           const newDuration = initialEndTime - tentativeStartTime
           return { newStartTime: tentativeStartTime, newDuration }
         }
@@ -335,43 +361,50 @@ export const useTimelineInteraction = ({
         } else {
           const deltaTime = pxToTime(e.clientX - draggingRegion.initialX)
           const finalUpdates: Partial<TimelineRegion> & { sourceStart?: number } = {}
-          
+
           const calcMovedRegion = (dragRegion: DraggingRegionState, dTime: number, clientY: number | null) => {
             const maxStartTime = duration - dragRegion.initialDuration
             const intendedStartTime = dragRegion.initialStartTime + dTime
-            let targetLaneId = clientY !== null ? (resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId) : (draggedLaneIdRef.current || dragRegion.initialLaneId)
+            let targetLaneId =
+              clientY !== null
+                ? resolveLaneIdFromClientY(clientY) || dragRegion.initialLaneId
+                : draggedLaneIdRef.current || dragRegion.initialLaneId
             let newStartTime = Math.max(0, Math.min(intendedStartTime, maxStartTime))
 
             if (!dragRegion.isCut) {
               const state = useEditorStore.getState()
-              const getObstacles = (lane: string) => [
-                ...Object.values(state.zoomRegions),
-                ...Object.values(state.speedRegions),
-                ...Object.values(state.blurRegions),
-                ...Object.values(state.swapRegions),
-                ...Object.values(state.mediaAudioRegions),
-                ...Object.values(state.changeSoundRegions),
-              ].filter(r => r.id !== dragRegion.id && r.laneId === lane)
-              
+              const getObstacles = (lane: string) =>
+                [
+                  ...Object.values(state.zoomRegions),
+                  ...Object.values(state.speedRegions),
+                  ...Object.values(state.blurRegions),
+                  ...Object.values(state.swapRegions),
+                  ...Object.values(state.mediaAudioRegions),
+                  ...Object.values(state.changeSoundRegions),
+                ].filter((r) => r.id !== dragRegion.id && r.laneId === lane)
+
               const findValid = (lane: string) => {
                 const obs = getObstacles(lane).sort((a, b) => a.startTime - b.startTime)
-                const gaps: {start: number, end: number}[] = []
+                const gaps: { start: number; end: number }[] = []
                 let lastEnd = 0
                 for (const o of obs) {
-                  if (o.startTime > lastEnd + 0.001) gaps.push({start: lastEnd, end: o.startTime})
+                  if (o.startTime > lastEnd + 0.001) gaps.push({ start: lastEnd, end: o.startTime })
                   lastEnd = Math.max(lastEnd, o.startTime + o.duration)
                 }
-                if (duration > lastEnd + 0.001) gaps.push({start: lastEnd, end: duration})
-                
-                const validGaps = gaps.filter(g => g.end - g.start >= dragRegion.initialDuration - 0.001)
+                if (duration > lastEnd + 0.001) gaps.push({ start: lastEnd, end: duration })
+
+                const validGaps = gaps.filter((g) => g.end - g.start >= dragRegion.initialDuration - 0.001)
                 if (!validGaps.length) return null
-                
+
                 let best = intendedStartTime
                 let minDist = Infinity
                 for (const g of validGaps) {
                   const c = Math.max(g.start, Math.min(intendedStartTime, g.end - dragRegion.initialDuration))
                   const d = Math.abs(c - intendedStartTime)
-                  if (d < minDist) { minDist = d; best = c }
+                  if (d < minDist) {
+                    minDist = d
+                    best = c
+                  }
                 }
                 return best
               }
@@ -401,16 +434,24 @@ export const useTimelineInteraction = ({
                 ...Object.values(state.swapRegions),
                 ...Object.values(state.mediaAudioRegions),
                 ...Object.values(state.changeSoundRegions),
-              ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001)
+              ].filter(
+                (r) =>
+                  r.id !== dragRegion.id &&
+                  r.laneId === dragRegion.initialLaneId &&
+                  r.startTime >= dragRegion.initialStartTime + dragRegion.initialDuration - 0.001,
+              )
               if (obstacles.length > 0) {
-                const nextObs = obstacles.reduce((min, o) => o.startTime < min.startTime ? o : min, obstacles[0])
+                const nextObs = obstacles.reduce((min, o) => (o.startTime < min.startTime ? o : min), obstacles[0])
                 maxDuration = Math.min(maxDuration, nextObs.startTime - dragRegion.initialStartTime)
               }
             }
             if (dragRegion.regionType === 'media-audio') {
               const sourceClipDuration = state.mediaAudioClip?.duration || 0
               if (sourceClipDuration > 0 && dragRegion.initialSourceStart !== null) {
-                maxDuration = Math.min(maxDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart))
+                maxDuration = Math.min(
+                  maxDuration,
+                  Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - dragRegion.initialSourceStart),
+                )
               }
             }
             const intendedDuration = dragRegion.initialDuration + dTime
@@ -429,9 +470,17 @@ export const useTimelineInteraction = ({
                 ...Object.values(state.swapRegions),
                 ...Object.values(state.mediaAudioRegions),
                 ...Object.values(state.changeSoundRegions),
-              ].filter(r => r.id !== dragRegion.id && r.laneId === dragRegion.initialLaneId && r.startTime + r.duration <= dragRegion.initialStartTime + 0.001)
+              ].filter(
+                (r) =>
+                  r.id !== dragRegion.id &&
+                  r.laneId === dragRegion.initialLaneId &&
+                  r.startTime + r.duration <= dragRegion.initialStartTime + 0.001,
+              )
               if (obstacles.length > 0) {
-                const prevObs = obstacles.reduce((max, o) => (o.startTime + o.duration) > (max.startTime + max.duration) ? o : max, obstacles[0])
+                const prevObs = obstacles.reduce(
+                  (max, o) => (o.startTime + o.duration > max.startTime + max.duration ? o : max),
+                  obstacles[0],
+                )
                 minStartTime = prevObs.startTime + prevObs.duration
               }
             }
@@ -439,7 +488,10 @@ export const useTimelineInteraction = ({
               const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
               minStartTime = Math.max(minStartTime, sourceBoundStart)
             }
-            const tentativeStartTime = Math.max(minStartTime, Math.min(dragRegion.initialStartTime + dTime, initialEndTime))
+            const tentativeStartTime = Math.max(
+              minStartTime,
+              Math.min(dragRegion.initialStartTime + dTime, initialEndTime),
+            )
             const newDuration = initialEndTime - tentativeStartTime
             return { newStartTime: tentativeStartTime, newDuration }
           }
@@ -457,7 +509,7 @@ export const useTimelineInteraction = ({
           } else {
             const initialEndTime = draggingRegion.initialStartTime + draggingRegion.initialDuration
             let { newStartTime, newDuration } = calcResizeLeft(draggingRegion, deltaTime)
-            
+
             if (newDuration < TIMELINE.MINIMUM_REGION_DURATION) {
               newDuration = TIMELINE.MINIMUM_REGION_DURATION
               newStartTime = Math.min(newStartTime, initialEndTime - TIMELINE.MINIMUM_REGION_DURATION)
@@ -469,7 +521,7 @@ export const useTimelineInteraction = ({
               finalUpdates.sourceStart = Math.max(0, draggingRegion.initialSourceStart + sourceDelta)
             }
           }
-          
+
           if (draggingRegion.type !== 'move' && finalUpdates.duration! < TIMELINE.REGION_DELETE_THRESHOLD) {
             deleteRegion(draggingRegion.id)
           } else {

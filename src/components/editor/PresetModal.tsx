@@ -108,11 +108,26 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
               className="absolute top-4 right-4 w-8 h-8 rounded-lg text-muted-foreground hover:bg-destructive hover:text-white transition-colors z-50"
             >
               <span className="sr-only">Close</span>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
             </Button>
           )}
           <h2 className="text-xl font-bold text-foreground mb-1">Manage Presets</h2>
-          <p className="text-sm text-muted-foreground">Select, create, or delete presets for frame, webcam, blur, and swap defaults.</p>
+          <p className="text-sm text-muted-foreground">
+            Select, create, or delete presets for frame, webcam, blur, and swap defaults.
+          </p>
         </div>
 
         <div className="flex-1 flex flex-row overflow-hidden">

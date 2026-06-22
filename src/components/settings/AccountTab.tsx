@@ -160,12 +160,7 @@ export function AccountTab() {
 
       <div className="mt-6">
         {session.isAuthenticated ? (
-          <Button
-            variant="destructive"
-            className="w-full"
-            onClick={handleLogout}
-            disabled={isBusy}
-          >
+          <Button variant="destructive" className="w-full" onClick={handleLogout} disabled={isBusy}>
             {isBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Logout className="w-4 h-4 mr-2" />}
             Log out
           </Button>

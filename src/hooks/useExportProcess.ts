@@ -11,7 +11,12 @@ export const useExportProcess = () => {
   const [isModalOpen, setModalOpen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [result, setResult] = useState<{ success: boolean; outputPath?: string; error?: string; duration?: number } | null>(null)
+  const [result, setResult] = useState<{
+    success: boolean
+    outputPath?: string
+    error?: string
+    duration?: number
+  } | null>(null)
 
   const withRefundSupportHint = (message: string) =>
     `${message} If credits were charged and this export failed, request refund review at contato@recordsaas.com.`
@@ -22,7 +27,9 @@ export const useExportProcess = () => {
     return 'Unknown export error'
   }
 
-  const parseInsufficientCreditsError = (message: string): {
+  const parseInsufficientCreditsError = (
+    message: string,
+  ): {
     buyUrl: string
     requiredCredits: string
     availableCredits: string
@@ -39,8 +46,10 @@ export const useExportProcess = () => {
 
     return {
       buyUrl,
-      requiredCredits: Number.isFinite(required) && required >= 0 ? required.toFixed(required % 1 === 0 ? 0 : 1) : 'unknown',
-      availableCredits: Number.isFinite(available) && available >= 0 ? available.toFixed(available % 1 === 0 ? 0 : 1) : 'unknown',
+      requiredCredits:
+        Number.isFinite(required) && required >= 0 ? required.toFixed(required % 1 === 0 ? 0 : 1) : 'unknown',
+      availableCredits:
+        Number.isFinite(available) && available >= 0 ? available.toFixed(available % 1 === 0 ? 0 : 1) : 'unknown',
     }
   }
 
@@ -59,7 +68,8 @@ export const useExportProcess = () => {
     const cleanCompleteListener = window.electronAPI.onExportComplete(({ success, outputPath, error, duration }) => {
       setIsExporting(false)
       setProgress(100)
-      const hasMeaningfulError = !success && typeof error === 'string' && error.length > 0 && error !== 'Export cancelled.'
+      const hasMeaningfulError =
+        !success && typeof error === 'string' && error.length > 0 && error !== 'Export cancelled.'
       const normalizedError = hasMeaningfulError ? withRefundSupportHint(error) : error
       setResult({ success, outputPath, error: normalizedError, duration })
     })
@@ -139,7 +149,11 @@ export const useExportProcess = () => {
         return
       }
 
-      if (message.includes('AUTH_REQUIRED') || message.includes('Authorization header') || message.includes('Token expired')) {
+      if (
+        message.includes('AUTH_REQUIRED') ||
+        message.includes('Authorization header') ||
+        message.includes('Token expired')
+      ) {
         setResult({
           success: false,
           error: 'Your session expired or is invalid. Please log in again and retry export.',
@@ -148,7 +162,10 @@ export const useExportProcess = () => {
         return
       }
 
-      setResult({ success: false, error: withRefundSupportHint(`An error occurred while starting the export: ${message}`) })
+      setResult({
+        success: false,
+        error: withRefundSupportHint(`An error occurred while starting the export: ${message}`),
+      })
       setIsExporting(false)
     }
   }, [])

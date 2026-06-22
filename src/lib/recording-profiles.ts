@@ -49,8 +49,7 @@ export const AUDIO_CODEC_LABELS: Record<RecordingAudioCodec, string> = {
   mp3: 'MP3',
 }
 
-const isRecordingAudioCodec = (value: unknown): value is RecordingAudioCodec =>
-  value === 'aac' || value === 'mp3'
+const isRecordingAudioCodec = (value: unknown): value is RecordingAudioCodec => value === 'aac' || value === 'mp3'
 
 const isRecordingAudioBitrateKbps = (value: unknown): value is RecordingAudioBitrateKbps =>
   value === 128 || value === 192 || value === 320
@@ -169,23 +168,26 @@ export const normalizeRecordingProfiles = (value: unknown, nativeRecommendedFps:
       const profile = item as Partial<RecordingProfile>
       return profile.id === NATIVE_RECORDING_PROFILE_ID || profile.isNative === true
     }) || null
-  const nativeProfile = createNativeRecordingProfile(nativeRecommendedFps, storedNativeProfile as Partial<RecordingProfile>)
+  const nativeProfile = createNativeRecordingProfile(
+    nativeRecommendedFps,
+    storedNativeProfile as Partial<RecordingProfile>,
+  )
   const customProfiles = storedProfiles
-        .filter((item) => item && typeof item === 'object')
-        .map((item, index) =>
-          normalizeRecordingProfile(item as Partial<RecordingProfile>, {
-            id: `recording-profile-${index + 1}`,
-            name: `Profile ${index + 1}`,
-            screenResolution: 'native',
-            screenFps: 30,
-            webcamResolution: 'native',
-            webcamFps: 'synced',
-            audioCodec: 'aac',
-            audioBitrateKbps: 192,
-            audioSampleRate: 48000,
-          }),
-        )
-        .filter((profile) => !profile.isNative && profile.id !== NATIVE_RECORDING_PROFILE_ID)
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) =>
+      normalizeRecordingProfile(item as Partial<RecordingProfile>, {
+        id: `recording-profile-${index + 1}`,
+        name: `Profile ${index + 1}`,
+        screenResolution: 'native',
+        screenFps: 30,
+        webcamResolution: 'native',
+        webcamFps: 'synced',
+        audioCodec: 'aac',
+        audioBitrateKbps: 192,
+        audioSampleRate: 48000,
+      }),
+    )
+    .filter((profile) => !profile.isNative && profile.id !== NATIVE_RECORDING_PROFILE_ID)
 
   return [nativeProfile, ...customProfiles]
 }

@@ -75,19 +75,18 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     isPlaying,
     timelineLanes,
     mediaAudioClip,
-  } =
-    useEditorStore(
-      useShallow((state) => ({
-        currentTime: state.currentTime,
-        duration: state.duration,
-        timelineZoom: state.timelineZoom,
-        previewCutRegion: state.previewCutRegion,
-        selectedRegionId: state.selectedRegionId,
-        isPlaying: state.isPlaying,
-        timelineLanes: state.timelineLanes,
-        mediaAudioClip: state.mediaAudioClip,
-      })),
-    )
+  } = useEditorStore(
+    useShallow((state) => ({
+      currentTime: state.currentTime,
+      duration: state.duration,
+      timelineZoom: state.timelineZoom,
+      previewCutRegion: state.previewCutRegion,
+      selectedRegionId: state.selectedRegionId,
+      isPlaying: state.isPlaying,
+      timelineLanes: state.timelineLanes,
+      mediaAudioClip: state.mediaAudioClip,
+    })),
+  )
 
   const {
     setCurrentTime,
@@ -97,8 +96,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     removeTimelineLane,
     addMediaAudioRegion,
     addChangeSoundRegion,
-  } =
-    useEditorStore()
+  } = useEditorStore()
 
   const sortedLanes = useMemo(() => sortTimelineLanes(timelineLanes), [timelineLanes])
   const fallbackLaneId = sortedLanes[0]?.id ?? 'lane-1'
@@ -145,8 +143,14 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
 
   const timeToPx = useCallback((time: number) => time * pixelsPerSecond, [pixelsPerSecond])
   const pxToTime = useCallback((px: number) => px / pixelsPerSecond, [pixelsPerSecond])
-  const timeToTrackPx = useCallback((time: number) => timelineStartOffsetPx + timeToPx(time), [timelineStartOffsetPx, timeToPx])
-  const trackPxToTime = useCallback((px: number) => pxToTime(Math.max(0, px - timelineStartOffsetPx)), [pxToTime, timelineStartOffsetPx])
+  const timeToTrackPx = useCallback(
+    (time: number) => timelineStartOffsetPx + timeToPx(time),
+    [timelineStartOffsetPx, timeToPx],
+  )
+  const trackPxToTime = useCallback(
+    (px: number) => pxToTime(Math.max(0, px - timelineStartOffsetPx)),
+    [pxToTime, timelineStartOffsetPx],
+  )
 
   const updateVideoTime = useCallback(
     (time: number) => {
@@ -269,7 +273,17 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       combined.push({ ...previewCutRegion, laneId: previewCutRegion.laneId || fallbackLaneId })
     }
     return combined
-  }, [zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions, previewCutRegion, fallbackLaneId])
+  }, [
+    zoomRegions,
+    cutRegions,
+    speedRegions,
+    blurRegions,
+    swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
+    previewCutRegion,
+    fallbackLaneId,
+  ])
 
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
@@ -291,7 +305,16 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
       startTime: dragMovePreview.startTime,
       duration: dragMovePreview.duration,
     } as TimelineRegion
-  }, [dragMovePreview, zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions])
+  }, [
+    dragMovePreview,
+    zoomRegions,
+    cutRegions,
+    speedRegions,
+    blurRegions,
+    swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
+  ])
 
   const noopRegionMouseDown = useCallback(
     (
@@ -329,10 +352,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     RULER_HEIGHT_PX +
     TIMELINE_MAX_VISIBLE_LANES * LANE_HEIGHT_PX +
     Math.max(0, TIMELINE_MAX_VISIBLE_LANES - 1) * LANE_GAP_PX
-  const timelineViewportHeight = Math.min(
-    maxTimelineViewportHeight,
-    Math.max(minTimelineViewportHeight, timelineContentHeight),
-  ) + 14 // Adds buffer for horizontal scrollbar to prevent vertical scrolling for 2 lanes
+  const timelineViewportHeight =
+    Math.min(maxTimelineViewportHeight, Math.max(minTimelineViewportHeight, timelineContentHeight)) + 14 // Adds buffer for horizontal scrollbar to prevent vertical scrolling for 2 lanes
   const laneActionMenuLaneIndex = laneActionMenu
     ? sortedLanes.findIndex((lane) => lane.id === laneActionMenu.laneId)
     : -1
@@ -466,7 +487,12 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
             className="relative min-w-full overflow-visible"
             style={{ width: `${timelineStartOffsetPx + timeToPx(duration)}px`, height: `${timelineContentHeight}px` }}
           >
-            <Ruler ticks={rulerTicks} timeToPx={timeToTrackPx} formatTime={formatTime} onMouseDown={handleRulerMouseDown} />
+            <Ruler
+              ticks={rulerTicks}
+              timeToPx={timeToTrackPx}
+              formatTime={formatTime}
+              onMouseDown={handleRulerMouseDown}
+            />
 
             <div
               ref={lanesContainerRef}
@@ -713,20 +739,23 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                         if (laneMovePreviewRegion.type === 'swap') {
                           const swapPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'swap' }>
                           return (
-                          <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
-                            <SwapRegionBlock
-                              region={swapPreviewRegion}
-                              isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                              isBeingDragged
-                              onMouseDown={noopRegionMouseDown}
-                              setRef={noopSetRegionRef}
-                            />
-                          </div>
+                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                              <SwapRegionBlock
+                                region={swapPreviewRegion}
+                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                isBeingDragged
+                                onMouseDown={noopRegionMouseDown}
+                                setRef={noopSetRegionRef}
+                              />
+                            </div>
                           )
                         }
 
                         if (laneMovePreviewRegion.type === 'media-audio') {
-                          const mediaAudioPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'media-audio' }>
+                          const mediaAudioPreviewRegion = laneMovePreviewRegion as Extract<
+                            TimelineRegion,
+                            { type: 'media-audio' }
+                          >
                           return (
                             <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
                               <MediaAudioRegionBlock
@@ -741,7 +770,10 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
                         }
 
                         if (laneMovePreviewRegion.type === 'change-sound') {
-                          const changeSoundPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'change-sound' }>
+                          const changeSoundPreviewRegion = laneMovePreviewRegion as Extract<
+                            TimelineRegion,
+                            { type: 'change-sound' }
+                          >
                           return (
                             <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
                               <ChangeSoundRegionBlock

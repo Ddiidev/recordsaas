@@ -73,7 +73,7 @@ const truncateRecorderLabel = (value: string, maxLength = RECORDER_DEVICE_LABEL_
 type RecordingState = 'idle' | 'preparing' | 'recording'
 type ActionInProgress = 'none' | 'recording' | 'loading'
 type RecordingSource = 'area' | 'fullscreen' | 'window'
-type ToolbarSelectKey = 'display' | 'webcam' | 'mic' | 'profile'
+type ToolbarSelectKey = 'display' | 'webcam' | 'mic' | 'profile' | 'systemAudio'
 type DisplayInfo = { id: number; name: string; isPrimary: boolean }
 type EncoderWarningDecision = 'continue' | 'configure'
 
@@ -87,17 +87,19 @@ export function RecorderPage() {
   const [selectedWebcamId, setSelectedWebcamId] = useState<string>('none')
   const [selectedMicId, setSelectedMicId] = useState<string>('none')
   const [computerAudioEnabled, setComputerAudioEnabled] = useState(false)
+  const [selectedComputerAudioId, setSelectedComputerAudioId] = useState<string>('default')
   const [computerAudioSupported, setComputerAudioSupported] = useState(false)
   const [computerAudioSupportReason, setComputerAudioSupportReason] = useState<string | null>(null)
   const [isSettingsModalOpen, setSettingsModalOpen] = useState(false)
   const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
-  const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey, boolean>>({
+  const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey | 'systemAudio', boolean>>({
     display: false,
     webcam: false,
     mic: false,
     profile: false,
+    systemAudio: false,
   })
   const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>('general')
   const [preparationCountdownSeconds, setPreparationCountdownSeconds] = useState<number>(
@@ -108,12 +110,16 @@ export function RecorderPage() {
   const [recordingProfiles, setRecordingProfiles] = useState<RecordingProfile[]>(normalizeRecordingProfiles(null))
   const [selectedRecordingProfileId, setSelectedRecordingProfileId] = useState<string>(NATIVE_RECORDING_PROFILE_ID)
 
-  const { platform, webcams, mics, isInitializing, reload: reloadDevices } = useDeviceManager()
+  const { platform, webcams, mics, windowsAudioDevices, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
   const webcamStreamRef = useRef<MediaStream | null>(null)
   const webcamPreviewRequestIdRef = useRef(0)
   const preparationCountdownIntervalRef = useRef<number | null>(null)
   const hasRequestedInitialRecordingAnalysisRef = useRef(false)
+  const encoderWarningResolverRef = useRef<((decision: EncoderWarningDecision) => void) | null>(null)
+
+  const [encoderWarningStatus, setEncoderWarningStatus] = useState<ScreenEncoderStatus | null>(null)
+  const [suppressGenericEncoderWarning, setSuppressGenericEncoderWarning] = useState(false)
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
@@ -261,6 +267,7 @@ export function RecorderPage() {
           savedCursorScale,
           savedPreparationCountdown,
           fetchedDisplays,
+          savedComputerAudioId,
         ] = await Promise.all([
           window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
           window.electronAPI.getSetting<string>('recorder.selectedMicId'),
@@ -269,10 +276,12 @@ export function RecorderPage() {
           window.electronAPI.getSetting<number>('recorder.cursorScale'),
           window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
           window.electronAPI.getDisplays(),
+          window.electronAPI.getSetting<string>('recorder.selectedComputerAudioId'),
         ])
 
         setSelectedWebcamId(savedWebcamId || 'none')
         setSelectedMicId(savedMicId || 'none')
+        setSelectedComputerAudioId(savedComputerAudioId || 'default')
         setComputerAudioSupported(computerAudioSupport.supported)
         setComputerAudioSupportReason(computerAudioSupport.reason || null)
         setComputerAudioEnabled(computerAudioSupport.supported && savedComputerAudioEnabled === true)
@@ -309,7 +318,10 @@ export function RecorderPage() {
     if (mics.length > 0 && !mics.some((m) => m.id === selectedMicId)) {
       setSelectedMicId('none')
     }
-  }, [isInitializing, webcams, mics, selectedWebcamId, selectedMicId])
+    if (windowsAudioDevices.length > 0 && selectedComputerAudioId !== 'default' && !windowsAudioDevices.some((d) => d.id === selectedComputerAudioId)) {
+      setSelectedComputerAudioId('default')
+    }
+  }, [isInitializing, webcams, mics, windowsAudioDevices, selectedWebcamId, selectedMicId, selectedComputerAudioId])
 
   // Effect to manage IPC listeners for recording completion
   useEffect(() => {
@@ -503,16 +515,7 @@ export function RecorderPage() {
     resolver?.(decision)
   }
 
-  const openEncoderSettings = () => {
-    resolveEncoderWarning('configure')
-    setActionInProgress('none')
-    setRecordingState('idle')
-    setIsRecording(false)
-    clearPreparationCountdown()
-    setSettingsDefaultTab('performance')
-    setHighlightScreenEncoderRequestId((current) => current + 1)
-    setSettingsModalOpen(true)
-  }
+
 
   const resolvePreparationCountdownSeconds = async () => {
     try {
@@ -578,6 +581,7 @@ export function RecorderPage() {
         webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
         mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
         computerAudioEnabled,
+        computerAudioDeviceId: selectedComputerAudioId !== 'default' ? selectedComputerAudioId : undefined,
         recordingProfile: selectedRecordingProfile,
       })
 
@@ -689,10 +693,18 @@ export function RecorderPage() {
     window.electronAPI.setSetting(key, id)
   }
 
-  const handleComputerAudioChange = (checked: boolean) => {
-    const enabled = computerAudioSupported && checked
-    setComputerAudioEnabled(enabled)
-    window.electronAPI.setSetting('recorder.computerAudioEnabled', enabled)
+  const handleComputerAudioChange = (val: string) => {
+    if (val === 'none') {
+      setComputerAudioEnabled(false)
+      window.electronAPI.setSetting('recorder.computerAudioEnabled', false)
+    } else {
+      setComputerAudioEnabled(true)
+      window.electronAPI.setSetting('recorder.computerAudioEnabled', true)
+      if (val !== 'default') {
+        setSelectedComputerAudioId(val)
+        window.electronAPI.setSetting('recorder.selectedComputerAudioId', val)
+      }
+    }
   }
 
   const handleProfileChange = (id: string) => {
@@ -707,7 +719,46 @@ export function RecorderPage() {
     window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
 
-  const computerAudioControl = (
+  const computerAudioControl = platform === 'win32' && computerAudioSupported ? (
+    <Select
+      value={computerAudioEnabled ? selectedComputerAudioId : 'none'}
+      onValueChange={handleComputerAudioChange}
+      onOpenChange={handleToolbarSelectOpenChange('systemAudio')}
+      disabled={isRecording || actionInProgress !== 'none'}
+    >
+      <SelectTrigger
+        variant="minimal"
+        className="w-auto min-w-[120px] max-w-[145px] h-9"
+        aria-label="Select PC audio device"
+      >
+        <SelectValue asChild>
+          <div className="flex items-center gap-2 text-xs">
+            <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-6 w-6 shrink-0">
+              <Volume size={14} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+            </IconShell>
+            <span className={cn('truncate', !computerAudioEnabled && 'text-muted-foreground')}>
+              {computerAudioEnabled
+                ? truncateRecorderLabel(
+                    selectedComputerAudioId === 'default'
+                      ? 'Default PC audio'
+                      : windowsAudioDevices.find((d) => d.id === selectedComputerAudioId)?.name || 'Default PC audio'
+                  )
+                : 'No PC audio'}
+            </span>
+          </div>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent side="bottom" avoidCollisions={false}>
+        <SelectItem value="none">No PC audio</SelectItem>
+        <SelectItem value="default">Default PC audio</SelectItem>
+        {windowsAudioDevices.map((d) => (
+          <SelectItem key={d.id} value={d.id}>
+            {truncateRecorderLabel(d.name)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  ) : (
     <div
       className={cn(
         'flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3',
@@ -726,7 +777,7 @@ export function RecorderPage() {
       </div>
       <Switch
         checked={computerAudioEnabled}
-        onCheckedChange={handleComputerAudioChange}
+        onCheckedChange={(c) => handleComputerAudioChange(c ? 'default' : 'none')}
         disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
       />
     </div>

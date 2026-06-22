@@ -24,15 +24,9 @@ const VALID_SEND_CHANNELS = new Set<string>([
   'export-progress:set-collapsed',
 ])
 
-const VALID_INVOKE_CHANNELS = new Set<string>([
-  'settings:get',
-  'export-progress:get-state',
-])
+const VALID_INVOKE_CHANNELS = new Set<string>(['settings:get', 'export-progress:get-state'])
 
-const VALID_ON_CHANNELS = new Set<string>([
-  'export:progress',
-  'export:complete',
-])
+const VALID_ON_CHANNELS = new Set<string>(['export:progress', 'export:complete'])
 
 function validateChannel(map: Set<string>, channel: string): boolean {
   if (!map.has(channel)) {

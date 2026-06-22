@@ -12,6 +12,7 @@ export const useDeviceManager = () => {
   const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
   const [webcams, setWebcams] = useState<Device[]>([])
   const [mics, setMics] = useState<Device[]>([])
+  const [windowsAudioDevices, setWindowsAudioDevices] = useState<{ id: string; name: string; isDefault: boolean }[]>([])
   const [isInitializing, setIsInitializing] = useState(true)
 
   /**
@@ -51,6 +52,12 @@ export const useDeviceManager = () => {
       const [fetchedWebcams, fetchedMics] = await Promise.all([fetchDevices('videoinput'), fetchDevices('audioinput')])
       setWebcams(fetchedWebcams)
       setMics(fetchedMics)
+      
+      const currentPlatform = platform ?? (await window.electronAPI.getPlatform())
+      if (currentPlatform === 'win32') {
+        const audioDevs = await window.electronAPI.getWindowsAudioDevices()
+        setWindowsAudioDevices(audioDevs)
+      }
     } catch (error) {
       console.error('Failed to load devices:', error)
     } finally {
@@ -63,5 +70,5 @@ export const useDeviceManager = () => {
     loadAll()
   }, [loadAll])
 
-  return { platform, webcams, mics, isInitializing, reload: loadAll }
+  return { platform, webcams, mics, windowsAudioDevices, isInitializing, reload: loadAll }
 }

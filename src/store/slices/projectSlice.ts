@@ -69,7 +69,8 @@ const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
   if (!clip.path || typeof clip.path !== 'string') return null
   const normalizedPath = normalizeMediaPath(clip.path)
 
-  const duration = typeof clip.duration === 'number' && Number.isFinite(clip.duration) ? clampToNonNegative(clip.duration) : 0
+  const duration =
+    typeof clip.duration === 'number' && Number.isFinite(clip.duration) ? clampToNonNegative(clip.duration) : 0
   const startTime =
     typeof clip.startTime === 'number' && Number.isFinite(clip.startTime) ? clampToNonNegative(clip.startTime) : 0
 
@@ -91,7 +92,8 @@ const parseMediaAudioRegion = (
   if (!value || typeof value !== 'object') return null
   const region = value as Partial<MediaAudioRegion>
 
-  const startTime = typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
+  const startTime =
+    typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
   const duration =
     typeof region.duration === 'number' && Number.isFinite(region.duration)
       ? Math.max(0.1, clampToNonNegative(region.duration))
@@ -283,7 +285,10 @@ const parseWebcamStyles = (value: unknown): WebcamStyles => {
     nextStyles.borderRadius = Math.max(0, Math.min(50, styles.borderRadius))
   }
   if (typeof styles.size === 'number' && Number.isFinite(styles.size)) {
-    nextStyles.size = Math.max(DEFAULTS.CAMERA.PLACEMENT.SIZE.min, Math.min(DEFAULTS.CAMERA.PLACEMENT.SIZE.max, styles.size))
+    nextStyles.size = Math.max(
+      DEFAULTS.CAMERA.PLACEMENT.SIZE.min,
+      Math.min(DEFAULTS.CAMERA.PLACEMENT.SIZE.max, styles.size),
+    )
   }
   if (typeof styles.sizeOnZoom === 'number' && Number.isFinite(styles.sizeOnZoom)) {
     nextStyles.sizeOnZoom = Math.max(
@@ -316,7 +321,10 @@ const parseWebcamStyles = (value: unknown): WebcamStyles => {
     nextStyles.border = styles.border
   }
   if (typeof styles.borderWidth === 'number' && Number.isFinite(styles.borderWidth)) {
-    nextStyles.borderWidth = Math.max(DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.min, Math.min(DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.max, styles.borderWidth))
+    nextStyles.borderWidth = Math.max(
+      DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.min,
+      Math.min(DEFAULTS.CAMERA.STYLE.BORDER.WIDTH.max, styles.borderWidth),
+    )
   }
   if (typeof styles.borderColor === 'string' && styles.borderColor.length > 0) {
     nextStyles.borderColor = styles.borderColor
@@ -337,12 +345,18 @@ const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegi
       ? Math.max(0.1, clampToNonNegative(region.duration))
       : SWAP_REGION.DEFAULT_DURATION
   const transition =
-    region.transition === 'none' || region.transition === 'fade' || region.transition === 'slide' || region.transition === 'scale'
+    region.transition === 'none' ||
+    region.transition === 'fade' ||
+    region.transition === 'slide' ||
+    region.transition === 'scale'
       ? region.transition
       : SWAP_REGION.TRANSITION.DEFAULT
   const transitionDuration =
     typeof region.transitionDuration === 'number' && Number.isFinite(region.transitionDuration)
-      ? Math.max(SWAP_REGION.TRANSITION_DURATION.min, Math.min(SWAP_REGION.TRANSITION_DURATION.max, region.transitionDuration))
+      ? Math.max(
+          SWAP_REGION.TRANSITION_DURATION.min,
+          Math.min(SWAP_REGION.TRANSITION_DURATION.max, region.transitionDuration),
+        )
       : SWAP_REGION.TRANSITION_DURATION.defaultValue
 
   return {
@@ -550,7 +564,14 @@ async function prepareMacOSCursorBitmaps(theme: CursorTheme, scale: number): Pro
 
 export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get) => ({
   ...initialProjectState,
-  loadProject: async ({ videoPath, metadataPath, webcamVideoPath, audioPath, systemAudioPath, originalProjectPath }) => {
+  loadProject: async ({
+    videoPath,
+    metadataPath,
+    webcamVideoPath,
+    audioPath,
+    systemAudioPath,
+    originalProjectPath,
+  }) => {
     // Always use media:// protocol for video, webcam, and audio URLs (revert to original logic)
     const videoUrl = toMediaUrl(videoPath)
     const webcamVideoUrl = toMediaUrl(webcamVideoPath)
@@ -584,7 +605,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.videoUrl = videoUrl
       state.webcamVideoPath = webcamVideoPath || null
       state.webcamVideoUrl = webcamVideoUrl
-      state.isWebcamVisible = webcamVideoUrl ? presetToApply?.isWebcamVisible ?? true : false
+      state.isWebcamVisible = webcamVideoUrl ? (presetToApply?.isWebcamVisible ?? true) : false
       state.audioPath = audioPath || null
       state.audioUrl = audioUrl
       state.systemAudioPath = systemAudioPath || null
@@ -617,7 +638,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         width: get().videoDimensions.width,
         height: get().videoDimensions.height,
       }
-      const recordingGeometry = (parsedData.recordingGeometry || parsedData.geometry || fallbackGeometry) as RecordingGeometry
+      const recordingGeometry = (parsedData.recordingGeometry ||
+        parsedData.geometry ||
+        fallbackGeometry) as RecordingGeometry
       const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
       const newZoomRegions = generateAutoZoomRegions(
         processedMetadata,
@@ -641,7 +664,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
         state.swapRegions = parseSwapRegions(parsedData.swapRegions, fallbackTimelineLaneId)
         state.mediaAudioClip = parsedMediaAudioClip
-        if (typeof parsedData.systemAudioPath === 'string' && parsedData.systemAudioPath.length > 0 && !state.systemAudioPath) {
+        if (
+          typeof parsedData.systemAudioPath === 'string' &&
+          parsedData.systemAudioPath.length > 0 &&
+          !state.systemAudioPath
+        ) {
           const normalizedSystemAudioPath = normalizeMediaPath(parsedData.systemAudioPath)
           state.systemAudioPath = normalizedSystemAudioPath
           state.systemAudioUrl = toMediaUrl(normalizedSystemAudioPath)
@@ -650,7 +677,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.systemAudioMuted = parsedData.systemAudioMuted === true
         state.hasAudioTrack = !!state.audioUrl || !!state.systemAudioUrl || !!state.mediaAudioClip
         const fallbackMediaLaneId = fallbackTimelineLaneId
-        state.mediaAudioRegions = parseMediaAudioRegions(parsedData.mediaAudioRegions, fallbackMediaLaneId, parsedMediaAudioClip)
+        state.mediaAudioRegions = parseMediaAudioRegions(
+          parsedData.mediaAudioRegions,
+          fallbackMediaLaneId,
+          parsedMediaAudioClip,
+        )
         state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
         if ('webcamLayout' in parsedData) {
           state.webcamLayout = parseWebcamLayout(parsedData.webcamLayout)
@@ -666,7 +697,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           state.isWebcamVisible =
             typeof parsedData.isWebcamVisible === 'boolean'
               ? parsedData.isWebcamVisible
-              : presetToApply?.isWebcamVisible ?? true
+              : (presetToApply?.isWebcamVisible ?? true)
         } else {
           state.isWebcamVisible = false
         }
@@ -677,7 +708,10 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           region.startTime = clampStartTime(region.startTime, state.duration)
           region.transitionDuration = Math.max(
             SWAP_REGION.TRANSITION_DURATION.min,
-            Math.min(SWAP_REGION.TRANSITION_DURATION.max, region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue),
+            Math.min(
+              SWAP_REGION.TRANSITION_DURATION.max,
+              region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
+            ),
           )
         })
         Object.values(state.mediaAudioRegions).forEach((region) => {
@@ -783,13 +817,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         ...state.blurRegions,
         ...state.swapRegions,
         ...state.changeSoundRegions,
-      }).forEach(
-        (region) => {
-          if (region.startTime + region.duration > duration) {
-            region.duration = Math.max(0.1, duration - region.startTime)
-          }
-        },
-      )
+      }).forEach((region) => {
+        if (region.startTime + region.duration > duration) {
+          region.duration = Math.max(0.1, duration - region.startTime)
+        }
+      })
       Object.values(state.mediaAudioRegions).forEach((region) => {
         region.startTime = clampStartTime(region.startTime, duration)
         if (region.startTime + region.duration > duration) {

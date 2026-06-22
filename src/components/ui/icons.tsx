@@ -91,12 +91,7 @@ interface IconSwitchProps extends IconProps {
 
 const withIconMotion = (Comp: IconComponent, displayName: string) => {
   const Wrapped = ({ className, size, width, height, ...props }: IconProps) => (
-    <Comp
-      width={width ?? size}
-      height={height ?? size}
-      className={cn('icon-glyph', className)}
-      {...props}
-    />
+    <Comp width={width ?? size} height={height ?? size} className={cn('icon-glyph', className)} {...props} />
   )
 
   Wrapped.displayName = displayName

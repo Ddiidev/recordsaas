@@ -120,7 +120,10 @@ export function compareRegionsByLanePrecedence(
   return a.id.localeCompare(b.id)
 }
 
-export function sortRegionsByLanePrecedence<T extends LaneAwareRegion>(regions: T[], source: LanePrecedenceSource): T[] {
+export function sortRegionsByLanePrecedence<T extends LaneAwareRegion>(
+  regions: T[],
+  source: LanePrecedenceSource,
+): T[] {
   const laneContext = resolveLanePrecedenceContext(source)
   return [...regions].sort((a, b) => compareRegionsByLanePrecedence(a, b, laneContext))
 }

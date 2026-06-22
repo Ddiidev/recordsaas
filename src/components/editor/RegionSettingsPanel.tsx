@@ -13,7 +13,18 @@ import type {
 } from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
-import { Camera, Scissors, Pointer, Video, Trash, Search, PlayerTrackNext, Refresh, Music, AdjustmentsHorizontal } from '@icons'
+import {
+  Camera,
+  Scissors,
+  Pointer,
+  Video,
+  Trash,
+  Search,
+  PlayerTrackNext,
+  Refresh,
+  Music,
+  AdjustmentsHorizontal,
+} from '@icons'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
@@ -285,9 +296,7 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
             <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Keep the screen visible in a smaller window
-            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed">Keep the screen visible in a smaller window</p>
           </div>
           <Switch
             checked={region.showDesktopOverlay}
@@ -383,7 +392,8 @@ function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
     }),
   )
 
-  const canSplitAtPlayhead = currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
+  const canSplitAtPlayhead =
+    currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
   const effectiveVolume = region.isMuted ? 0 : region.volume
 
   return (
@@ -421,7 +431,9 @@ function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
           max={region.duration}
           step={0.01}
           value={region.fadeInDuration}
-          onChange={(value) => updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })}
+          onChange={(value) =>
+            updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })
+          }
         />
       </div>
 
@@ -435,14 +447,15 @@ function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
           max={region.duration}
           step={0.01}
           value={region.fadeOutDuration}
-          onChange={(value) => updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })}
+          onChange={(value) =>
+            updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })
+          }
         />
       </div>
 
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">
-          Source offset: {region.sourceStart.toFixed(2)}s
-          {mediaAudioClip?.name ? ` • ${mediaAudioClip.name}` : ''}
+          Source offset: {region.sourceStart.toFixed(2)}s{mediaAudioClip?.name ? ` • ${mediaAudioClip.name}` : ''}
         </p>
       </div>
 
@@ -480,14 +493,18 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
     currentTime: state.currentTime,
   }))
 
-  const canSplitAtPlayhead = currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
+  const canSplitAtPlayhead =
+    currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
   const effectiveVolume = region.isMuted ? 0 : region.volume
 
   return (
     <div className="space-y-6">
       <div className="space-y-2.5">
         <span className="text-sm font-medium text-sidebar-foreground">Source</span>
-        <Select value={region.sourceKey} onValueChange={(value) => updateRegion(region.id, { sourceKey: value as ChangeSoundRegion['sourceKey'] })}>
+        <Select
+          value={region.sourceKey}
+          onValueChange={(value) => updateRegion(region.id, { sourceKey: value as ChangeSoundRegion['sourceKey'] })}
+        >
           <SelectTrigger className="h-10 text-sm border-border bg-card shadow-sm">
             <SelectValue />
           </SelectTrigger>
@@ -530,7 +547,9 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
           max={region.duration}
           step={0.01}
           value={region.fadeInDuration}
-          onChange={(value) => updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })}
+          onChange={(value) =>
+            updateRegion(region.id, { fadeInDuration: Math.max(0, Math.min(value, region.duration)) })
+          }
         />
       </div>
 
@@ -544,7 +563,9 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
           max={region.duration}
           step={0.01}
           value={region.fadeOutDuration}
-          onChange={(value) => updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })}
+          onChange={(value) =>
+            updateRegion(region.id, { fadeOutDuration: Math.max(0, Math.min(value, region.duration)) })
+          }
         />
       </div>
 
@@ -635,7 +656,7 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                   ? 'Cut segment settings'
                   : region.type === 'speed'
                     ? 'Playback speed controls'
-                  : region.type === 'swap'
+                    : region.type === 'swap'
                       ? 'Camera swap settings'
                       : region.type === 'media-audio'
                         ? 'Audio clip trim, split, and fades'

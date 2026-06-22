@@ -103,7 +103,9 @@ const summarizeExport = (exportRun, label) => {
   const workerStartupSeconds = secondsBetween(exportRun.start, exportRun.workerReady)
   const renderSeconds = secondsBetween(exportRun.workerReady, exportRun.renderFinished)
   const activeRenderSeconds =
-    exportRun.workerReady && !exportRun.renderFinished ? secondsBetween(exportRun.workerReady, exportRun.lastTimestamp) : null
+    exportRun.workerReady && !exportRun.renderFinished
+      ? secondsBetween(exportRun.workerReady, exportRun.lastTimestamp)
+      : null
   const finalizingSeconds = secondsBetween(exportRun.renderFinished, exportRun.ffmpegClosed)
   const totalSeconds = exportRun.totalSeconds ?? secondsBetween(exportRun.start, exportRun.completed)
   const activeTotalSeconds = !exportRun.completed ? secondsBetween(exportRun.start, exportRun.lastTimestamp) : null
@@ -112,7 +114,13 @@ const summarizeExport = (exportRun, label) => {
 
   return {
     label,
-    status: exportRun.cancelled ? 'cancelled' : exportRun.completed ? 'completed' : exportRun.renderFinished ? 'render-finished' : 'incomplete',
+    status: exportRun.cancelled
+      ? 'cancelled'
+      : exportRun.completed
+        ? 'completed'
+        : exportRun.renderFinished
+          ? 'render-finished'
+          : 'incomplete',
     total: formatSeconds(totalSeconds),
     activeElapsed: formatSeconds(activeTotalSeconds),
     startupUi: formatSeconds(startupSeconds),

@@ -4,11 +4,6 @@
 import { BrowserWindow, Tray } from 'electron'
 import { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { IMouseTracker } from './features/mouse-tracker'
-import type {
-  ScreenEncoderPreference,
-  ScreenEncoderSelectionMode,
-  ScreenEncoderVendor,
-} from '../../src/types/screen-encoder'
 
 // ADDED: Define RecordingGeometry type here for better reusability
 export interface RecordingGeometry {

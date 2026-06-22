@@ -20,7 +20,7 @@ Current scope baseline:
 - Export final output (video and related formats).
 - Persist and reload projects through `.rsproj`.
 - Support media audio asset import and lane-based control (v2.4.2 baseline).
-- Support optional Windows/Linux computer-audio capture as a simple separate recording asset: Windows uses the bundled native WASAPI loopback helper and feeds raw PCM into FFmpeg for direct compressed output; Linux uses FFmpeg `pulse` monitor capture.
+- Support optional Windows/Linux computer-audio capture as a simple separate recording asset: Windows uses the bundled native WASAPI loopback helper to write AAC ADTS directly, including timeline silence; Linux uses FFmpeg `pulse` monitor capture.
 
 Hard scope boundaries for current cycle:
 - Desktop-first guidance (not landing-page-first).
@@ -128,6 +128,8 @@ Media URL invariant:
 - Preload API surface: `electron/preload.ts`
 - Screen encoder resolver/probes: `electron/main/features/screen-encoder.ts`
 - Windows monitor capture mapper: `electron/main/features/windows-screen-capture.ts`
+- Windows system-audio helper entrypoint: `native/RecordSaaS.SystemAudio/Program.cs`
+- Windows system-audio helper buffering/timeline: `native/RecordSaaS.SystemAudio/BlockingWaveProvider.cs`, `native/RecordSaaS.SystemAudio/TimelineWaveWriter.cs`
 
 ### 3.6 Types and contracts
 - Canonical app types: `src/types/index.ts`
@@ -408,7 +410,7 @@ Motion:
 Functional baseline for current roadmap item:
 - Media tab exists with categories `Audio`, `Image`, `Video`.
 - Audio path supports import, timeline insertion, playback preview, and export integration.
-- Windows computer audio is captured through the bundled native WASAPI loopback helper and streamed directly into the configured compressed `systemAudioPath` (`AAC` or `MP3`); Linux captures through FFmpeg PulseAudio/PipeWire monitor sources directly into the configured compressed output, and preview/export reuse the same simple full-length source flow.
+- Windows computer audio is captured and encoded directly by the bundled native WASAPI loopback helper into AAC ADTS. The desktop passes bitrate, sample rate, and initial-skip settings to the helper; it must not pipe helper PCM into live FFmpeg. Linux captures through FFmpeg PulseAudio/PipeWire monitor sources using the configured `AAC` or `MP3` output, and preview/export reuse the same simple full-length source flow.
 - One media-audio clip per project baseline.
 - Mix includes recording track, optional computer audio, and media audio with lane-aware media/recording region behavior.
 - `change-sound` supports local recording-track control (volume, mute, fade).
@@ -439,6 +441,7 @@ Release CI baseline:
 - Windows release builds use `windows-2022`; `global-mouse-events` depends on `node-gyp@10`, which supports Visual Studio 2022 but not the Visual Studio 18 image currently exposed by `windows-latest`.
 - Semantic-release creates the GitHub Release/tag first; the build matrix then compiles per OS and uploads public release assets to that existing GitHub Release.
 - `scripts/ensure-binaries.mjs` must resolve FFmpeg release assets through direct GitHub release download URLs by default, with authenticated GitHub API lookup only as fallback so CI is not blocked by anonymous API rate limits.
+- `scripts/ensure-binaries.mjs` must only validate or download the prebuilt Windows system-audio helper. Desktop setup must never run `dotnet publish` or compile native helper source.
 - Public desktop assets are limited to `RecordSaaSSetup-mac-v<version>.zip`, `RecordSaaSSetup-linux-v<version>.zip`, and `RecordSaaSSetup-windows-v<version>.exe`.
 - Other packaged outputs (`dmg`, `AppImage`, `deb`, `rpm`) may still be generated during build, but they are not the canonical public release artifacts unless the workflow is intentionally changed.
 

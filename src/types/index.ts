@@ -392,7 +392,12 @@ export interface TimelineActions {
   addSpeedRegion: () => void
   addBlurRegion: () => void
   addSwapRegion: () => void
-  addMediaAudioRegion: (params?: { startTime?: number; laneId?: string; sourceStart?: number; duration?: number }) => void
+  addMediaAudioRegion: (params?: {
+    startTime?: number
+    laneId?: string
+    sourceStart?: number
+    duration?: number
+  }) => void
   addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
   splitMediaAudioRegion: (regionId: string, splitTime: number) => void
   splitChangeSoundRegion: (regionId: string, splitTime: number) => void
@@ -419,7 +424,10 @@ export interface PresetActions {
   updateActivePreset: () => void
   deletePreset: (id: string) => void
   _ensureActivePresetIsWritable: () => void
-  _updateActivePresetToolDefaults: (defaults: { blurDefaults?: BlurPresetDefaults; swapDefaults?: SwapPresetDefaults }) => void
+  _updateActivePresetToolDefaults: (defaults: {
+    blurDefaults?: BlurPresetDefaults
+    swapDefaults?: SwapPresetDefaults
+  }) => void
   _persistPresets: (presets: Record<string, Preset>) => Promise<void>
 }
 

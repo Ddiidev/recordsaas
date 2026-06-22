@@ -32,6 +32,7 @@ export function registerIpcHandlers() {
   // Desktop
   ipcMain.handle('desktop:get-displays', desktopHandlers.getDisplays)
   ipcMain.handle('desktop:get-dshow-devices', desktopHandlers.getDshowDevices)
+  ipcMain.handle('desktop:get-windows-audio-devices', desktopHandlers.getWindowsAudioDevices)
   ipcMain.handle('desktop:get-cursor-scale', desktopHandlers.handleGetCursorScale)
   ipcMain.on('desktop:set-cursor-scale', desktopHandlers.handleSetCursorScale)
   ipcMain.handle('dialog:showSaveDialog', desktopHandlers.showSaveDialog)

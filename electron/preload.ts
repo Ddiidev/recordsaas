@@ -218,6 +218,7 @@ export const electronAPI = {
     webcam?: { deviceId: string; deviceLabel: string; index: number }
     mic?: { deviceId: string; deviceLabel: string; index: number }
     computerAudioEnabled?: boolean
+    computerAudioDeviceId?: string
     recordingProfile?: unknown
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
   selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
@@ -235,6 +236,8 @@ export const electronAPI = {
   getDisplays: (): Promise<DisplayInfo[]> => ipcRenderer.invoke('desktop:get-displays'),
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
+  getWindowsAudioDevices: (): Promise<{ id: string; name: string; isDefault: boolean; sampleRate: number; channels: number; bitsPerSample: number; sampleFormat: string }[]> =>
+    ipcRenderer.invoke('desktop:get-windows-audio-devices'),
   analyzeRecordingCapability: (): Promise<{
     recommendedFps: 30 | 60
     canRecord60Fps: boolean

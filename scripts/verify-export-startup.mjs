@@ -63,11 +63,13 @@ if (rendererSource.includes('readFileBuffer')) {
 
 const registerCancel = indexOf("ipcMain.once('export:cancel', cancellationHandler)")
 const firstProgress = indexOf("sendProgressUpdate(0, 'Authorizing export...', true")
-const outputDirectoryPreparation = indexOf("const outputDir = path.dirname(outputPath)")
+const outputDirectoryPreparation = indexOf('const outputDir = path.dirname(outputPath)')
 const authorizeExport = indexOf('await authorizeDesktopExport')
 const prepareAudioProgress = indexOf("sendProgressUpdate(2, 'Preparing audio...', true")
 const reuseOriginalAudio = indexOf('Reusing original recording audio; no recording audio edits detected.')
-const processRecordingAudio = indexOf('await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)')
+const processRecordingAudio = indexOf(
+  'await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)',
+)
 const mainFfmpegSpawn = indexOf('ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)')
 const renderReadyRegistration = indexOf("ipcMain.once('render:ready', renderReadyListener)")
 const workerLoad = lastIndexOf('createAndLoadRenderWorker()')
@@ -77,7 +79,12 @@ assertBefore('first progress event', firstProgress, 'output directory preparatio
 assertBefore('first progress event', firstProgress, 'authorization', authorizeExport)
 assertBefore('authorization', authorizeExport, 'audio preparation', prepareAudioProgress)
 assertBefore('audio preparation', prepareAudioProgress, 'main FFmpeg spawn', mainFfmpegSpawn)
-assertBefore('recording audio fast path', reuseOriginalAudio, 'recording audio processing fallback', processRecordingAudio)
+assertBefore(
+  'recording audio fast path',
+  reuseOriginalAudio,
+  'recording audio processing fallback',
+  processRecordingAudio,
+)
 assertBefore('render:ready listener registration', renderReadyRegistration, 'worker loading', workerLoad)
 
 assertIncludes('Renderer video chunking', rendererSource, 'window.electronAPI.statFile(normalizedVideoPath)')
@@ -97,14 +104,30 @@ assertIncludes('Export session correlation', source, 'exportSessionId')
 assertIncludes('Export session correlation', source, 'sessionLogPrefix')
 assertIncludes('Export session correlation', rendererSource, 'exportSessionId')
 assertIncludes('Export session correlation', rendererSource, 'renderLogPrefix')
-assertIncludes('Filesystem IPC registration', ipcIndexSource, "ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)")
-assertIncludes('Filesystem IPC registration', ipcIndexSource, "ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)")
+assertIncludes(
+  'Filesystem IPC registration',
+  ipcIndexSource,
+  "ipcMain.handle('fs:statFile', fsHandlers.handleStatFile)",
+)
+assertIncludes(
+  'Filesystem IPC registration',
+  ipcIndexSource,
+  "ipcMain.handle('fs:readFileChunk', fsHandlers.handleReadFileChunk)",
+)
 assertIncludes('System memory IPC handler', appIpcHandlersSource, 'totalmem()')
-assertIncludes('System memory IPC registration', ipcIndexSource, "ipcMain.handle('app:getSystemMemoryInfo', appHandlers.handleGetSystemMemoryInfo)")
+assertIncludes(
+  'System memory IPC registration',
+  ipcIndexSource,
+  "ipcMain.handle('app:getSystemMemoryInfo', appHandlers.handleGetSystemMemoryInfo)",
+)
 assertIncludes('Current process memory preload', preloadSource, 'getCurrentProcessMemoryInfo')
 assertIncludes('Current process memory preload', preloadSource, 'process.getProcessMemoryInfo()')
 assertIncludes('Export source probe IPC', exportIpcHandlersSource, 'probeSourceVideoInfo')
-assertIncludes('Export source probe IPC', ipcIndexSource, "ipcMain.handle('export:probe-source-video-info', exportHandlers.handleProbeSourceVideoInfo)")
+assertIncludes(
+  'Export source probe IPC',
+  ipcIndexSource,
+  "ipcMain.handle('export:probe-source-video-info', exportHandlers.handleProbeSourceVideoInfo)",
+)
 assertIncludes('Export modal source probe', exportModalSource, 'probeExportSourceVideoInfo(videoPath)')
 assertIncludes('Adaptive low-fps fallback', source, 'sanitizeNominalFrameRate')
 assertIncludes('Adaptive low-fps fallback', source, 'Using nominal tbr for export FPS')

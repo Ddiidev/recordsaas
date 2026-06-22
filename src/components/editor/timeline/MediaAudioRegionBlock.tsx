@@ -106,7 +106,9 @@ export const MediaAudioRegionBlock = memo(
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-6">
             <div className="flex w-full flex-col items-center overflow-hidden">
               <div className="flex items-center gap-2 overflow-hidden">
-                <Music className={cn('w-4 h-4 shrink-0 transition-colors text-emerald-500', !isSelected && 'opacity-70')} />
+                <Music
+                  className={cn('w-4 h-4 shrink-0 transition-colors text-emerald-500', !isSelected && 'opacity-70')}
+                />
                 <span
                   className={cn(
                     'text-sm font-bold tracking-wide select-none whitespace-nowrap transition-colors text-emerald-500',
@@ -149,7 +151,12 @@ export const MediaAudioRegionBlock = memo(
           </div>
         </div>
 
-        <ContextMenu isOpen={isMenuOpen} onClose={() => setMenuOpen(false)} position={menuPosition} className="min-w-[180px]">
+        <ContextMenu
+          isOpen={isMenuOpen}
+          onClose={() => setMenuOpen(false)}
+          position={menuPosition}
+          className="min-w-[180px]"
+        >
           <ContextMenuLabel>Audio Clip</ContextMenuLabel>
           <ContextMenuItem
             disabled={!canSplitAtPlayhead}
@@ -160,7 +167,10 @@ export const MediaAudioRegionBlock = memo(
             <span>Split at playhead</span>
           </ContextMenuItem>
           <ContextMenuDivider />
-          <ContextMenuItem onClick={handleDelete} className="text-destructive hover:bg-destructive/20 hover:text-destructive">
+          <ContextMenuItem
+            onClick={handleDelete}
+            className="text-destructive hover:bg-destructive/20 hover:text-destructive"
+          >
             <Trash className="w-4 h-4" />
             <span>Delete clip</span>
           </ContextMenuItem>

@@ -3,6 +3,7 @@
 Aplicativo desktop (Electron + React + TypeScript) para gravacao de tela, edicao em timeline e exportacao.
 
 Este repositorio usa um guia tecnico canonico para manutencao por IA:
+
 - [agent.md](./agent.md)
 
 ## Fonte Canonica de Contexto
@@ -13,9 +14,11 @@ Este repositorio usa um guia tecnico canonico para manutencao por IA:
 ## Como rodar localmente
 
 Pre-requisito:
+
 - Node.js LTS
 
 Passos:
+
 ```bash
 npm install
 npm run dev

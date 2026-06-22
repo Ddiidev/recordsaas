@@ -440,7 +440,9 @@ export function RecordingProfilesTab({
                 >
                   <Select
                     value={selectedProfile.audioCodec}
-                    onValueChange={(value) => updateSelectedProfile({ audioCodec: value as RecordingProfile['audioCodec'] })}
+                    onValueChange={(value) =>
+                      updateSelectedProfile({ audioCodec: value as RecordingProfile['audioCodec'] })
+                    }
                     disabled={!isAudioSettingsEditable}
                   >
                     <SelectTrigger className="h-10 bg-background/50">

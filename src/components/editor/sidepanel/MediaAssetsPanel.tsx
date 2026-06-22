@@ -183,7 +183,9 @@ export function MediaAssetsPanel() {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-foreground">{mediaAudioClip.name}</p>
                   <p className="text-xs text-muted-foreground">Duration: {mediaDurationLabel}</p>
-                  <p className="text-xs text-muted-foreground">Clips on timeline: {Object.keys(mediaAudioRegions).length}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Clips on timeline: {Object.keys(mediaAudioRegions).length}
+                  </p>
                 </div>
               </div>
               <button

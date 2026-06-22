@@ -37,7 +37,15 @@ export const initialTimelineState: TimelineState = {
   timelineZoom: 1,
 }
 
-const BLUR_DEFAULT_UPDATE_KEYS: Array<keyof BlurPresetDefaults> = ['duration', 'style', 'intensity', 'x', 'y', 'width', 'height']
+const BLUR_DEFAULT_UPDATE_KEYS: Array<keyof BlurPresetDefaults> = [
+  'duration',
+  'style',
+  'intensity',
+  'x',
+  'y',
+  'width',
+  'height',
+]
 const SWAP_DEFAULT_UPDATE_KEYS: Array<keyof SwapPresetDefaults> = [
   'duration',
   'showDesktopOverlay',
@@ -288,8 +296,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     set((state) => {
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) => 
-        allRegs.some((r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime)
+      const isOccupied = (laneId: string) =>
+        allRegs.some(
+          (r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -302,7 +312,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           resolvedLaneId = `lane-${Date.now()}`
           state.timelineLanes = [
             ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false }
+            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
           ]
         }
       }
@@ -368,8 +378,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     set((state) => {
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) => 
-        allRegs.some((r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime)
+      const isOccupied = (laneId: string) =>
+        allRegs.some(
+          (r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -382,7 +394,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           resolvedLaneId = `lane-${Date.now()}`
           state.timelineLanes = [
             ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false }
+            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
           ]
         }
       }
@@ -427,8 +439,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     set((state) => {
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) => 
-        allRegs.some((r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime)
+      const isOccupied = (laneId: string) =>
+        allRegs.some(
+          (r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -441,7 +455,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           resolvedLaneId = `lane-${Date.now()}`
           state.timelineLanes = [
             ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false }
+            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
           ]
         }
       }
@@ -483,8 +497,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     set((state) => {
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) => 
-        allRegs.some((r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime)
+      const isOccupied = (laneId: string) =>
+        allRegs.some(
+          (r) => r.laneId === laneId && r.startTime < endTime && r.startTime + r.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -497,7 +513,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           resolvedLaneId = `lane-${Date.now()}`
           state.timelineLanes = [
             ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false }
+            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
           ]
         }
       }
@@ -519,7 +535,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const requestedStart = params?.startTime ?? 0
     const sourceStart = Math.max(0, params?.sourceStart ?? 0)
     const availableSourceDuration =
-      mediaAudioClip.duration > 0 ? Math.max(TIMELINE.MINIMUM_REGION_DURATION, mediaAudioClip.duration - sourceStart) : duration
+      mediaAudioClip.duration > 0
+        ? Math.max(TIMELINE.MINIMUM_REGION_DURATION, mediaAudioClip.duration - sourceStart)
+        : duration
     const requestedDuration = params?.duration ?? availableSourceDuration
 
     const clampedStartTime = Math.max(0, Math.min(requestedStart, duration))
@@ -547,7 +565,12 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
       const isOccupied = (laneId: string) =>
-        allRegs.some((region) => region.laneId === laneId && region.startTime < endTime && region.startTime + region.duration > newRegion.startTime)
+        allRegs.some(
+          (region) =>
+            region.laneId === laneId &&
+            region.startTime < endTime &&
+            region.startTime + region.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -607,7 +630,12 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       const allRegs = getAllRegions(state)
       const endTime = newRegion.startTime + newRegion.duration
       const isOccupied = (laneId: string) =>
-        allRegs.some((region) => region.laneId === laneId && region.startTime < endTime && region.startTime + region.duration > newRegion.startTime)
+        allRegs.some(
+          (region) =>
+            region.laneId === laneId &&
+            region.startTime < endTime &&
+            region.startTime + region.duration > newRegion.startTime,
+        )
 
       let resolvedLaneId = newRegion.laneId
       if (isOccupied(resolvedLaneId)) {
@@ -718,7 +746,10 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           region.volume = Math.max(0, Math.min(region.volume, 1))
           const sourceClipDuration = get().mediaAudioClip?.duration || 0
           if (sourceClipDuration > 0) {
-            const maxDurationFromSource = Math.max(TIMELINE.MINIMUM_REGION_DURATION, sourceClipDuration - region.sourceStart)
+            const maxDurationFromSource = Math.max(
+              TIMELINE.MINIMUM_REGION_DURATION,
+              sourceClipDuration - region.sourceStart,
+            )
             region.duration = Math.min(region.duration, maxDurationFromSource)
           }
           region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
