@@ -1,3 +1,10 @@
+## [2.7.1](https://github.com/Ddiidev/recordsaas/compare/v2.7.0...v2.7.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* capture Windows screen by HMONITOR instead of ddagrab output index ([d3bff0a](https://github.com/Ddiidev/recordsaas/commit/d3bff0a583872bd19baa3537b82c250f2201892b))
+
 # [2.7.0](https://github.com/Ddiidev/recordsaas/compare/v2.6.3...v2.7.0) (2026-06-22)
 
 
