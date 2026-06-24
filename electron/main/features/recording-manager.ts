@@ -655,52 +655,6 @@ function getPlatformPhysicalOffset(value: number, scaleFactor: number): number {
   return value
 }
 
-
-
-function getDisplayIndex(display: Display, displays: Display[]): number {
-  return Math.max(
-    0,
-    displays.findIndex((item) => item.id === display.id),
-  )
-}
-
-function buildWindowsDdagrabInput(displayIndex: number, fps: RecordingScreenFps, rect: PhysicalCaptureRect): string {
-  return [
-    `ddagrab=output_idx=${displayIndex}`,
-    `framerate=${fps}`,
-    'draw_mouse=0',
-    `video_size=${rect.width}x${rect.height}`,
-    `offset_x=${Math.max(0, rect.x)}`,
-    `offset_y=${Math.max(0, rect.y)}`,
-    'dup_frames=1',
-  ].join(':')
-}
-function getWindowsGdigrabVirtualOrigin(displays: Display[]): { x: number; y: number } {
-  if (displays.length === 0) {
-    return { x: 0, y: 0 }
-  }
-
-  const rects = displays.map(getWindowsPhysicalDisplayRect)
-  return {
-    x: Math.min(...rects.map((rect) => rect.x)),
-    y: Math.min(...rects.map((rect) => rect.y)),
-  }
-}
-
-function normalizeWindowsGdigrabOffset(value: number, origin: number): number {
-  return value < 0 ? value - origin : value
-}
-
-function getWindowsGdigrabDisplayRect(display: Display, displays: Display[]): PhysicalCaptureRect {
-  const rect = getWindowsPhysicalDisplayRect(display)
-  const origin = getWindowsGdigrabVirtualOrigin(displays)
-  return {
-    ...rect,
-    x: normalizeWindowsGdigrabOffset(rect.x, origin.x),
-    y: normalizeWindowsGdigrabOffset(rect.y, origin.y),
-  }
-}
-
 function getWindowsDdagrabDisplayRect(display: Display): PhysicalCaptureRect {
   const rect = getWindowsPhysicalDisplayRect(display)
   return {
@@ -2235,21 +2189,14 @@ export async function startRecording(options: any) {
           `${display}+${physicalX},${physicalY}`,
         )
         break
-      case 'win32':
-        outputOptions.screenNeedsHwDownload = true
-        outputOptions.screenCaptureBackend = 'ddagrab'
-        screenInputArgs.push(
-          '-f',
-          'lavfi',
-          '-i',
-          buildWindowsDdagrabInput(getDisplayIndex(targetDisplay, allDisplays), screenFps, {
-            x: physicalX,
-            y: physicalY,
-            width: physicalWidth,
-            height: physicalHeight,
-          }),
-        )
+      case 'win32': {
+        const windowsPhysicalRect = getWindowsPhysicalDisplayRect(targetDisplay)
+        const candidate = selectWindowsScreenCaptureCandidate(targetDisplay, windowsPhysicalRect, screenFps)
+        outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenCaptureBackend = candidate.backend
+        screenInputArgs.push(...candidate.inputArgs)
         break
+      }
       case 'darwin':
         outputOptions.screenCaptureBackend = 'avfoundation'
         screenInputArgs.push(
@@ -2330,21 +2277,17 @@ export async function startRecording(options: any) {
           `${display}+${physicalX},${physicalY}`,
         )
         break
-      case 'win32':
-        outputOptions.screenNeedsHwDownload = true
-        outputOptions.screenCaptureBackend = 'ddagrab'
-        screenInputArgs.push(
-          '-f',
-          'lavfi',
-          '-i',
-          buildWindowsDdagrabInput(getDisplayIndex(containingDisplay, allDisplays), screenFps, {
-            x: physicalX,
-            y: physicalY,
-            width: physicalWidth,
-            height: physicalHeight,
-          }),
+      case 'win32': {
+        const windowsPhysicalRect = getWindowsPhysicalAreaRect(
+          { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight },
+          containingDisplay,
         )
+        const candidate = selectWindowsScreenCaptureCandidate(containingDisplay, windowsPhysicalRect, screenFps)
+        outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenCaptureBackend = candidate.backend
+        screenInputArgs.push(...candidate.inputArgs)
         break
+      }
       case 'darwin':
         // Note: macOS avfoundation doesn't support area capture like gdigrab/x11grab
         outputOptions.screenCaptureBackend = 'avfoundation'

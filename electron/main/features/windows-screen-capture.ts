@@ -17,11 +17,14 @@ export type WindowsScreenCaptureCandidate = {
   inputArgs: string[]
   needsHwDownload: boolean
   probeArgs: string[]
+  monitorHandle?: string
 }
 
 const FFMPEG_PATH = getFFmpegPath()
 const GFXCAPTURE_PROBE_TIMEOUT_MS = 5000
 let hasGfxCaptureFilterCache: boolean | null = null
+const monitorHandleCache = new Map<string, string | null>()
+const gfxCaptureViableCache = new Set<string>
 
 const toEvenDimension = (value: number): number => Math.max(2, Math.floor(value / 2) * 2)
 
@@ -67,6 +70,16 @@ function hasGfxCaptureFilter(): boolean {
 }
 
 function resolveWindowsMonitorHandle(displayRect: PhysicalCaptureRect): string | null {
+  const __mhCacheKey = displayRect.x + ',' + displayRect.y + ',' + displayRect.width + ',' + displayRect.height
+  if (monitorHandleCache.has(__mhCacheKey)) {
+    return monitorHandleCache.get(__mhCacheKey) ?? null
+  }
+  const __resolved = resolveWindowsMonitorHandleUncached(displayRect)
+  monitorHandleCache.set(__mhCacheKey, __resolved)
+  return __resolved
+}
+
+function resolveWindowsMonitorHandleUncached(displayRect: PhysicalCaptureRect): string | null {
   const centerX = Math.round(displayRect.x + displayRect.width / 2)
   const centerY = Math.round(displayRect.y + displayRect.height / 2)
   const command = `
@@ -168,6 +181,7 @@ export function getWindowsScreenCaptureCandidates(
       const gfxInput = buildGfxCaptureInput(monitorHandle, fps, displayRect, captureRect)
       candidates.push({
         backend: 'gfxcapture',
+        monitorHandle,
         inputArgs: ['-f', 'lavfi', '-i', gfxInput],
         needsHwDownload: true,
         probeArgs: [
@@ -210,6 +224,9 @@ export function selectWindowsScreenCaptureCandidate(
 
   for (const candidate of candidates) {
     if (candidate.backend === 'gdigrab') return candidate
+    if (candidate.monitorHandle && gfxCaptureViableCache.has(candidate.monitorHandle)) {
+      return candidate
+    }
 
     const probe = spawnSync(FFMPEG_PATH, candidate.probeArgs, {
       encoding: 'utf-8',
@@ -217,6 +234,7 @@ export function selectWindowsScreenCaptureCandidate(
       windowsHide: true,
     })
     if (!probe.error && probe.status === 0) {
+      if (candidate.monitorHandle) gfxCaptureViableCache.add(candidate.monitorHandle)
       return candidate
     }
 
