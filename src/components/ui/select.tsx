@@ -143,7 +143,10 @@ const SelectContent = React.forwardRef<
       className={cn(
         // Base styling
         'relative z-[1100] max-h-96 min-w-[8rem] overflow-hidden',
-        'rounded-md border border-border bg-popover backdrop-blur-xl',
+        'border border-border bg-popover backdrop-blur-xl',
+        'data-[side=bottom]:rounded-b-md data-[side=bottom]:border-t-0',
+        'data-[side=top]:rounded-t-md data-[side=top]:border-b-0',
+        'data-[side=left]:rounded-md data-[side=right]:rounded-md',
         'text-popover-foreground shadow-md',
 
         // Animations - smoother
@@ -154,7 +157,7 @@ const SelectContent = React.forwardRef<
         'data-[side=right]:slide-in-from-left-1 data-[side=top]:slide-in-from-bottom-1',
 
         position === 'popper' &&
-          'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
+          'data-[side=bottom]:translate-y-0 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:translate-y-0',
         className,
       )}
       position={position}
