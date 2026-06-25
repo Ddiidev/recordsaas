@@ -42,6 +42,95 @@
     animation: scaleIn 0.25s ease-out;
   }
 
+  /* --- Recorder Layout --- */
+  .recorder-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    border-radius: var(--radius);
+    border: 1px solid var(--primary);
+    background-color: var(--card);
+    box-shadow:
+      0 25px 50px -12px rgba(0, 0, 0, 0.25),
+      0 0 0 1px rgba(0, 0, 0, 0.05);
+  }
+
+  .recorder-topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    flex-shrink: 0;
+  }
+
+  .recorder-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .recorder-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    width: 320px;
+    flex-shrink: 0;
+    border-right: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    overflow-y: auto;
+  }
+
+  .webcam-preview-container {
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    max-width: 220px;
+    overflow: hidden;
+    border-radius: var(--radius);
+    border: 1px solid var(--primary);
+    background-color: #000000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  }
+
+  .recorder-sidebar-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .recorder-sidebar-label {
+    font-size: 0.625rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+    padding-left: 0.25rem;
+  }
+
+  .recorder-sidebar-version {
+    margin-top: auto;
+    padding: 0.25rem;
+    font-size: 0.625rem;
+    color: var(--muted-foreground);
+    opacity: 0.6;
+  }
+
+  .recorder-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    min-width: 0;
+  }
+
   .btn-clean {
     @apply focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background;
   }
