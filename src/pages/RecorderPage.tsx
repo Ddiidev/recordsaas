@@ -9,6 +9,7 @@ import {
   Loader2,
   Video,
   X,
+  Minus,
   Marquee2,
   FileImport,
   IconShell,
@@ -109,6 +110,7 @@ export function RecorderPage() {
   const [authSession, setAuthSession] = useState<AuthSession>(EMPTY_AUTH_SESSION)
   const [recordingProfiles, setRecordingProfiles] = useState<RecordingProfile[]>(normalizeRecordingProfiles(null))
   const [selectedRecordingProfileId, setSelectedRecordingProfileId] = useState<string>(NATIVE_RECORDING_PROFILE_ID)
+  const [appVersion, setAppVersion] = useState<string>('')
 
   const { platform, webcams, mics, windowsAudioDevices, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
@@ -124,7 +126,7 @@ export function RecorderPage() {
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
   const recorderWindowPreset =
-    isSettingsModalOpen || isImportProjectModalOpen ? 'settings' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+    isSettingsModalOpen ? 'settings' : isImportProjectModalOpen ? 'importProject' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -133,7 +135,7 @@ export function RecorderPage() {
   }, [authSession.isAuthenticated, authSession.user?.email, authSession.user?.name])
   const computerAudioTooltip = useMemo(() => {
     if (platform === 'darwin') {
-      return 'Ainda não implementado no macOS. Logo mais será implementado.'
+      return 'Not yet implemented on macOS. It will be implemented soon.'
     }
 
     return computerAudioSupportReason || 'Computer audio capture is not available right now.'
@@ -365,6 +367,10 @@ export function RecorderPage() {
     }
   }, [loadAuthSession])
 
+  useEffect(() => {
+    window.electronAPI.getVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion(''))
+  }, [])
+
   // Effect to manage the webcam preview stream
   useEffect(() => {
     const videoEl = webcamPreviewRef.current
@@ -500,6 +506,8 @@ export function RecorderPage() {
       setEncoderWarningStatus(status)
     })
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // @ts-ignore
   const resolveEncoderWarning = (decision: EncoderWarningDecision) => {
     if (
       decision === 'continue' &&
@@ -728,27 +736,28 @@ export function RecorderPage() {
     >
       <SelectTrigger
         variant="minimal"
-        className="w-auto min-w-[120px] max-w-[145px] h-9"
+        className="w-full h-8"
         aria-label="Select PC audio device"
       >
         <SelectValue asChild>
-          <div className="flex items-center gap-2 text-xs">
-            <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-6 w-6 shrink-0">
-              <Volume size={14} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
+              <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
             </IconShell>
             <span className={cn('truncate', !computerAudioEnabled && 'text-muted-foreground')}>
               {computerAudioEnabled
                 ? truncateRecorderLabel(
                     selectedComputerAudioId === 'default'
                       ? 'Default PC audio'
-                      : windowsAudioDevices.find((d) => d.id === selectedComputerAudioId)?.name || 'Default PC audio'
+                      : windowsAudioDevices.find((d) => d.id === selectedComputerAudioId)?.name || 'Default PC audio',
+                    20,
                   )
                 : 'No PC audio'}
             </span>
           </div>
         </SelectValue>
       </SelectTrigger>
-      <SelectContent side="bottom" avoidCollisions={false}>
+      <SelectContent side="right" avoidCollisions>
         <SelectItem value="none">No PC audio</SelectItem>
         <SelectItem value="default">Default PC audio</SelectItem>
         {windowsAudioDevices.map((d) => (
@@ -761,17 +770,17 @@ export function RecorderPage() {
   ) : (
     <div
       className={cn(
-        'flex h-9 items-center gap-2 rounded-md border border-border bg-card px-3',
+        'flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2',
         !computerAudioSupported && 'opacity-70',
       )}
       style={{ WebkitAppRegion: 'no-drag' }}
     >
-      <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-6 w-6 shrink-0">
-        <Volume size={14} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+      <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
+        <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
       </IconShell>
-      <div className="flex flex-col leading-none">
-        <span className="text-[11px] font-medium text-foreground">PC audio</span>
-        <span className="text-[10px] text-muted-foreground">
+      <div className="flex flex-col leading-none flex-1 min-w-0">
+        <span className="text-[10px] font-medium text-foreground">PC audio</span>
+        <span className="text-[9px] text-muted-foreground">
           {computerAudioEnabled ? 'Included' : computerAudioSupported ? 'Off' : 'Unsupported'}
         </span>
       </div>
@@ -779,6 +788,7 @@ export function RecorderPage() {
         checked={computerAudioEnabled}
         onCheckedChange={(c) => handleComputerAudioChange(c ? 'default' : 'none')}
         disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
+        className="scale-75"
       />
     </div>
   )
@@ -786,129 +796,174 @@ export function RecorderPage() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="relative h-full w-full overflow-hidden bg-transparent select-none">
-        <div className="absolute top-0 left-0 right-0 flex flex-col items-center pt-6">
-          <div data-interactive="true" className="relative max-w-[calc(100vw-24px)]">
-            {/* Main Control Bar */}
+        <div data-interactive="true" className="recorder-layout">
+          {/* Top Bar */}
+          <div className="recorder-topbar" style={{ WebkitAppRegion: 'drag' }}>
+            {/* Source Toggle */}
             <div
-              className={cn(
-                'relative flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-2xl',
-                'border-primary',
-              )}
-              style={{ WebkitAppRegion: 'drag' }}
+              className="flex items-center rounded-lg border border-border/50 bg-muted/45 p-0.5"
+              style={{ WebkitAppRegion: 'no-drag' }}
             >
+              <SourceButton
+                icon={<IconSwitch regular={DeviceDesktop} active={source === 'fullscreen'} className="h-4 w-4" />}
+                isActive={source === 'fullscreen'}
+                onClick={() => setSource('fullscreen')}
+                tooltip="Full Screen"
+                disabled={isRecording || actionInProgress !== 'none'}
+              />
+              <SourceButton
+                icon={<IconSwitch regular={Marquee2} active={source === 'area'} className="h-4 w-4" />}
+                isActive={source === 'area'}
+                onClick={() => setSource('area')}
+                tooltip="Area"
+                disabled={isRecording || actionInProgress !== 'none'}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-1.5" style={{ WebkitAppRegion: 'no-drag' }}>
+              {isRecording ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleStop}
+                      variant="destructive"
+                      size="icon"
+                      className="icon-hover h-8 w-8 rounded-md shadow-lg"
+                    >
+                      <Square size={14} fill="currentColor" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    Stop Recording
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleStart}
+                      disabled={isInitializing || actionInProgress !== 'none'}
+                      size="icon"
+                      className="icon-hover h-8 w-8 rounded-md shadow-lg"
+                    >
+                      <Video size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    Record Screen
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={handleImportProject}
+                    disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                    variant="secondary"
+                    size="icon"
+                    className="icon-hover h-8 w-8 rounded-md shadow-lg"
+                  >
+                    <FileImport size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                  Import Project
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Loader */}
+            <div className="w-6 h-6 flex items-center justify-center">
+              <Loader2
+                size={16}
+                className={cn(
+                  'animate-spin text-primary transition-opacity duration-300',
+                  actionInProgress !== 'none' || isInitializing ? 'opacity-100' : 'opacity-0',
+                )}
+              />
+            </div>
+
+            <div className="w-px h-6 bg-border/50" />
+
+            {/* Settings & Account */}
+            <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' }}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={handleOpenSettings}
+                    disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                    variant="secondary"
+                    size="icon"
+                    className="icon-hover h-7 w-7 rounded-md"
+                  >
+                    <Settings size={15} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                  Settings
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => {
+                      void handleOpenAccount()
+                    }}
+                    disabled={isInitializing || actionInProgress !== 'none' || isRecording}
+                    variant="secondary"
+                    size="icon"
+                    className="icon-hover h-7 w-7 cursor-pointer overflow-hidden rounded-lg border border-emerald-500/50 bg-background p-0 hover:bg-background"
+                  >
+                    {authSession.user?.picture ? (
+                      <img
+                        src={authSession.user.picture}
+                        alt={accountTooltip}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full rounded-[inherit] object-cover"
+                      />
+                    ) : (
+                      <UserCircle size={16} className="text-muted-foreground" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                  {accountTooltip}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            <div className="w-px h-6 bg-border/50" />
+
+            {/* Window Controls */}
+            <div className="flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' }}>
+              <button
+                onClick={() => window.electronAPI.minimizeWindow()}
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Minimize"
+              >
+                <Minus className="w-3.5 h-3.5" />
+              </button>
               <button
                 onClick={() => window.electronAPI.closeWindow()}
-                style={{ WebkitAppRegion: 'no-drag' }}
-                className="icon-hover absolute -right-2.5 -top-2.5 z-20 flex h-6 w-6 items-center justify-center rounded-md border border-destructive/30 bg-destructive/90 text-white shadow-lg transition-all hover:scale-110 hover:bg-destructive"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
                 aria-label="Close Recorder"
                 disabled={isRecording || actionInProgress !== 'none'}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
+            </div>
+          </div>
 
-              {/* Source Toggle */}
-              <div
-                className="flex items-center rounded-lg border border-border/50 bg-muted/45 p-1"
-                style={{ WebkitAppRegion: 'no-drag' }}
-              >
-                <SourceButton
-                  icon={<IconSwitch regular={DeviceDesktop} active={source === 'fullscreen'} className="h-4 w-4" />}
-                  isActive={source === 'fullscreen'}
-                  onClick={() => setSource('fullscreen')}
-                  tooltip="Full Screen"
-                  disabled={isRecording || actionInProgress !== 'none'}
-                />
-                <SourceButton
-                  icon={<IconSwitch regular={Marquee2} active={source === 'area'} className="h-4 w-4" />}
-                  isActive={source === 'area'}
-                  onClick={() => setSource('area')}
-                  tooltip="Area"
-                  disabled={isRecording || actionInProgress !== 'none'}
-                />
-              </div>
-
-              <div className="w-px h-8 bg-border/50"></div>
-
-              {/* Device Selectors */}
-              <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' }}>
-                <Select
-                  value={selectedDisplayId}
-                  onValueChange={setSelectedDisplayId}
-                  onOpenChange={handleToolbarSelectOpenChange('display')}
-                  disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
-                >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[145px] h-9"
-                    aria-label="Select display"
-                  >
-                    <SelectValue asChild>
-                      <div className="flex items-center gap-2 text-xs">
-                        <IconShell active className="h-6 w-6 shrink-0">
-                          <DeviceDesktop size={14} />
-                        </IconShell>
-                        <span className="truncate">
-                          {truncateRecorderLabel(
-                            displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...',
-                          )}
-                        </span>
-                      </div>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent side="bottom" avoidCollisions={false}>
-                    {displays.map((d) => (
-                      <SelectItem key={d.id} value={String(d.id)}>
-                        {truncateRecorderLabel(d.name)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={selectedWebcamId}
-                  onValueChange={handleSelectionChange(setSelectedWebcamId, 'recorder.selectedWebcamId')}
-                  onOpenChange={handleToolbarSelectOpenChange('webcam')}
-                  disabled={isRecording || actionInProgress !== 'none'}
-                >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[145px] h-9"
-                    aria-label="Select webcam"
-                  >
-                    <SelectValue asChild>
-                      <div className="flex items-center gap-2 text-xs">
-                        <IconShell
-                          active={selectedWebcamId !== 'none'}
-                          disabled={selectedWebcamId === 'none'}
-                          className="h-6 w-6 shrink-0"
-                        >
-                          {selectedWebcamId !== 'none' ? (
-                            <IconSwitch
-                              regular={DeviceComputerCamera}
-                              solid={CameraSolid}
-                              active
-                              className="h-3.5 w-3.5"
-                            />
-                          ) : (
-                            <DeviceComputerCameraOff size={14} className="text-muted-foreground/70" />
-                          )}
-                        </IconShell>
-                        <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
-                          {truncateRecorderLabel(webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam')}
-                        </span>
-                      </div>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent side="bottom" avoidCollisions={false}>
-                    <SelectItem value="none">No webcam</SelectItem>
-                    {webcams.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {truncateRecorderLabel(c.name)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
+          {/* Body: Sidebar + Main */}
+          <div className="recorder-body">
+            {/* Sidebar */}
+            <div className="recorder-sidebar" style={{ WebkitAppRegion: 'no-drag' }}>
+              {/* Microphone */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">Microphone</span>
                 <Select
                   value={selectedMicId}
                   onValueChange={handleSelectionChange(setSelectedMicId, 'recorder.selectedMicId')}
@@ -917,29 +972,29 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[120px] max-w-[145px] h-9"
+                    className="w-full h-8"
                     aria-label="Select microphone"
                   >
                     <SelectValue asChild>
-                      <div className="flex items-center gap-2 text-xs">
+                      <div className="flex items-center gap-1.5 text-[11px]">
                         <IconShell
                           active={selectedMicId !== 'none'}
                           disabled={selectedMicId === 'none'}
-                          className="h-6 w-6 shrink-0"
+                          className="h-5 w-5 shrink-0"
                         >
                           {selectedMicId !== 'none' ? (
-                            <IconSwitch regular={Microphone} solid={MicrophoneSolid} active className="h-3.5 w-3.5" />
+                            <IconSwitch regular={Microphone} solid={MicrophoneSolid} active className="h-3 w-3" />
                           ) : (
-                            <MicrophoneOff size={14} className="text-muted-foreground/70" />
+                            <MicrophoneOff size={12} className="text-muted-foreground/70" />
                           )}
                         </IconShell>
                         <span className={cn('truncate', selectedMicId === 'none' && 'text-muted-foreground')}>
-                          {truncateRecorderLabel(mics.find((m) => m.id === selectedMicId)?.name || 'No microphone')}
+                          {truncateRecorderLabel(mics.find((m) => m.id === selectedMicId)?.name || 'No microphone', 20)}
                         </span>
                       </div>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent side="bottom" avoidCollisions={false}>
+                  <SelectContent side="right" avoidCollisions>
                     <SelectItem value="none">No microphone</SelectItem>
                     {mics.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
@@ -948,18 +1003,113 @@ export function RecorderPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
 
+              {/* Display */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">Display</span>
+                <Select
+                  value={selectedDisplayId}
+                  onValueChange={setSelectedDisplayId}
+                  onOpenChange={handleToolbarSelectOpenChange('display')}
+                  disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-full h-8"
+                    aria-label="Select display"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <IconShell active className="h-5 w-5 shrink-0">
+                          <DeviceDesktop size={12} />
+                        </IconShell>
+                        <span className="truncate">
+                          {truncateRecorderLabel(
+                            displays.find((d) => String(d.id) === selectedDisplayId)?.name || '...',
+                            20,
+                          )}
+                        </span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent side="right" avoidCollisions>
+                    {displays.map((d) => (
+                      <SelectItem key={d.id} value={String(d.id)}>
+                        {truncateRecorderLabel(d.name)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Webcam */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">Webcam</span>
+                <Select
+                  value={selectedWebcamId}
+                  onValueChange={handleSelectionChange(setSelectedWebcamId, 'recorder.selectedWebcamId')}
+                  onOpenChange={handleToolbarSelectOpenChange('webcam')}
+                  disabled={isRecording || actionInProgress !== 'none'}
+                >
+                  <SelectTrigger
+                    variant="minimal"
+                    className="w-full h-8"
+                    aria-label="Select webcam"
+                  >
+                    <SelectValue asChild>
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <IconShell
+                          active={selectedWebcamId !== 'none'}
+                          disabled={selectedWebcamId === 'none'}
+                          className="h-5 w-5 shrink-0"
+                        >
+                          {selectedWebcamId !== 'none' ? (
+                            <IconSwitch
+                              regular={DeviceComputerCamera}
+                              solid={CameraSolid}
+                              active
+                              className="h-3 w-3"
+                            />
+                          ) : (
+                            <DeviceComputerCameraOff size={12} className="text-muted-foreground/70" />
+                          )}
+                        </IconShell>
+                        <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
+                          {truncateRecorderLabel(webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam', 20)}
+                        </span>
+                      </div>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent side="right" avoidCollisions>
+                    <SelectItem value="none">No webcam</SelectItem>
+                    {webcams.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {truncateRecorderLabel(c.name)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Computer Audio */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">PC Audio</span>
                 {!computerAudioSupported ? (
                   <Tooltip>
                     <TooltipTrigger asChild>{computerAudioControl}</TooltipTrigger>
-                    <TooltipContent side="bottom" sideOffset={12} className="px-3 py-1.5 text-xs font-medium rounded-md">
+                    <TooltipContent side="right" sideOffset={8} className="px-3 py-1.5 text-xs font-medium rounded-md">
                       {computerAudioTooltip}
                     </TooltipContent>
                   </Tooltip>
                 ) : (
                   computerAudioControl
                 )}
+              </div>
 
+              {/* Recording Profile */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">Profile</span>
                 <Select
                   value={selectedRecordingProfile.id}
                   onValueChange={handleProfileChange}
@@ -968,19 +1118,19 @@ export function RecorderPage() {
                 >
                   <SelectTrigger
                     variant="minimal"
-                    className="w-auto min-w-[210px] max-w-[260px] h-9"
+                    className="w-full h-8"
                     aria-label="Select recording profile"
                   >
                     <SelectValue asChild>
-                      <div className="flex items-center gap-2 text-xs">
-                        <IconShell active className="h-6 w-6 shrink-0">
-                          <Settings size={14} />
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <IconShell active className="h-5 w-5 shrink-0">
+                          <Settings size={12} />
                         </IconShell>
                         <span className="truncate">{getRecordingProfileLabel(selectedRecordingProfile)}</span>
                       </div>
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent side="bottom" avoidCollisions={false}>
+                  <SelectContent side="right" avoidCollisions>
                     {recordingProfiles.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>
                         {getRecordingProfileLabel(profile)}
@@ -994,141 +1144,25 @@ export function RecorderPage() {
                 </Select>
               </div>
 
-              <div className="w-px h-8 bg-border/50"></div>
-              {/* Action Buttons */}
-              <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' }}>
-                <div className="flex items-center gap-2">
-                  {isRecording ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={handleStop}
-                          variant="destructive"
-                          size="icon"
-                          className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                        >
-                          <Square size={16} fill="currentColor" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="bottom"
-                        sideOffset={12}
-                        className="px-3 py-1.5 text-xs font-medium rounded-md"
-                      >
-                        Stop Recording
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={handleStart}
-                          disabled={isInitializing || actionInProgress !== 'none'}
-                          size="icon"
-                          className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                        >
-                          <Video size={18} />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent
-                        side="bottom"
-                        sideOffset={12}
-                        className="px-3 py-1.5 text-xs font-medium rounded-md"
-                      >
-                        Record Screen
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleImportProject}
-                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                        variant="secondary"
-                        size="icon"
-                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                      >
-                        <FileImport size={18} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      sideOffset={12}
-                      className="px-3 py-1.5 text-xs font-medium rounded-md"
-                    >
-                      Import Project
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleOpenSettings}
-                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                        variant="secondary"
-                        size="icon"
-                        className="icon-hover h-10 w-10 rounded-md shadow-lg"
-                      >
-                        <Settings size={18} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      sideOffset={12}
-                      className="px-3 py-1.5 text-xs font-medium rounded-md"
-                    >
-                      Settings
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={() => {
-                          void handleOpenAccount()
-                        }}
-                        disabled={isInitializing || actionInProgress !== 'none' || isRecording}
-                        variant="secondary"
-                        size="icon"
-                        className="icon-hover h-10 w-10 cursor-pointer overflow-hidden rounded-xl border-2 border-emerald-500 bg-background p-0 shadow-lg hover:bg-background"
-                      >
-                        {authSession.user?.picture ? (
-                          <img
-                            src={authSession.user.picture}
-                            alt={accountTooltip}
-                            referrerPolicy="no-referrer"
-                            className="h-full w-full rounded-[inherit] object-cover"
-                          />
-                        ) : (
-                          <UserCircle size={20} className="text-muted-foreground" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent
-                      side="bottom"
-                      sideOffset={12}
-                      className="px-3 py-1.5 text-xs font-medium rounded-md"
-                    >
-                      {accountTooltip}
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <div className="w-8 h-10 flex items-center justify-center">
-                  <Loader2
-                    size={20}
-                    className={cn(
-                      'animate-spin text-primary transition-opacity duration-300',
-                      actionInProgress !== 'none' || isInitializing ? 'opacity-100' : 'opacity-0',
-                    )}
-                  />
-                </div>
-              </div>
+              {/* Version */}
+              {appVersion && (
+                <div className="recorder-sidebar-version">v{appVersion}</div>
+              )}
             </div>
 
-            {/* Webcam Preview */}
-            {isWebcamPreviewVisible && (
-              <div className="mx-auto mt-4 aspect-square w-48 overflow-hidden rounded-lg bg-black shadow-xl">
-                <video ref={webcamPreviewRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+            {/* Main Content - Webcam Preview / No Signal Placeholder */}
+            <div className="recorder-main">
+              <div className="webcam-preview-container">
+                {isWebcamPreviewVisible ? (
+                  <video ref={webcamPreviewRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground/40">
+                    <DeviceComputerCameraOff size={40} />
+                    <span className="text-xs">No webcam preview</span>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -1182,7 +1216,7 @@ const SourceButton = ({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { icon: React.ReactNode; isActive: boolean; tooltip?: string }) => (
   <button
     className={cn(
-      'icon-hover flex h-10 w-10 items-center justify-center rounded-md transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+      'icon-hover flex h-8 w-8 items-center justify-center rounded-md transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring',
       isActive
         ? 'bg-background text-primary shadow-sm'
         : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
@@ -1190,6 +1224,6 @@ const SourceButton = ({
     title={tooltip}
     {...props}
   >
-    <span className="flex h-8 w-8 items-center justify-center">{icon}</span>
+    <span className="flex h-6 w-6 items-center justify-center">{icon}</span>
   </button>
 )
