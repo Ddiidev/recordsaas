@@ -48,13 +48,14 @@ export function EditorPage() {
     seekForward,
     finishAssetTimelineEdit,
   } = useEditorStore.getState()
-  const { presetSaveStatus, duration, isPreviewFullScreen, assetTimelineEditing, editingAssetName } = useEditorStore(
+  const { presetSaveStatus, duration, isPreviewFullScreen, assetTimelineEditing, editingAssetName, editingAssetIsImage } = useEditorStore(
     useShallow((state) => ({
       presetSaveStatus: state.presetSaveStatus,
       duration: state.duration,
       isPreviewFullScreen: state.isPreviewFullScreen,
-      assetTimelineEditing: state.assetTimelineEditing,
-      editingAssetName: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name : null,
+        assetTimelineEditing: state.assetTimelineEditing,
+        editingAssetName: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name : null,
+        editingAssetIsImage: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.kind === 'image' : false,
     })),
   )
   const { undo, redo } = useEditorStore.temporal.getState()
@@ -557,7 +558,7 @@ export function EditorPage() {
             >
               <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} isTimelineScrubbing={isTimelineScrubbing} />
             </div>
-            <div className={cn('flex-shrink-0', isPreviewFullScreen && 'hidden')}>
+            <div className={cn('flex-shrink-0', (isPreviewFullScreen || editingAssetIsImage) && 'hidden')}>
               <PreviewControls />
             </div>
             <div

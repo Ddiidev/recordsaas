@@ -89,6 +89,7 @@ export const Preview = memo(
       floatingMonitors,
       floatingMonitorRegions,
       updateFloatingMonitor,
+      assetTimelineEditing,
       changeSoundRegions,
       zoomRegions,
       cutRegions,
@@ -130,6 +131,7 @@ export const Preview = memo(
         floatingMonitors: state.floatingMonitors,
         floatingMonitorRegions: state.floatingMonitorRegions,
         updateFloatingMonitor: state.updateFloatingMonitor,
+        assetTimelineEditing: state.assetTimelineEditing,
         changeSoundRegions: state.changeSoundRegions,
         zoomRegions: state.zoomRegions,
         cutRegions: state.cutRegions,
@@ -174,6 +176,10 @@ export const Preview = memo(
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const floatingMonitorVideoRefs = useRef(new Map<string, HTMLVideoElement>())
     const floatingMonitorImageRefs = useRef(new Map<string, HTMLImageElement>())
+    const assetImageRef = useRef<HTMLImageElement>(null)
+    const isEditingImageAsset = Boolean(
+      assetTimelineEditing && floatingMonitors[assetTimelineEditing.monitorId]?.kind === 'image',
+    )
     const animationFrameId = useRef<number>()
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
@@ -440,12 +446,20 @@ export const Preview = memo(
       const canvas = canvasRef.current
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
+      const assetImage = assetImageRef.current
       const state = useEditorStore.getState()
       const ctx = canvas?.getContext('2d')
-      if (!canvas || !video || !ctx || !state.videoDimensions.width) {
+      const primarySource = isEditingImageAsset ? assetImage : video
+      if (!canvas || !primarySource || !ctx || !state.videoDimensions.width) {
         if (state.isPlaying) animationFrameId.current = requestAnimationFrame(renderCanvas)
         return
       }
+
+      if (isEditingImageAsset) {
+        drawScene(ctx, state, primarySource, null, currentTime, canvas.width, canvas.height, bgImage)
+        return
+      }
+      if (!video) return
 
       if (webcamVideo && !isTimelineScrubbing) {
         webcamVideo.playbackRate = video.playbackRate
@@ -487,7 +501,7 @@ export const Preview = memo(
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
-    }, [videoRef, bgImage, isTimelineScrubbing])
+    }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset, currentTime])
 
     useEffect(() => {
       if (isPlaying) {
@@ -996,19 +1010,29 @@ export const Preview = memo(
           )}
         </div>
 
-        <video
-          ref={videoRef}
-          src={videoUrl || undefined}
-          onTimeUpdate={handleTimeUpdate}
-          onSeeking={handleVideoSeeking}
-          onSeeked={handleVideoSeeked}
-          onLoadedMetadata={handleLoadedMetadata}
-          onError={handleVideoError}
-          onPlay={handleVideoPlay}
-          onPause={handleVideoPause}
-          onEnded={handleVideoEnded}
-          style={{ display: 'none' }}
-        />
+        {isEditingImageAsset ? (
+          <img
+            ref={assetImageRef}
+            src={videoUrl || undefined}
+            alt=""
+            onLoad={(event) => setVideoDimensions({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+            style={{ display: 'none' }}
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            src={videoUrl || undefined}
+            onTimeUpdate={handleTimeUpdate}
+            onSeeking={handleVideoSeeking}
+            onSeeked={handleVideoSeeked}
+            onLoadedMetadata={handleLoadedMetadata}
+            onError={handleVideoError}
+            onPlay={handleVideoPlay}
+            onPause={handleVideoPause}
+            onEnded={handleVideoEnded}
+            style={{ display: 'none' }}
+          />
+        )}
         {audioUrl && (
           <audio
             ref={recordingAudioRef}
@@ -1082,7 +1106,7 @@ export const Preview = memo(
         )}
 
         {/* Control bar */}
-        {videoUrl && (
+        {videoUrl && !isEditingImageAsset && (
           <div
             className={cn(
               'w-full mt-3 transition-opacity duration-200',

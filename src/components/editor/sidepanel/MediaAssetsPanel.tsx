@@ -198,21 +198,19 @@ export function MediaAssetsPanel() {
                 ) : (
                   <img src={monitor.url} alt="" className="mt-3 aspect-video w-full rounded-md bg-black object-cover" />
                 )}
-                {isVideo && (
-                  <Button
-                    variant="outline"
-                    onClick={() => beginAssetTimelineEdit(monitor.id)}
-                    className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
-                  >
-                    <Video className="h-4 w-4 text-violet-500" />
-                    Edit in timeline
-                  </Button>
-                )}
+                <Button
+                  variant="outline"
+                  onClick={() => beginAssetTimelineEdit(monitor.id)}
+                  className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                >
+                  <Video className="h-4 w-4 text-violet-500" />
+                  Edit in timeline
+                </Button>
                 <Button
                   variant="outline"
                   onClick={() => addFloatingMonitorRegion(monitor.id, { startTime: currentTime })}
                   disabled={monitor.timelineDuration <= 0}
-                  className={`${isVideo ? 'mt-2' : 'mt-3'} w-full gap-2 border-violet-500/30 hover:bg-violet-500/10`}
+                  className="mt-2 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
                 >
                   Add monitor to main timeline
                 </Button>
