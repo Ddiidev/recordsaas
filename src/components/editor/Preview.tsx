@@ -497,7 +497,19 @@ export const Preview = memo(
             { source: monitorImage, width: monitorImage.naturalWidth, height: monitorImage.naturalHeight },
           ]),
       ])
-      drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage, undefined, undefined, floatingMonitorSources)
+      drawScene(
+        ctx,
+        state,
+        video,
+        webcamVideo,
+        video.currentTime,
+        canvas.width,
+        canvas.height,
+        bgImage,
+        undefined,
+        undefined,
+        floatingMonitorSources,
+      )
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
@@ -1001,6 +1013,7 @@ export const Preview = memo(
             <FloatingMonitorOverlayEditor
               canvasRef={canvasRef}
               regions={floatingMonitorRegions}
+              monitors={floatingMonitors}
               currentTime={previewTime}
               timelineLanes={timelineLanes}
               selectedRegionId={selectedRegionId}
@@ -1015,7 +1028,9 @@ export const Preview = memo(
             ref={assetImageRef}
             src={videoUrl || undefined}
             alt=""
-            onLoad={(event) => setVideoDimensions({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+            onLoad={(event) =>
+              setVideoDimensions({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })
+            }
             style={{ display: 'none' }}
           />
         ) : (
@@ -1091,16 +1106,19 @@ export const Preview = memo(
                 else floatingMonitorVideoRefs.current.delete(monitor.id)
               }}
               src={monitor.url}
-            muted
-            playsInline
-            preload="auto"
-            onLoadedMetadata={(event) => {
-              const duration = event.currentTarget.duration
-              if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                updateFloatingMonitor(monitor.id, { duration, timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration })
-              }
-            }}
-            style={{ display: 'none' }}
+              muted
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(event) => {
+                const duration = event.currentTarget.duration
+                if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                  updateFloatingMonitor(monitor.id, {
+                    duration,
+                    timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
+                  })
+                }
+              }}
+              style={{ display: 'none' }}
             />
           ),
         )}

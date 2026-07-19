@@ -323,6 +323,7 @@ export interface FloatingMonitor {
   path: string
   url: string
   name: string
+  originalName: string
   duration: number
   timelineStart: number
   timelineDuration: number

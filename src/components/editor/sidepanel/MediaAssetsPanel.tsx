@@ -143,7 +143,9 @@ export function MediaAssetsPanel() {
   const renderCategoryContent = () => {
     if (activeCategory === 'video' || activeCategory === 'image') {
       const isVideo = activeCategory === 'video'
-      const visualAssets = Object.values(floatingMonitors).filter((monitor) => (monitor.kind || 'video') === activeCategory)
+      const visualAssets = Object.values(floatingMonitors).filter(
+        (monitor) => (monitor.kind || 'video') === activeCategory,
+      )
       return (
         <div className="space-y-3">
           <Button
@@ -152,13 +154,21 @@ export function MediaAssetsPanel() {
             className="icon-hover w-full justify-center gap-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <Upload className={cn('h-4 w-4', (isVideo ? isImportingVideo : isImportingImage) && 'animate-pulse')} />
-            {isVideo ? (isImportingVideo ? 'Importing...' : 'Import Video') : (isImportingImage ? 'Importing...' : 'Import Image')}
+            {isVideo
+              ? isImportingVideo
+                ? 'Importing...'
+                : 'Import Video'
+              : isImportingImage
+                ? 'Importing...'
+                : 'Import Image'}
           </Button>
 
           {visualAssets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
               <p className="text-sm font-medium text-foreground">No {isVideo ? 'video' : 'image'} assets</p>
-              <p className="mt-1 text-xs text-muted-foreground">Import {isVideo ? 'a video and edit its timeline' : 'an image'}, then add it as a monitor.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Import {isVideo ? 'a video and edit its timeline' : 'an image'}, then add it as a monitor.
+              </p>
             </div>
           ) : (
             visualAssets.map((monitor) => (
@@ -190,7 +200,10 @@ export function MediaAssetsPanel() {
                     onLoadedMetadata={(event) => {
                       const duration = event.currentTarget.duration
                       if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                        updateFloatingMonitor(monitor.id, { duration, timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration })
+                        updateFloatingMonitor(monitor.id, {
+                          duration,
+                          timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
+                        })
                       }
                     }}
                     className="mt-3 aspect-video w-full rounded-md bg-black object-cover"
@@ -204,7 +217,7 @@ export function MediaAssetsPanel() {
                   className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
                 >
                   <Video className="h-4 w-4 text-violet-500" />
-                  Edit in timeline
+                  Edit copy in timeline
                 </Button>
                 <Button
                   variant="outline"

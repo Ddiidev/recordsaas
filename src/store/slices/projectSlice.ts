@@ -181,6 +181,12 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         path,
         url: toMediaUrl(path) || '',
         name: typeof monitor.name === 'string' && monitor.name.length > 0 ? monitor.name : fallbackNameFromPath(path),
+        originalName:
+          typeof monitor.originalName === 'string' && monitor.originalName.length > 0
+            ? monitor.originalName
+            : typeof monitor.name === 'string' && monitor.name.length > 0
+              ? monitor.name
+              : fallbackNameFromPath(path),
         duration,
         timelineStart,
         timelineDuration,
@@ -1272,6 +1278,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         path: normalizedPath,
         url: toMediaUrl(normalizedPath) || '',
         name: name.trim() || fallbackNameFromPath(normalizedPath),
+        originalName: name.trim() || fallbackNameFromPath(normalizedPath),
         duration: kind === 'image' ? 5 : 0,
         timelineStart: 0,
         timelineDuration: kind === 'image' ? 5 : 0,
@@ -1316,8 +1323,19 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   beginAssetTimelineEdit: (id) => {
     set((state) => {
       if (state.assetTimelineEditing) return
-      const monitor = state.floatingMonitors[id]
-      if (!monitor) return
+      const sourceMonitor = state.floatingMonitors[id]
+      if (!sourceMonitor) return
+
+      const cloneId = `floating-monitor-${Date.now()}`
+      const originalName = sourceMonitor.originalName || sourceMonitor.name
+      const monitor: FloatingMonitor = {
+        ...cloneSerializable(sourceMonitor),
+        id: cloneId,
+        name: `${originalName} Edit`,
+        originalName,
+        timeline: cloneSerializable(sourceMonitor.timeline),
+      }
+      state.floatingMonitors[cloneId] = monitor
 
       const inheritedDuration = monitor.path === state.videoPath ? state.duration : 0
       const sourceDuration = monitor.duration || inheritedDuration

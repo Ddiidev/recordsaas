@@ -1,6 +1,6 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { ArrowsMove } from '@icons'
-import type { FloatingMonitorRegion, TimelineLane } from '../../../types'
+import type { FloatingMonitor, FloatingMonitorRegion, TimelineLane } from '../../../types'
 import { isRegionActiveAtTime } from '../../../lib/timeline-lanes'
 
 type CanvasBox = { left: number; top: number; width: number; height: number }
@@ -23,6 +23,7 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 export function FloatingMonitorOverlayEditor({
   canvasRef,
   regions,
+  monitors,
   currentTime,
   timelineLanes,
   selectedRegionId,
@@ -31,6 +32,7 @@ export function FloatingMonitorOverlayEditor({
 }: {
   canvasRef: RefObject<HTMLCanvasElement | null>
   regions: Record<string, FloatingMonitorRegion>
+  monitors: Record<string, FloatingMonitor>
   currentTime: number
   timelineLanes: TimelineLane[]
   selectedRegionId: string | null
@@ -124,6 +126,8 @@ export function FloatingMonitorOverlayEditor({
     <>
       {activeRegions.map((region) => {
         const isSelected = selectedRegionId === region.id
+        const monitor = monitors[region.monitorId]
+        const badgeName = monitor?.originalName || monitor?.name || 'Asset'
         return (
           <div
             key={region.id}
@@ -139,8 +143,8 @@ export function FloatingMonitorOverlayEditor({
               height: box.height * region.height,
             }}
           >
-            <span className="absolute -top-6 left-0 rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white">
-              Monitor
+            <span className="absolute -top-6 right-0 max-w-[calc(100%_-_8px)] truncate rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+              {badgeName}
             </span>
             {isSelected && (
               <>
