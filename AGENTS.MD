@@ -162,7 +162,7 @@ Canonical contract fields:
 - `MediaAudioClip`: `id`, `path` (runtime absolute), `url` (`media://...`), `name`, `duration`, `startTime`.
 - `MediaAudioRegion`: `id`, `type='media-audio'`, `laneId`, `startTime`, `duration`, `sourceStart`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
 - `ChangeSoundRegion`: `id`, `type='change-sound'`, `laneId`, `startTime`, `duration`, `sourceKey='recording-mic' | 'system-audio'`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
-- `FloatingMonitor`: imported MP4/MOV/M4V visual asset with independent trimmed source timeline (`timelineStart`, `timelineDuration`) and normalized overlay geometry. `FloatingMonitorRegion` places that trim on the main timeline with `monitorId`, `sourceStart`, lane precedence, and duration.
+- `FloatingMonitor`: imported visual asset with an independent temporary editing timeline (`timelineStart`, `timelineDuration`) and normalized overlay geometry. `FloatingMonitorRegion` places the raw asset source on the main timeline with `monitorId`, `sourceStart`, lane precedence, duration, crop, border/radius, flip, and shadow settings. Its temporary editor must never replace or paint over the main frame while the region is a monitor; only explicit `swapWithMain` may occupy the main frame.
 
 Core business rules:
 1. Media audio playback follows `mediaAudioRegions` and is independent from recording-mic source.
@@ -172,7 +172,7 @@ Core business rules:
 5. Computer audio follows the main recording timeline, supports whole-track editor volume/mute, and can be targeted by `change-sound` regions.
 6. Final mix includes recording + optional computer audio + media when present.
 7. Image media can remain placeholder if no render/export behavior is implemented.
-8. Imported video assets are visual floating monitors. Open a monitor from `Media > Video` to trim its own source timeline, then add it to the main timeline. Preview and WebCodecs export must render active monitor regions; video-audio mixing remains owned by the audio asset flow.
+8. Imported video/image assets are visual floating monitors. Open one from `Media` to edit its temporary timeline, then add it to the main timeline. Preview and WebCodecs export render the raw source only inside active monitor regions; monitor crop/style controls match the camera control model, while video-audio mixing remains owned by the audio asset flow.
 
 Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.

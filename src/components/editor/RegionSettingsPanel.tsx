@@ -1,5 +1,5 @@
 // Settings panel for editing timeline regions (zoom, cut, and blur)
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import type {
   TimelineRegion,
@@ -25,13 +25,22 @@ import {
   Refresh,
   Music,
   AdjustmentsHorizontal,
+  Marquee2,
+  Square,
+  SquareToggle,
+  Wand,
 } from '@icons'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
-import { BLUR_REGION } from '../../lib/constants'
+import { BLUR_REGION, DEFAULTS } from '../../lib/constants'
+import { normalizeWebcamCrop } from '../../lib/webcam'
+import { hexToRgb, rgbaToHexAlpha } from '../../lib/utils'
 import { Switch } from '../ui/switch'
+import { ColorPicker } from '../ui/color-picker'
+import { Collapse } from '../ui/collapse'
+import { WebcamCropEditor } from './preview/WebcamCropEditor'
 
 interface RegionSettingsPanelProps {
   region: TimelineRegion
@@ -602,18 +611,96 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
   )
 }
 
+const MonitorValueSlider = ({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix = '',
+  displayValue,
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  suffix?: string
+  displayValue?: string
+  onChange: (value: number) => void
+}) => (
+  <div className="space-y-2.5">
+    <div className="flex items-center justify-between">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-xs font-semibold tabular-nums text-violet-500">{displayValue ?? `${value}${suffix}`}</span>
+    </div>
+    <Slider min={min} max={max} step={step} value={value} onChange={onChange} />
+  </div>
+)
+
 function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) {
-  const { monitor, updateRegion, deleteRegion } = useEditorStore((state) => ({
+  const { monitor, currentTime, updateRegion, deleteRegion } = useEditorStore((state) => ({
     monitor: state.floatingMonitors[region.monitorId],
+    currentTime: state.currentTime,
     updateRegion: state.updateRegion,
     deleteRegion: state.deleteRegion,
   }))
+  const sourceTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
+  const style = {
+    borderRadius: Number.isFinite(region.borderRadius)
+      ? region.borderRadius
+      : DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue,
+    isFlipped: region.isFlipped === true,
+    border:
+      typeof region.border === 'boolean' ? region.border : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue,
+    borderWidth: Number.isFinite(region.borderWidth)
+      ? region.borderWidth
+      : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue,
+    borderColor: region.borderColor || DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+    shadowBlur: Number.isFinite(region.shadowBlur)
+      ? region.shadowBlur
+      : DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+    shadowOffsetX: Number.isFinite(region.shadowOffsetX)
+      ? region.shadowOffsetX
+      : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+    shadowOffsetY: Number.isFinite(region.shadowOffsetY)
+      ? region.shadowOffsetY
+      : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+    shadowColor: region.shadowColor || DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
+  }
+  const { hex: borderHex, alpha: borderAlpha } = useMemo(() => rgbaToHexAlpha(style.borderColor), [style.borderColor])
+  const { hex: shadowHex, alpha: shadowAlpha } = useMemo(() => rgbaToHexAlpha(style.shadowColor), [style.shadowColor])
+
+  const updateCrop = (updates: Partial<FloatingMonitorRegion['crop']>) =>
+    updateRegion(region.id, { crop: normalizeWebcamCrop(updates, region.crop) })
+  const updateRgbaColor = (hex: string, alpha: number, field: 'borderColor' | 'shadowColor') => {
+    const rgb = hexToRgb(hex)
+    if (!rgb) return
+    updateRegion(region.id, { [field]: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})` })
+  }
+  const resetStyle = () =>
+    updateRegion(region.id, {
+      borderRadius: DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue,
+      isFlipped: DEFAULTS.FLOATING_MONITOR.STYLE.FLIP.defaultValue,
+      border: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue,
+      borderWidth: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue,
+      borderColor: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+    })
+  const resetCrop = () => updateRegion(region.id, { crop: normalizeWebcamCrop(null) })
+  const resetEffects = () =>
+    updateRegion(region.id, {
+      shadowBlur: DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+      shadowOffsetX: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+      shadowOffsetY: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+      shadowColor: DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
+    })
 
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
         <p className="text-sm font-medium text-foreground">{monitor?.name || 'Floating monitor'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">Arraste no preview. Ajuste tamanho, crop e swap aqui.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Arraste no preview. Ajuste layout, estilo, crop e swap.</p>
       </div>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
@@ -628,41 +715,180 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
           onChange={(value) => updateRegion(region.id, { sourceStart: value })}
         />
       </div>
-      <div className="space-y-3">
-        <p className="text-sm font-semibold text-sidebar-foreground">Monitor layout</p>
-        {([
-          ['x', 'Horizontal position'],
-          ['y', 'Vertical position'],
-          ['width', 'Width'],
-          ['height', 'Height'],
-        ] as const).map(([key, label]) => (
-          <div key={key} className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{label}</span>
-              <span className="font-semibold text-violet-500">{Math.round(region[key] * 100)}%</span>
+      <Collapse title="Layout" description="Posição e tamanho do monitor" defaultOpen>
+        <div className="space-y-4">
+          {(
+            [
+              ['x', 'Horizontal position'],
+              ['y', 'Vertical position'],
+              ['width', 'Width'],
+              ['height', 'Height'],
+            ] as const
+          ).map(([key, label]) => (
+            <div key={key} className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{label}</span>
+                <span className="font-semibold text-violet-500">{Math.round(region[key] * 100)}%</span>
+              </div>
+              <Slider
+                min={key === 'width' || key === 'height' ? 0.1 : 0}
+                max={1}
+                step={0.01}
+                value={region[key]}
+                onChange={(value) => updateRegion(region.id, { [key]: value })}
+              />
             </div>
-            <Slider min={key === 'width' || key === 'height' ? 0.1 : 0} max={1} step={0.01} value={region[key]} onChange={(value) => updateRegion(region.id, { [key]: value })} />
+          ))}
+        </div>
+      </Collapse>
+      <Collapse title="Style" description="Borda, cantos e espelhamento" icon={<Square />} onReset={resetStyle}>
+        <div className="space-y-5">
+          <MonitorValueSlider
+            label="Corner radius"
+            value={style.borderRadius}
+            min={DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.min}
+            max={DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.max}
+            step={DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.step}
+            suffix="%"
+            onChange={(borderRadius) => updateRegion(region.id, { borderRadius })}
+          />
+          <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
+            <span className="flex items-center gap-2.5">
+              <SquareToggle className="h-4 w-4 text-violet-500" />
+              Flip horizontal
+            </span>
+            <Switch checked={style.isFlipped} onCheckedChange={(isFlipped) => updateRegion(region.id, { isFlipped })} />
           </div>
-        ))}
-      </div>
-      <div className="space-y-3">
-        <p className="text-sm font-semibold text-sidebar-foreground">Crop</p>
-        {(['top', 'right', 'bottom', 'left'] as const).map((edge) => (
-          <div key={edge} className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span className="capitalize">{edge}</span>
-              <span className="font-semibold text-violet-500">{Math.round(region.crop[edge] * 100)}%</span>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
+              <span className="flex items-center gap-2.5">
+                <Square className="h-4 w-4 text-violet-500" />
+                Border
+              </span>
+              <Switch checked={style.border} onCheckedChange={(border) => updateRegion(region.id, { border })} />
             </div>
-            <Slider min={0} max={0.9} step={0.01} value={region.crop[edge]} onChange={(value) => updateRegion(region.id, { crop: { ...region.crop, [edge]: value } })} />
+            {style.border && (
+              <div className="space-y-4 pl-7">
+                <MonitorValueSlider
+                  label="Thickness"
+                  value={style.borderWidth}
+                  min={DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.min}
+                  max={DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.max}
+                  step={DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.step}
+                  suffix="px"
+                  onChange={(borderWidth) => updateRegion(region.id, { borderWidth })}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                  <ColorPicker
+                    label="Color"
+                    value={borderHex}
+                    onChange={(value) => updateRgbaColor(value, borderAlpha, 'borderColor')}
+                  />
+                  <MonitorValueSlider
+                    label="Opacity"
+                    value={borderAlpha}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    displayValue={`${Math.round(borderAlpha * 100)}%`}
+                    onChange={(value) => updateRgbaColor(borderHex, value, 'borderColor')}
+                  />
+                </div>
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        </div>
+      </Collapse>
+      <Collapse
+        title="Crop"
+        description="Recorte a fonte pelos pontos do preview"
+        icon={<Marquee2 />}
+        onReset={resetCrop}
+      >
+        <div className="space-y-6">
+          {monitor && (
+            <WebcamCropEditor
+              sourceUrl={monitor.url}
+              sourceKind={monitor.kind}
+              currentTime={sourceTime}
+              crop={region.crop}
+              onUpdateCrop={updateCrop}
+            />
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            {(['top', 'right', 'bottom', 'left'] as const).map((edge) => (
+              <MonitorValueSlider
+                key={edge}
+                label={edge[0].toUpperCase() + edge.slice(1)}
+                value={region.crop[edge]}
+                min={DEFAULTS.CAMERA.CROP[edge.toUpperCase() as 'TOP' | 'RIGHT' | 'BOTTOM' | 'LEFT'].min}
+                max={DEFAULTS.CAMERA.CROP[edge.toUpperCase() as 'TOP' | 'RIGHT' | 'BOTTOM' | 'LEFT'].max}
+                step={DEFAULTS.CAMERA.CROP[edge.toUpperCase() as 'TOP' | 'RIGHT' | 'BOTTOM' | 'LEFT'].step}
+                displayValue={`${Math.round(region.crop[edge] * 100)}%`}
+                onChange={(value) => updateCrop({ [edge]: value })}
+              />
+            ))}
+          </div>
+        </div>
+      </Collapse>
+      <Collapse title="Effects" description="Profundidade da superfície" icon={<Wand />} onReset={resetEffects}>
+        <div className="space-y-4">
+          <MonitorValueSlider
+            label="Blur"
+            value={style.shadowBlur}
+            min={DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.min}
+            max={DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.max}
+            step={DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.step}
+            suffix="px"
+            onChange={(shadowBlur) => updateRegion(region.id, { shadowBlur })}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <MonitorValueSlider
+              label="Offset X"
+              value={style.shadowOffsetX}
+              min={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.min}
+              max={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.max}
+              step={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.step}
+              suffix="px"
+              onChange={(shadowOffsetX) => updateRegion(region.id, { shadowOffsetX })}
+            />
+            <MonitorValueSlider
+              label="Offset Y"
+              value={style.shadowOffsetY}
+              min={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.min}
+              max={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max}
+              step={DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.step}
+              suffix="px"
+              onChange={(shadowOffsetY) => updateRegion(region.id, { shadowOffsetY })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <ColorPicker
+              label="Color"
+              value={shadowHex}
+              onChange={(value) => updateRgbaColor(value, shadowAlpha, 'shadowColor')}
+            />
+            <MonitorValueSlider
+              label="Opacity"
+              value={shadowAlpha}
+              min={0}
+              max={1}
+              step={0.01}
+              displayValue={`${Math.round(shadowAlpha * 100)}%`}
+              onChange={(value) => updateRgbaColor(shadowHex, value, 'shadowColor')}
+            />
+          </div>
+        </div>
+      </Collapse>
       <div className="flex items-center justify-between rounded-lg border border-border p-3">
         <div>
           <p className="text-sm font-medium text-foreground">Swap with main video</p>
           <p className="text-xs text-muted-foreground">Monitor ocupa frame principal neste trecho.</p>
         </div>
-        <Switch checked={region.swapWithMain} onCheckedChange={(swapWithMain) => updateRegion(region.id, { swapWithMain })} />
+        <Switch
+          checked={region.swapWithMain}
+          onCheckedChange={(swapWithMain) => updateRegion(region.id, { swapWithMain })}
+        />
       </div>
       <Button
         variant="outline"
@@ -693,7 +919,7 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                 ? AdjustmentsHorizontal
                 : region.type === 'floating-monitor'
                   ? Video
-                : Search
+                  : Search
   const regionColor =
     region.type === 'zoom'
       ? 'text-primary'
@@ -709,7 +935,7 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                 ? 'text-sky-500'
                 : region.type === 'floating-monitor'
                   ? 'text-violet-500'
-                : 'text-amber-500'
+                  : 'text-amber-500'
   const regionBg =
     region.type === 'zoom'
       ? 'bg-primary/10'
@@ -725,7 +951,7 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                 ? 'bg-sky-500/10'
                 : region.type === 'floating-monitor'
                   ? 'bg-violet-500/10'
-                : 'bg-amber-500/10'
+                  : 'bg-amber-500/10'
 
   return (
     <div className="h-full flex flex-col">
@@ -752,7 +978,7 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                           ? 'Recording audio mix controls'
                           : region.type === 'floating-monitor'
                             ? 'Floating video monitor controls'
-                          : 'Blur asset controls'}
+                            : 'Blur asset controls'}
             </p>
           </div>
         </div>

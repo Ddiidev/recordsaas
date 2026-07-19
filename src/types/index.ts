@@ -198,6 +198,15 @@ export interface FloatingMonitorRegion {
   width: number
   height: number
   crop: WebcamCrop
+  borderRadius: number
+  isFlipped: boolean
+  border: boolean
+  borderWidth: number
+  borderColor: string
+  shadowBlur: number
+  shadowOffsetX: number
+  shadowOffsetY: number
+  shadowColor: string
   swapWithMain: boolean
   zIndex: number
 }

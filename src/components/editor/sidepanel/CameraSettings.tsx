@@ -502,7 +502,7 @@ export function CameraSettings() {
         >
           <div className="space-y-6">
             <WebcamCropEditor
-              webcamVideoUrl={webcamVideoUrl}
+              sourceUrl={webcamVideoUrl}
               currentTime={currentTime}
               crop={webcamStyles.crop}
               onUpdateCrop={updateCrop}

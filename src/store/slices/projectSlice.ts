@@ -70,7 +70,10 @@ const clampAudioVolume = (value: unknown): number =>
 
 const cloneSerializable = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const createAssetTimeline = (duration = 0, videoDimensions: VideoDimensions = { width: 0, height: 0 }): AssetTimelineState => ({
+const createAssetTimeline = (
+  duration = 0,
+  videoDimensions: VideoDimensions = { width: 0, height: 0 },
+): AssetTimelineState => ({
   duration,
   videoDimensions,
   frameStyles: cloneSerializable(initialFrameState.frameStyles),
@@ -94,14 +97,22 @@ const parseAssetTimeline = (
   const timeline = value as Partial<AssetTimelineState>
   return {
     ...fallback,
-    duration: typeof timeline.duration === 'number' && Number.isFinite(timeline.duration) ? Math.max(0, timeline.duration) : duration,
+    duration:
+      typeof timeline.duration === 'number' && Number.isFinite(timeline.duration)
+        ? Math.max(0, timeline.duration)
+        : duration,
     videoDimensions:
-      timeline.videoDimensions && typeof timeline.videoDimensions.width === 'number' && typeof timeline.videoDimensions.height === 'number'
+      timeline.videoDimensions &&
+      typeof timeline.videoDimensions.width === 'number' &&
+      typeof timeline.videoDimensions.height === 'number'
         ? timeline.videoDimensions
         : videoDimensions,
     frameStyles: timeline.frameStyles || fallback.frameStyles,
     aspectRatio: timeline.aspectRatio || fallback.aspectRatio,
-    timelineLanes: Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0 ? timeline.timelineLanes : fallback.timelineLanes,
+    timelineLanes:
+      Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0
+        ? timeline.timelineLanes
+        : fallback.timelineLanes,
     zoomRegions: timeline.zoomRegions || {},
     cutRegions: timeline.cutRegions || {},
     speedRegions: timeline.speedRegions || {},
@@ -143,7 +154,12 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
 
       const path = normalizeMediaPath(monitor.path)
       const kind = monitor.kind === 'image' ? 'image' : 'video'
-      const duration = typeof monitor.duration === 'number' && Number.isFinite(monitor.duration) ? clampToNonNegative(monitor.duration) : kind === 'image' ? 5 : 0
+      const duration =
+        typeof monitor.duration === 'number' && Number.isFinite(monitor.duration)
+          ? clampToNonNegative(monitor.duration)
+          : kind === 'image'
+            ? 5
+            : 0
       const timelineStart =
         typeof monitor.timelineStart === 'number' && Number.isFinite(monitor.timelineStart)
           ? Math.min(Math.max(0, monitor.timelineStart), duration)
@@ -152,7 +168,10 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         typeof monitor.timelineDuration === 'number' && Number.isFinite(monitor.timelineDuration)
           ? Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
           : Math.max(0, duration - timelineStart)
-      const id = typeof monitor.id === 'string' && monitor.id.length > 0 ? monitor.id : monitorId || `floating-monitor-${Date.now()}`
+      const id =
+        typeof monitor.id === 'string' && monitor.id.length > 0
+          ? monitor.id
+          : monitorId || `floating-monitor-${Date.now()}`
 
       monitors[id] = {
         id,
@@ -165,8 +184,14 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         timelineDuration,
         x: typeof monitor.x === 'number' && Number.isFinite(monitor.x) ? Math.max(0, Math.min(monitor.x, 1)) : 0.68,
         y: typeof monitor.y === 'number' && Number.isFinite(monitor.y) ? Math.max(0, Math.min(monitor.y, 1)) : 0.68,
-        width: typeof monitor.width === 'number' && Number.isFinite(monitor.width) ? Math.max(0.1, Math.min(monitor.width, 1)) : 0.28,
-        height: typeof monitor.height === 'number' && Number.isFinite(monitor.height) ? Math.max(0.1, Math.min(monitor.height, 1)) : 0.28,
+        width:
+          typeof monitor.width === 'number' && Number.isFinite(monitor.width)
+            ? Math.max(0.1, Math.min(monitor.width, 1))
+            : 0.28,
+        height:
+          typeof monitor.height === 'number' && Number.isFinite(monitor.height)
+            ? Math.max(0.1, Math.min(monitor.height, 1))
+            : 0.28,
         timeline: parseAssetTimeline(monitor.timeline, duration),
       }
       return monitors
@@ -187,10 +212,20 @@ const parseFloatingMonitorRegions = (
       if (!rawRegion || typeof rawRegion !== 'object') return regions
       const region = rawRegion as Partial<FloatingMonitorRegion>
       if (typeof region.monitorId !== 'string' || !monitors[region.monitorId]) return regions
-      const startTime = typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
-      const sourceStart = typeof region.sourceStart === 'number' && Number.isFinite(region.sourceStart) ? clampToNonNegative(region.sourceStart) : 0
-      const duration = typeof region.duration === 'number' && Number.isFinite(region.duration) ? Math.max(0.1, region.duration) : 0.1
-      const id = typeof region.id === 'string' && region.id.length > 0 ? region.id : regionId || `floating-monitor-region-${Date.now()}`
+      const startTime =
+        typeof region.startTime === 'number' && Number.isFinite(region.startTime)
+          ? clampToNonNegative(region.startTime)
+          : 0
+      const sourceStart =
+        typeof region.sourceStart === 'number' && Number.isFinite(region.sourceStart)
+          ? clampToNonNegative(region.sourceStart)
+          : 0
+      const duration =
+        typeof region.duration === 'number' && Number.isFinite(region.duration) ? Math.max(0.1, region.duration) : 0.1
+      const id =
+        typeof region.id === 'string' && region.id.length > 0
+          ? region.id
+          : regionId || `floating-monitor-region-${Date.now()}`
       regions[id] = {
         id,
         type: 'floating-monitor',
@@ -199,11 +234,71 @@ const parseFloatingMonitorRegions = (
         startTime,
         duration,
         sourceStart,
-        x: typeof region.x === 'number' && Number.isFinite(region.x) ? Math.max(0, Math.min(region.x, 1)) : monitors[region.monitorId].x,
-        y: typeof region.y === 'number' && Number.isFinite(region.y) ? Math.max(0, Math.min(region.y, 1)) : monitors[region.monitorId].y,
-        width: typeof region.width === 'number' && Number.isFinite(region.width) ? Math.max(0.1, Math.min(region.width, 1)) : monitors[region.monitorId].width,
-        height: typeof region.height === 'number' && Number.isFinite(region.height) ? Math.max(0.1, Math.min(region.height, 1)) : monitors[region.monitorId].height,
+        x:
+          typeof region.x === 'number' && Number.isFinite(region.x)
+            ? Math.max(0, Math.min(region.x, 1))
+            : monitors[region.monitorId].x,
+        y:
+          typeof region.y === 'number' && Number.isFinite(region.y)
+            ? Math.max(0, Math.min(region.y, 1))
+            : monitors[region.monitorId].y,
+        width:
+          typeof region.width === 'number' && Number.isFinite(region.width)
+            ? Math.max(0.1, Math.min(region.width, 1))
+            : monitors[region.monitorId].width,
+        height:
+          typeof region.height === 'number' && Number.isFinite(region.height)
+            ? Math.max(0.1, Math.min(region.height, 1))
+            : monitors[region.monitorId].height,
         crop: normalizeWebcamCrop(region.crop),
+        borderRadius:
+          typeof region.borderRadius === 'number' && Number.isFinite(region.borderRadius)
+            ? Math.max(
+                DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.min,
+                Math.min(region.borderRadius, DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.max),
+              )
+            : DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue,
+        isFlipped: region.isFlipped === true,
+        border:
+          typeof region.border === 'boolean'
+            ? region.border
+            : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue,
+        borderWidth:
+          typeof region.borderWidth === 'number' && Number.isFinite(region.borderWidth)
+            ? Math.max(
+                DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.min,
+                Math.min(region.borderWidth, DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.max),
+              )
+            : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue,
+        borderColor:
+          typeof region.borderColor === 'string' && region.borderColor.length > 0
+            ? region.borderColor
+            : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+        shadowBlur:
+          typeof region.shadowBlur === 'number' && Number.isFinite(region.shadowBlur)
+            ? Math.max(
+                DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.min,
+                Math.min(region.shadowBlur, DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.max),
+              )
+            : DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+        shadowOffsetX:
+          typeof region.shadowOffsetX === 'number' && Number.isFinite(region.shadowOffsetX)
+            ? Math.max(
+                DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.min,
+                Math.min(region.shadowOffsetX, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.max),
+              )
+            : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+        shadowOffsetY:
+          typeof region.shadowOffsetY === 'number' && Number.isFinite(region.shadowOffsetY)
+            ? Math.max(
+                DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.min,
+                Math.min(region.shadowOffsetY, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max),
+              )
+            : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+        shadowColor:
+          typeof region.shadowColor === 'string' && region.shadowColor.length > 0
+            ? region.shadowColor
+            : DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
         swapWithMain: region.swapWithMain === true,
         zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
       }
@@ -770,8 +865,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const recordingGeometry = (parsedData.recordingGeometry ||
         parsedData.geometry ||
         fallbackGeometry) as RecordingGeometry
-        const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
-        const parsedFloatingMonitors = parseFloatingMonitors(parsedData.floatingMonitors)
+      const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
+      const parsedFloatingMonitors = parseFloatingMonitors(parsedData.floatingMonitors)
       const newZoomRegions = generateAutoZoomRegions(
         processedMetadata,
         recordingGeometry,
@@ -1193,7 +1288,10 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       Object.assign(monitor, updates)
       monitor.duration = clampToNonNegative(monitor.duration)
       monitor.timelineStart = Math.max(0, Math.min(monitor.timelineStart, monitor.duration))
-      monitor.timelineDuration = Math.max(0, Math.min(monitor.timelineDuration, monitor.duration - monitor.timelineStart))
+      monitor.timelineDuration = Math.max(
+        0,
+        Math.min(monitor.timelineDuration, monitor.duration - monitor.timelineStart),
+      )
       monitor.x = Math.max(0, Math.min(monitor.x, 1))
       monitor.y = Math.max(0, Math.min(monitor.y, 1))
       monitor.width = Math.max(0.1, Math.min(monitor.width, 1))

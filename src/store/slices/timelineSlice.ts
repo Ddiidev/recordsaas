@@ -1,4 +1,4 @@
-import { BLUR_REGION, SWAP_REGION, TIMELINE, ZOOM } from '../../lib/constants'
+import { BLUR_REGION, DEFAULTS, SWAP_REGION, TIMELINE, ZOOM } from '../../lib/constants'
 import type { TimelineState, TimelineActions, Slice } from '../../types'
 import type {
   BlurRegion,
@@ -697,6 +697,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         width: monitor.width,
         height: monitor.height,
         crop: { top: 0, right: 0, bottom: 0, left: 0 },
+        borderRadius: DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue,
+        isFlipped: DEFAULTS.FLOATING_MONITOR.STYLE.FLIP.defaultValue,
+        border: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue,
+        borderWidth: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue,
+        borderColor: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+        shadowBlur: DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+        shadowOffsetX: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+        shadowOffsetY: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+        shadowColor: DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
         swapWithMain: false,
         zIndex: 0,
       }
@@ -805,9 +814,36 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
         } else if (region.type === 'floating-monitor') {
           region.sourceStart = Math.max(0, region.sourceStart)
+          region.x = Math.max(0, Math.min(region.x, 1))
+          region.y = Math.max(0, Math.min(region.y, 1))
+          region.width = Math.max(0.1, Math.min(region.width, 1))
+          region.height = Math.max(0.1, Math.min(region.height, 1))
+          region.borderRadius = Math.max(
+            DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.min,
+            Math.min(region.borderRadius, DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.max),
+          )
+          region.borderWidth = Math.max(
+            DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.min,
+            Math.min(region.borderWidth, DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.max),
+          )
+          region.shadowBlur = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.min,
+            Math.min(region.shadowBlur, DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.max),
+          )
+          region.shadowOffsetX = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.min,
+            Math.min(region.shadowOffsetX, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.max),
+          )
+          region.shadowOffsetY = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.min,
+            Math.min(region.shadowOffsetY, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max),
+          )
           const monitor = state.floatingMonitors[region.monitorId]
           if (monitor?.duration) {
-            region.duration = Math.min(region.duration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart))
+            region.duration = Math.min(
+              region.duration,
+              Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart),
+            )
           }
         }
         if (oldDuration !== region.duration || oldLaneId !== region.laneId) {

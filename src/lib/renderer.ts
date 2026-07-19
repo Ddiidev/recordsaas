@@ -1300,55 +1300,44 @@ export const drawScene = (
     laneContext,
   )
   activeFloatingMonitorRegions.forEach((region) => {
-    const monitor = state.floatingMonitors[region.monitorId]
     const renderSource = floatingMonitorSources[region.monitorId]
-    if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
+    if (!renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
 
-    let source: CanvasImageSource = renderSource.source
-    let sourceWidth = renderSource.width
-    let sourceHeight = renderSource.height
-    if (monitor.timeline && typeof document !== 'undefined') {
-      const nestedCanvas = document.createElement('canvas')
-      nestedCanvas.width = sourceWidth
-      nestedCanvas.height = sourceHeight
-      const nestedContext = nestedCanvas.getContext('2d')
-      if (nestedContext) {
-        const nestedState: RenderableState = {
-          ...state,
-          ...monitor.timeline,
-          videoDimensions:
-            monitor.timeline.videoDimensions.width > 0 && monitor.timeline.videoDimensions.height > 0
-              ? monitor.timeline.videoDimensions
-              : { width: sourceWidth, height: sourceHeight },
-          floatingMonitors: {},
-          floatingMonitorRegions: {},
-          isWebcamVisible: false,
-          metadata: [],
-          cursorImages: {},
-          cursorBitmapsToRender: new Map(),
-        }
-        const assetTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
-        drawScene(nestedContext, nestedState, source, null, assetTime, sourceWidth, sourceHeight, null)
-        source = nestedCanvas
-      }
-    }
+    const source = renderSource.source
+    const sourceWidth = renderSource.width
+    const sourceHeight = renderSource.height
 
     const width = Math.max(1, Math.min(outputWidth, outputWidth * region.width))
     const height = Math.max(1, Math.min(outputHeight, outputHeight * region.height))
     const x = Math.max(0, Math.min(outputWidth - width, outputWidth * region.x))
     const y = Math.max(0, Math.min(outputHeight - height, outputHeight * region.y))
+    const borderRadius = Number.isFinite(region.borderRadius)
+      ? region.borderRadius
+      : DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue
     const config: MediaRectConfig = {
       x,
       y,
       width,
       height,
-      radius: Math.min(width, height) * 0.04,
-      shadowBlur: Math.min(width, height) * 0.04,
-      shadowOffsetX: 0,
-      shadowOffsetY: Math.min(width, height) * 0.012,
-      shadowColor: 'rgba(0, 0, 0, 0.35)',
-      borderWidth: Math.max(1, Math.min(width, height) * 0.005),
-      borderColor: 'rgba(255, 255, 255, 0.72)',
+      radius: getWebcamRadius('rectangle', width, height, borderRadius),
+      shadowBlur: Number.isFinite(region.shadowBlur)
+        ? region.shadowBlur
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+      shadowOffsetX: Number.isFinite(region.shadowOffsetX)
+        ? region.shadowOffsetX
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+      shadowOffsetY: Number.isFinite(region.shadowOffsetY)
+        ? region.shadowOffsetY
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+      shadowColor: region.shadowColor || DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
+      borderWidth: (
+        typeof region.border === 'boolean' ? region.border : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue
+      )
+        ? Number.isFinite(region.borderWidth)
+          ? region.borderWidth
+          : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue
+        : 0,
+      borderColor: region.borderColor || DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
       zIndex: 10_000 + region.zIndex,
     }
     if (region.swapWithMain && desktopSource) {
@@ -1358,13 +1347,14 @@ export const drawScene = (
       })
       draws.push({
         zIndex: config.zIndex + 0.1,
-        draw: () => drawMediaToConfig(mainRectConfig, source, sourceWidth, sourceHeight, false, 1, region.crop),
+        draw: () =>
+          drawMediaToConfig(mainRectConfig, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
       })
       return
     }
     draws.push({
       zIndex: config.zIndex,
-      draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, false, 1, region.crop),
+      draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
     })
   })
 
