@@ -192,25 +192,32 @@ export function MediaAssetsPanel() {
                     <Trash className="h-4 w-4" />
                   </button>
                 </div>
-                {isVideo ? (
-                  <video
-                    src={monitor.url}
-                    muted
-                    preload="metadata"
-                    onLoadedMetadata={(event) => {
-                      const duration = event.currentTarget.duration
-                      if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                        updateFloatingMonitor(monitor.id, {
-                          duration,
-                          timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
-                        })
-                      }
-                    }}
-                    className="mt-3 aspect-video w-full rounded-md bg-black object-cover"
-                  />
-                ) : (
-                  <img src={monitor.url} alt="" className="mt-3 aspect-video w-full rounded-md bg-black object-cover" />
-                )}
+                <div className="relative mt-3">
+                  {isVideo ? (
+                    <video
+                      src={monitor.url}
+                      muted
+                      preload="metadata"
+                      onLoadedMetadata={(event) => {
+                        const duration = event.currentTarget.duration
+                        if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                          updateFloatingMonitor(monitor.id, {
+                            duration,
+                            timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
+                          })
+                        }
+                      }}
+                      className="aspect-video w-full rounded-md bg-black object-cover"
+                    />
+                  ) : (
+                    <img src={monitor.url} alt="" className="aspect-video w-full rounded-md bg-black object-cover" />
+                  )}
+                  {monitor.isEditedCopy && (
+                    <span className="absolute right-1 top-1 rounded-sm bg-emerald-500 px-2 py-0.5 font-mono text-sm font-bold leading-none text-white shadow-sm">
+                      Edit
+                    </span>
+                  )}
+                </div>
                 <Button
                   variant="outline"
                   onClick={() => beginAssetTimelineEdit(monitor.id)}

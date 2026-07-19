@@ -324,6 +324,7 @@ export interface FloatingMonitor {
   url: string
   name: string
   originalName: string
+  isEditedCopy: boolean
   duration: number
   timelineStart: number
   timelineDuration: number

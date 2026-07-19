@@ -174,19 +174,19 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         typeof monitor.id === 'string' && monitor.id.length > 0
           ? monitor.id
           : monitorId || `floating-monitor-${Date.now()}`
+      const name =
+        typeof monitor.name === 'string' && monitor.name.length > 0 ? monitor.name : fallbackNameFromPath(path)
+      const originalName =
+        typeof monitor.originalName === 'string' && monitor.originalName.length > 0 ? monitor.originalName : name
 
       monitors[id] = {
         id,
         kind,
         path,
         url: toMediaUrl(path) || '',
-        name: typeof monitor.name === 'string' && monitor.name.length > 0 ? monitor.name : fallbackNameFromPath(path),
-        originalName:
-          typeof monitor.originalName === 'string' && monitor.originalName.length > 0
-            ? monitor.originalName
-            : typeof monitor.name === 'string' && monitor.name.length > 0
-              ? monitor.name
-              : fallbackNameFromPath(path),
+        name,
+        originalName,
+        isEditedCopy: monitor.isEditedCopy === true || name !== originalName,
         duration,
         timelineStart,
         timelineDuration,
@@ -1279,6 +1279,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         url: toMediaUrl(normalizedPath) || '',
         name: name.trim() || fallbackNameFromPath(normalizedPath),
         originalName: name.trim() || fallbackNameFromPath(normalizedPath),
+        isEditedCopy: false,
         duration: kind === 'image' ? 5 : 0,
         timelineStart: 0,
         timelineDuration: kind === 'image' ? 5 : 0,
@@ -1333,6 +1334,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         id: cloneId,
         name: `${originalName} Edit`,
         originalName,
+        isEditedCopy: true,
         timeline: cloneSerializable(sourceMonitor.timeline),
       }
       state.floatingMonitors[cloneId] = monitor
