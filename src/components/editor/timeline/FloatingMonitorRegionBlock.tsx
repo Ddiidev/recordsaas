@@ -26,7 +26,7 @@ export const FloatingMonitorRegionBlock = memo(
         !isBeingDragged && 'transition-all duration-200 ease-out',
         isSelected
           ? 'border-violet-500 bg-card/95 shadow-sm shadow-violet-500/20'
-          : 'border-violet-500/60 hover:border-violet-500 hover:bg-card/90 hover:shadow-md hover:shadow-violet-500/10',
+          : 'border-border/60 hover:border-violet-500 hover:bg-card/90 hover:shadow-md hover:shadow-violet-500/10',
       )}
       onMouseDown={(event) => onMouseDown(event, region, 'move')}
     >

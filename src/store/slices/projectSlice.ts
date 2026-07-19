@@ -84,6 +84,7 @@ const createAssetTimeline = (
   speedRegions: {},
   blurRegions: {},
   swapRegions: {},
+  floatingMonitorRegions: {},
   selectedRegionId: null,
 })
 
@@ -118,6 +119,7 @@ const parseAssetTimeline = (
     speedRegions: timeline.speedRegions || {},
     blurRegions: timeline.blurRegions || {},
     swapRegions: timeline.swapRegions || {},
+    floatingMonitorRegions: timeline.floatingMonitorRegions || {},
     selectedRegionId: typeof timeline.selectedRegionId === 'string' ? timeline.selectedRegionId : null,
   }
 }
@@ -1368,7 +1370,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.speedRegions = assetTimeline.speedRegions
       state.blurRegions = assetTimeline.blurRegions
       state.swapRegions = assetTimeline.swapRegions
-      state.floatingMonitorRegions = {}
+      state.floatingMonitorRegions = assetTimeline.floatingMonitorRegions
       state.mediaAudioRegions = {}
       state.changeSoundRegions = {}
       state.isWebcamVisible = false
@@ -1397,6 +1399,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           speedRegions: cloneSerializable(state.speedRegions),
           blurRegions: cloneSerializable(state.blurRegions),
           swapRegions: cloneSerializable(state.swapRegions),
+          floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
           selectedRegionId: state.selectedRegionId,
         }
       }

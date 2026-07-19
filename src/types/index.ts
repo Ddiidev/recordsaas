@@ -344,6 +344,7 @@ export interface AssetTimelineState {
   speedRegions: Record<string, SpeedRegion>
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
   selectedRegionId: string | null
 }
 

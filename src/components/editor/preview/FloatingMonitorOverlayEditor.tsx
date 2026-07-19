@@ -1,9 +1,22 @@
 import { useEffect, useState, type RefObject } from 'react'
+import { ArrowsMove } from '@icons'
 import type { FloatingMonitorRegion, TimelineLane } from '../../../types'
 import { isRegionActiveAtTime } from '../../../lib/timeline-lanes'
 
 type CanvasBox = { left: number; top: number; width: number; height: number }
 type DragMode = 'move' | 'resize'
+type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
+
+const HANDLE_CONFIG: Array<{ handle: ResizeHandle; left: string; top: string; cursor: string }> = [
+  { handle: 'nw', left: '0%', top: '0%', cursor: 'nwse-resize' },
+  { handle: 'n', left: '50%', top: '0%', cursor: 'ns-resize' },
+  { handle: 'ne', left: '100%', top: '0%', cursor: 'nesw-resize' },
+  { handle: 'e', left: '100%', top: '50%', cursor: 'ew-resize' },
+  { handle: 'se', left: '100%', top: '100%', cursor: 'nwse-resize' },
+  { handle: 's', left: '50%', top: '100%', cursor: 'ns-resize' },
+  { handle: 'sw', left: '0%', top: '100%', cursor: 'nesw-resize' },
+  { handle: 'w', left: '0%', top: '50%', cursor: 'ew-resize' },
+]
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max))
 
@@ -48,11 +61,23 @@ export function FloatingMonitorOverlayEditor({
     .filter((region) => isRegionActiveAtTime(region, currentTime))
     .filter((region) => timelineLanes.some((lane) => lane.id === region.laneId && lane.visible))
 
-  const beginDrag = (event: React.PointerEvent<HTMLDivElement>, region: FloatingMonitorRegion, mode: DragMode) => {
+  const beginDrag = (
+    event: React.PointerEvent<HTMLDivElement | HTMLButtonElement>,
+    region: FloatingMonitorRegion,
+    mode: DragMode,
+    handle?: ResizeHandle,
+  ) => {
     event.preventDefault()
     event.stopPropagation()
     onSelectRegion(region.id)
-    const start = { clientX: event.clientX, clientY: event.clientY, x: region.x, y: region.y, width: region.width, height: region.height }
+    const start = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: region.x,
+      y: region.y,
+      width: region.width,
+      height: region.height,
+    }
     const move = (moveEvent: PointerEvent) => {
       const dx = (moveEvent.clientX - start.clientX) / box.width
       const dy = (moveEvent.clientY - start.clientY) / box.height
@@ -63,9 +88,28 @@ export function FloatingMonitorOverlayEditor({
         })
         return
       }
+      const pointerX = clamp(start.clientX + dx * box.width - box.left, 0, box.width)
+      const pointerY = clamp(start.clientY + dy * box.height - box.top, 0, box.height)
+      const minWidth = 0.1 * box.width
+      const minHeight = 0.1 * box.height
+      const startLeft = start.x * box.width
+      const startTop = start.y * box.height
+      const startRight = startLeft + start.width * box.width
+      const startBottom = startTop + start.height * box.height
+      let left = startLeft
+      let top = startTop
+      let right = startRight
+      let bottom = startBottom
+
+      if (handle?.includes('w')) left = clamp(pointerX, 0, right - minWidth)
+      if (handle?.includes('e')) right = clamp(pointerX, left + minWidth, box.width)
+      if (handle?.includes('n')) top = clamp(pointerY, 0, bottom - minHeight)
+      if (handle?.includes('s')) bottom = clamp(pointerY, top + minHeight, box.height)
       onUpdateRegion(region.id, {
-        width: clamp(start.width + dx, 0.1, 1 - start.x),
-        height: clamp(start.height + dy, 0.1, 1 - start.y),
+        x: left / box.width,
+        y: top / box.height,
+        width: (right - left) / box.width,
+        height: (bottom - top) / box.height,
       })
     }
     const end = () => {
@@ -87,15 +131,40 @@ export function FloatingMonitorOverlayEditor({
             tabIndex={0}
             aria-label="Move floating monitor"
             onPointerDown={(event) => beginDrag(event, region, 'move')}
-            className={`fixed z-40 cursor-move border-2 ${isSelected ? 'border-violet-400 shadow-lg shadow-violet-500/30' : 'border-violet-300/70'}`}
-            style={{ left: box.left + box.width * region.x, top: box.top + box.height * region.y, width: box.width * region.width, height: box.height * region.height }}
+            className={`fixed z-40 border-2 ${isSelected ? 'border-violet-400 shadow-lg shadow-violet-500/30' : 'cursor-move border-violet-300/70'}`}
+            style={{
+              left: box.left + box.width * region.x,
+              top: box.top + box.height * region.y,
+              width: box.width * region.width,
+              height: box.height * region.height,
+            }}
           >
-            <span className="absolute -top-6 left-0 rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white">Monitor</span>
-            <div
-              aria-label="Resize floating monitor"
-              onPointerDown={(event) => beginDrag(event, region, 'resize')}
-              className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-sm border-2 border-white bg-violet-600"
-            />
+            <span className="absolute -top-6 left-0 rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+              Monitor
+            </span>
+            {isSelected && (
+              <>
+                {HANDLE_CONFIG.map((item) => (
+                  <button
+                    key={item.handle}
+                    type="button"
+                    aria-label={`Resize floating monitor ${item.handle}`}
+                    onPointerDown={(event) => beginDrag(event, region, 'resize', item.handle)}
+                    className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-700 bg-white shadow-sm"
+                    style={{ left: item.left, top: item.top, cursor: item.cursor }}
+                  />
+                ))}
+                <button
+                  type="button"
+                  aria-label="Move floating monitor"
+                  onPointerDown={(event) => beginDrag(event, region, 'move')}
+                  className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-white text-slate-700 shadow-md hover:bg-slate-50"
+                  style={{ cursor: 'move' }}
+                >
+                  <ArrowsMove className="h-4 w-4" />
+                </button>
+              </>
+            )}
           </div>
         )
       })}

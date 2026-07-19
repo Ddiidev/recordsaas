@@ -1055,7 +1055,19 @@ export const drawScene = (
   const draws: { zIndex: number; draw: () => void }[] = []
 
   // Base states
-  const desktopSource = screenCache?.canvas
+  const hasNestedMonitorTimeline = floatingMonitorRegions.some(
+    (region) => isRegionActiveAtTime(region, currentTime) && state.floatingMonitors[region.monitorId]?.timeline,
+  )
+  const desktopSource =
+    hasNestedMonitorTimeline && screenCache && typeof document !== 'undefined'
+      ? (() => {
+          const snapshot = document.createElement('canvas')
+          snapshot.width = frameContentWidth
+          snapshot.height = frameContentHeight
+          snapshot.getContext('2d')?.drawImage(screenCache.canvas, 0, 0)
+          return snapshot
+        })()
+      : screenCache?.canvas
   const desktopDims = { width: frameContentWidth, height: frameContentHeight }
   const desktopFlipped = false
 
@@ -1300,12 +1312,48 @@ export const drawScene = (
     laneContext,
   )
   activeFloatingMonitorRegions.forEach((region) => {
+    const monitor = state.floatingMonitors[region.monitorId]
     const renderSource = floatingMonitorSources[region.monitorId]
-    if (!renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
+    if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
 
-    const source = renderSource.source
-    const sourceWidth = renderSource.width
-    const sourceHeight = renderSource.height
+    let source: CanvasImageSource = renderSource.source
+    let sourceWidth = renderSource.width
+    let sourceHeight = renderSource.height
+    if (monitor.timeline && typeof document !== 'undefined') {
+      const nestedCanvas = document.createElement('canvas')
+      nestedCanvas.width = sourceWidth
+      nestedCanvas.height = sourceHeight
+      const nestedContext = nestedCanvas.getContext('2d')
+      if (nestedContext) {
+        const nestedState: RenderableState = {
+          ...state,
+          ...monitor.timeline,
+          videoDimensions:
+            monitor.timeline.videoDimensions.width > 0 && monitor.timeline.videoDimensions.height > 0
+              ? monitor.timeline.videoDimensions
+              : { width: sourceWidth, height: sourceHeight },
+          isWebcamVisible: false,
+          metadata: [],
+          cursorImages: {},
+          cursorBitmapsToRender: new Map(),
+        }
+        const assetTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
+        drawScene(
+          nestedContext,
+          nestedState,
+          source,
+          null,
+          assetTime,
+          sourceWidth,
+          sourceHeight,
+          null,
+          undefined,
+          exportQuality,
+          floatingMonitorSources,
+        )
+        source = nestedCanvas
+      }
+    }
 
     const width = Math.max(1, Math.min(outputWidth, outputWidth * region.width))
     const height = Math.max(1, Math.min(outputHeight, outputHeight * region.height))
