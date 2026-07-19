@@ -700,13 +700,14 @@ export const drawScene = (
 
   // --- 3. Determine Swap Region and Transitions ---
   const activeSwapRegion = getTopActiveRegionAtTime(swapRegions, currentTime, laneContext)
+  const activeSwapTarget = activeSwapRegion?.target ?? 'webcam'
 
   let isSwapped = false
   let swapProgress = 0
 
   if (activeSwapRegion) {
     const TRANSITION_DURATION = activeSwapRegion.transitionDuration ?? 0.3
-    isSwapped = true
+    isSwapped = activeSwapTarget === 'webcam'
     swapProgress = 1
     if (activeSwapRegion.transition !== 'none') {
       const timeIn = currentTime - activeSwapRegion.startTime
@@ -903,7 +904,9 @@ export const drawScene = (
       }
 
   const effectiveShowDesktopOverlay =
-    activeSwapRegion && resolvedLayout.mode === 'overlay' ? activeSwapRegion.showDesktopOverlay : false
+    activeSwapTarget === 'webcam' && activeSwapRegion && resolvedLayout.mode === 'overlay'
+      ? activeSwapRegion.showDesktopOverlay
+      : false
 
   // --- 6. Draw Media Helper and Transitions ---
   const lerpConfig = (a: MediaRectConfig, b: MediaRectConfig, p: number): MediaRectConfig => ({
@@ -1076,7 +1079,7 @@ export const drawScene = (
   const cameraCrop = webcamIsRenderable ? state.webcamStyles.crop : null
   const normalDesktopConfig = resolvedLayout.desktopConfig
   const normalCameraConfig = resolvedLayout.cameraConfig
-  const canSwapCamera = Boolean(cameraSource && cameraDims && normalCameraConfig)
+  const canSwapCamera = activeSwapTarget === 'webcam' && Boolean(cameraSource && cameraDims && normalCameraConfig)
   const transitionType = activeSwapRegion?.transition || 'none'
   const isAnimatedTransition = canSwapCamera && swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
   const progressAnim =
@@ -1388,11 +1391,15 @@ export const drawScene = (
       borderColor: region.borderColor || DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
       zIndex: 10_000 + region.zIndex,
     }
-    if (region.swapWithMain && desktopSource) {
-      draws.push({
-        zIndex: config.zIndex,
-        draw: () => drawMediaToConfig(config, desktopSource, desktopDims.width, desktopDims.height),
-      })
+    const isSwapTargetMonitor =
+      activeSwapRegion?.target === 'floating-monitor' && activeSwapRegion.targetMonitorId === region.monitorId
+    if (isSwapTargetMonitor) {
+      if (desktopSource && activeSwapRegion.showDesktopOverlay) {
+        draws.push({
+          zIndex: config.zIndex,
+          draw: () => drawMediaToConfig(config, desktopSource, desktopDims.width, desktopDims.height),
+        })
+      }
       draws.push({
         zIndex: config.zIndex + 0.1,
         draw: () =>

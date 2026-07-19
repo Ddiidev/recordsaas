@@ -118,8 +118,12 @@ const parseAssetTimeline = (
     cutRegions: timeline.cutRegions || {},
     speedRegions: timeline.speedRegions || {},
     blurRegions: timeline.blurRegions || {},
-    swapRegions: timeline.swapRegions || {},
+    swapRegions: parseSwapRegions(
+      timeline.swapRegions,
+      fallback.timelineLanes[0]?.id || createDefaultTimelineLane().id,
+    ),
     floatingMonitorRegions: timeline.floatingMonitorRegions || {},
+    cursorStyles: timeline.cursorStyles,
     selectedRegionId: typeof timeline.selectedRegionId === 'string' ? timeline.selectedRegionId : null,
   }
 }
@@ -307,7 +311,6 @@ const parseFloatingMonitorRegions = (
           typeof region.shadowColor === 'string' && region.shadowColor.length > 0
             ? region.shadowColor
             : DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
-        swapWithMain: region.swapWithMain === true,
         zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
       }
       return regions
@@ -598,6 +601,14 @@ const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegi
     startTime,
     duration,
     showDesktopOverlay: region.showDesktopOverlay !== false,
+    target:
+      region.target === 'main-screen' || region.target === 'floating-monitor' || region.target === 'webcam'
+        ? region.target
+        : 'webcam',
+    targetMonitorId:
+      typeof region.targetMonitorId === 'string' && region.targetMonitorId.length > 0
+        ? region.targetMonitorId
+        : undefined,
     transition,
     transitionDuration,
     zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
@@ -1371,6 +1382,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           blurRegions: cloneSerializable(state.blurRegions),
           swapRegions: cloneSerializable(state.swapRegions),
           floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
+          cursorStyles: cloneSerializable(state.cursorStyles),
           isWebcamVisible: state.isWebcamVisible,
           selectedRegionId: state.selectedRegionId,
           currentTime: state.currentTime,
@@ -1394,6 +1406,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.blurRegions = assetTimeline.blurRegions
       state.swapRegions = assetTimeline.swapRegions
       state.floatingMonitorRegions = assetTimeline.floatingMonitorRegions
+      state.cursorStyles = cloneSerializable(assetTimeline.cursorStyles || state.cursorStyles)
       state.mediaAudioRegions = {}
       state.changeSoundRegions = {}
       state.isWebcamVisible = false
@@ -1423,6 +1436,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           blurRegions: cloneSerializable(state.blurRegions),
           swapRegions: cloneSerializable(state.swapRegions),
           floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
+          cursorStyles: cloneSerializable(state.cursorStyles),
           selectedRegionId: state.selectedRegionId,
         }
       }
@@ -1445,6 +1459,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.blurRegions = main.blurRegions
       state.swapRegions = main.swapRegions
       state.floatingMonitorRegions = main.floatingMonitorRegions
+      state.cursorStyles = main.cursorStyles
       state.isWebcamVisible = main.isWebcamVisible
       state.selectedRegionId = main.selectedRegionId
       state.currentTime = main.currentTime

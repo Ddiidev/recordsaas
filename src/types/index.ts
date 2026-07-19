@@ -53,6 +53,7 @@ export interface CursorStyles {
 
 export type BlurRegionStyle = 'blur' | 'pixelated'
 export type CameraSwapTransition = 'none' | 'fade' | 'slide' | 'scale'
+export type CameraSwapTarget = 'webcam' | 'main-screen' | 'floating-monitor'
 
 export interface BlurPresetDefaults {
   duration: number
@@ -67,6 +68,8 @@ export interface BlurPresetDefaults {
 export interface SwapPresetDefaults {
   duration: number
   showDesktopOverlay: boolean
+  target: CameraSwapTarget
+  targetMonitorId?: string
   transition: CameraSwapTransition
   transitionDuration: number
 }
@@ -180,6 +183,8 @@ export interface CameraSwapRegion {
   startTime: number
   duration: number
   showDesktopOverlay: boolean
+  target: CameraSwapTarget
+  targetMonitorId?: string
   transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number
@@ -207,7 +212,6 @@ export interface FloatingMonitorRegion {
   shadowOffsetX: number
   shadowOffsetY: number
   shadowColor: string
-  swapWithMain: boolean
   zIndex: number
 }
 
@@ -347,6 +351,7 @@ export interface AssetTimelineState {
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
   floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  cursorStyles?: CursorStyles
   selectedRegionId: string | null
 }
 
@@ -370,6 +375,7 @@ export interface AssetTimelineEditing {
     blurRegions: Record<string, BlurRegion>
     swapRegions: Record<string, CameraSwapRegion>
     floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+    cursorStyles: CursorStyles
     isWebcamVisible: boolean
     selectedRegionId: string | null
     currentTime: number

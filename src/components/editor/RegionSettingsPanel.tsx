@@ -293,6 +293,7 @@ function SpeedSettings({ region }: { region: SpeedRegion }) {
 function SwapSettings({ region }: { region: CameraSwapRegion }) {
   const { updateRegion, deleteRegion } = useEditorStore.getState()
   const webcamLayoutMode = useEditorStore((state) => state.webcamLayout.mode)
+  const floatingMonitors = useEditorStore((state) => state.floatingMonitors)
   const [durationText, setDurationText] = useState((region.transitionDuration ?? 0.3).toFixed(1))
   const supportsDesktopOverlay = webcamLayoutMode === 'overlay'
 
@@ -302,6 +303,49 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
 
   return (
     <div className="space-y-6">
+      <div className="space-y-2.5">
+        <span className="text-sm font-medium text-sidebar-foreground">Swap target</span>
+        <Select
+          value={region.target}
+          onValueChange={(value) =>
+            updateRegion(region.id, {
+              target: value as CameraSwapRegion['target'],
+              targetMonitorId: value === 'floating-monitor' ? region.targetMonitorId : undefined,
+            })
+          }
+        >
+          <SelectTrigger className="h-10 border-border bg-card text-sm shadow-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="webcam">Webcam</SelectItem>
+            <SelectItem value="main-screen">Main screen</SelectItem>
+            <SelectItem value="floating-monitor">Asset monitor</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {region.target === 'floating-monitor' && (
+        <div className="space-y-2.5">
+          <span className="text-sm font-medium text-sidebar-foreground">Asset target</span>
+          <Select
+            value={region.targetMonitorId || ''}
+            onValueChange={(targetMonitorId) => updateRegion(region.id, { targetMonitorId })}
+          >
+            <SelectTrigger className="h-10 border-border bg-card text-sm shadow-sm">
+              <SelectValue placeholder="Choose asset" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.values(floatingMonitors).map((monitor) => (
+                <SelectItem key={monitor.id} value={monitor.id}>
+                  {monitor.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {supportsDesktopOverlay ? (
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
@@ -880,16 +924,6 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
           </div>
         </div>
       </Collapse>
-      <div className="flex items-center justify-between rounded-lg border border-border p-3">
-        <div>
-          <p className="text-sm font-medium text-foreground">Swap with main video</p>
-          <p className="text-xs text-muted-foreground">Monitor ocupa frame principal neste trecho.</p>
-        </div>
-        <Switch
-          checked={region.swapWithMain}
-          onCheckedChange={(swapWithMain) => updateRegion(region.id, { swapWithMain })}
-        />
-      </div>
       <Button
         variant="outline"
         size="sm"

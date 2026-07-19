@@ -99,7 +99,9 @@ export const createUISlice: Slice<UIState, UIActions> = (set, get) => ({
     set((state) => {
       Object.assign(state.cursorStyles, style)
     })
-    window.electronAPI.setSetting('appearance.cursorStyles', get().cursorStyles)
+    if (!get().assetTimelineEditing) {
+      window.electronAPI.setSetting('appearance.cursorStyles', get().cursorStyles)
+    }
   },
   setActiveSidePanelTab: (tab: SidePanelTab) => {
     set((state) => {

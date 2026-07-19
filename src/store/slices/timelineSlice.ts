@@ -68,6 +68,8 @@ const getBlurDefaults = (preset: Preset | null | undefined): BlurPresetDefaults 
 const getSwapDefaults = (preset: Preset | null | undefined): SwapPresetDefaults => ({
   duration: preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
   showDesktopOverlay: preset?.swapDefaults?.showDesktopOverlay ?? SWAP_REGION.SHOW_DESKTOP_OVERLAY,
+  target: preset?.swapDefaults?.target ?? 'webcam',
+  targetMonitorId: preset?.swapDefaults?.targetMonitorId,
   transition: preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
   transitionDuration: preset?.swapDefaults?.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
@@ -85,6 +87,8 @@ const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
 const toSwapPresetDefaults = (region: CameraSwapRegion): SwapPresetDefaults => ({
   duration: region.duration,
   showDesktopOverlay: region.showDesktopOverlay,
+  target: region.target,
+  targetMonitorId: region.targetMonitorId,
   transition: region.transition,
   transitionDuration: region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
@@ -495,6 +499,8 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       startTime: currentTime,
       duration: swapDefaults.duration,
       showDesktopOverlay: swapDefaults.showDesktopOverlay,
+      target: swapDefaults.target,
+      targetMonitorId: swapDefaults.targetMonitorId,
       transition: swapDefaults.transition,
       transitionDuration: swapDefaults.transitionDuration,
       zIndex: 0,
@@ -706,7 +712,6 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         shadowOffsetX: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
         shadowOffsetY: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
         shadowColor: DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
-        swapWithMain: false,
         zIndex: 0,
       }
       state.selectedRegionId = id

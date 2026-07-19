@@ -34,6 +34,7 @@ const DEFAULT_BLUR_PRESET_DEFAULTS: BlurPresetDefaults = {
 const DEFAULT_SWAP_PRESET_DEFAULTS: SwapPresetDefaults = {
   duration: SWAP_REGION.DEFAULT_DURATION,
   showDesktopOverlay: SWAP_REGION.SHOW_DESKTOP_OVERLAY,
+  target: 'webcam',
   transition: SWAP_REGION.TRANSITION.DEFAULT,
   transitionDuration: SWAP_REGION.TRANSITION_DURATION.defaultValue,
 }
@@ -80,6 +81,11 @@ const normalizeSwapPresetDefaults = (value: Partial<SwapPresetDefaults> | undefi
     typeof value?.showDesktopOverlay === 'boolean'
       ? value.showDesktopOverlay
       : DEFAULT_SWAP_PRESET_DEFAULTS.showDesktopOverlay,
+  target:
+    value?.target === 'main-screen' || value?.target === 'floating-monitor' || value?.target === 'webcam'
+      ? value.target
+      : DEFAULT_SWAP_PRESET_DEFAULTS.target,
+  targetMonitorId: typeof value?.targetMonitorId === 'string' ? value.targetMonitorId : undefined,
   transition:
     value?.transition && SWAP_REGION.TRANSITION.OPTIONS.includes(value.transition)
       ? value.transition
