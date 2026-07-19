@@ -305,6 +305,7 @@ Styling source of truth:
 - `--sidebar-border: hsl(215 16% 28%)`
 - `--timeline-tick: hsl(210 18% 76%)`
 - `--speed-accent: hsl(154 60% 50%)`
+- Native text inputs, textareas, and selects use `color-scheme: dark`, `--foreground`, and matching caret color. Do not hard-code dark text/icon colors on editor controls; use semantic `text-foreground`, `text-muted-foreground`, `bg-card`, `border-border`, and dark-safe accent variants.
 
 Typography and radius:
 - `--font-sans: Inter`

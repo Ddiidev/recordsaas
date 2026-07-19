@@ -189,7 +189,7 @@ export function MediaAssetsPanel() {
                   )}
                 >
                   <div className="flex items-start gap-2">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500 dark:text-violet-300">
                       <Video className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -238,7 +238,7 @@ export function MediaAssetsPanel() {
                     onClick={() => beginAssetTimelineEdit(monitor.id)}
                     className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
                   >
-                    <Video className="h-4 w-4 text-violet-500" />
+                    <Video className="h-4 w-4 text-violet-500 dark:text-violet-300" />
                     Edit copy in timeline
                   </Button>
                   <Button

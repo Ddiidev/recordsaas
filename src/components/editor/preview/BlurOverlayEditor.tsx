@@ -406,7 +406,7 @@ export const BlurOverlayEditor = memo(
                     <button
                       key={item.handle}
                       type="button"
-                      className="absolute w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border border-slate-700 shadow-sm"
+                      className="absolute w-3.5 h-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-border bg-card shadow-sm"
                       style={{ left: item.left, top: item.top, cursor: item.cursor }}
                       onMouseDown={(event) => startInteraction(event, 'resize', region, item.handle)}
                       aria-label={`Resize blur region ${item.handle}`}
@@ -415,7 +415,7 @@ export const BlurOverlayEditor = memo(
 
                   <button
                     type="button"
-                    className="absolute left-1/2 top-1/2 w-7 h-7 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border border-slate-700 shadow-md flex items-center justify-center text-slate-700 hover:bg-slate-50"
+                    className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md hover:bg-accent"
                     style={{ cursor: 'move' }}
                     onMouseDown={(event) => startInteraction(event, 'move', region)}
                     aria-label="Move blur region"

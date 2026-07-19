@@ -39,7 +39,7 @@ export const FloatingMonitorRegionBlock = memo(
       >
         <div className="h-6 w-1 rounded-full bg-violet-500/60" />
       </div>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 overflow-hidden px-6 text-violet-500">
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 overflow-hidden px-6 text-violet-500 dark:text-violet-300">
         <DeviceComputerCamera className="h-4 w-4 shrink-0" />
         <span className="truncate text-xs font-bold tracking-wide">{name}</span>
       </div>

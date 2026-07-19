@@ -154,7 +154,7 @@ export function FloatingMonitorOverlayEditor({
                     type="button"
                     aria-label={`Resize floating monitor ${item.handle}`}
                     onPointerDown={(event) => beginDrag(event, region, 'resize', item.handle)}
-                    className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-700 bg-white shadow-sm"
+                    className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-border bg-card shadow-sm"
                     style={{ left: item.left, top: item.top, cursor: item.cursor }}
                   />
                 ))}
@@ -162,7 +162,7 @@ export function FloatingMonitorOverlayEditor({
                   type="button"
                   aria-label="Move floating monitor"
                   onPointerDown={(event) => beginDrag(event, region, 'move')}
-                  className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-slate-700 bg-white text-slate-700 shadow-md hover:bg-slate-50"
+                  className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md hover:bg-accent"
                   style={{ cursor: 'move' }}
                 >
                   <ArrowsMove className="h-4 w-4" />

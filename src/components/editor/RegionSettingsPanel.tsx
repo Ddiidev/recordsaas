@@ -677,7 +677,9 @@ const MonitorValueSlider = ({
   <div className="space-y-2.5">
     <div className="flex items-center justify-between">
       <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-xs font-semibold tabular-nums text-violet-500">{displayValue ?? `${value}${suffix}`}</span>
+      <span className="text-xs font-semibold tabular-nums text-violet-500 dark:text-violet-300">
+        {displayValue ?? `${value}${suffix}`}
+      </span>
     </div>
     <Slider min={min} max={max} step={step} value={value} onChange={onChange} />
   </div>
@@ -749,7 +751,9 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Source offset</span>
-          <span className="text-xs font-semibold text-violet-500 tabular-nums">{region.sourceStart.toFixed(2)}s</span>
+          <span className="text-xs font-semibold text-violet-500 tabular-nums dark:text-violet-300">
+            {region.sourceStart.toFixed(2)}s
+          </span>
         </div>
         <Slider
           min={0}
@@ -772,7 +776,9 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
             <div key={key} className="space-y-1.5">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{label}</span>
-                <span className="font-semibold text-violet-500">{Math.round(region[key] * 100)}%</span>
+                <span className="font-semibold text-violet-500 dark:text-violet-300">
+                  {Math.round(region[key] * 100)}%
+                </span>
               </div>
               <Slider
                 min={key === 'width' || key === 'height' ? 0.1 : 0}
@@ -798,7 +804,7 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
           />
           <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
             <span className="flex items-center gap-2.5">
-              <SquareToggle className="h-4 w-4 text-violet-500" />
+              <SquareToggle className="h-4 w-4 text-violet-500 dark:text-violet-300" />
               Flip horizontal
             </span>
             <Switch checked={style.isFlipped} onCheckedChange={(isFlipped) => updateRegion(region.id, { isFlipped })} />
@@ -806,7 +812,7 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm font-medium text-sidebar-foreground">
               <span className="flex items-center gap-2.5">
-                <Square className="h-4 w-4 text-violet-500" />
+                <Square className="h-4 w-4 text-violet-500 dark:text-violet-300" />
                 Border
               </span>
               <Switch checked={style.border} onCheckedChange={(border) => updateRegion(region.id, { border })} />

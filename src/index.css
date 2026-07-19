@@ -467,6 +467,7 @@
 
 /* Ocean Blue Dark - Premium Editor Style */
 [data-theme='ocean-blue'].dark {
+  color-scheme: dark;
   --background: hsl(215 16% 16%);
   --foreground: hsl(210 20% 98%);
   --card: hsl(215 16% 18%);
@@ -497,6 +498,13 @@
   --color-picker-input-border: hsl(220 20% 36%);
   --timeline-tick: hsl(210 18% 76%);
   --speed-accent: hsl(154 60% 50%);
+}
+
+[data-theme='ocean-blue'].dark input:not([type='color']),
+[data-theme='ocean-blue'].dark textarea,
+[data-theme='ocean-blue'].dark select {
+  color: var(--foreground);
+  caret-color: var(--foreground);
 }
 
 @theme inline {
