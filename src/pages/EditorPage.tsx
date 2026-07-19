@@ -46,12 +46,15 @@ export function EditorPage() {
     seekToPreviousFrame,
     seekBackward,
     seekForward,
+    finishAssetTimelineEdit,
   } = useEditorStore.getState()
-  const { presetSaveStatus, duration, isPreviewFullScreen } = useEditorStore(
+  const { presetSaveStatus, duration, isPreviewFullScreen, assetTimelineEditing, editingAssetName } = useEditorStore(
     useShallow((state) => ({
       presetSaveStatus: state.presetSaveStatus,
       duration: state.duration,
       isPreviewFullScreen: state.isPreviewFullScreen,
+      assetTimelineEditing: state.assetTimelineEditing,
+      editingAssetName: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name : null,
     })),
   )
   const { undo, redo } = useEditorStore.temporal.getState()
@@ -382,6 +385,16 @@ export function EditorPage() {
   }
 
   const renderHeaderActions = () => {
+    if (assetTimelineEditing) {
+      return [
+        <div key="asset-editor-label" className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm font-semibold text-violet-600">
+          Editando asset: {editingAssetName || 'Vídeo'}
+        </div>,
+        <Button key="finish-asset-edit" onClick={finishAssetTimelineEdit} className="bg-violet-600 text-white hover:bg-violet-500">
+          Concluir edição
+        </Button>,
+      ]
+    }
     const actions = [
       <div key="export-project" className="relative z-[1100]">
         <ExportProjectButton

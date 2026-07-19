@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   FileImport,
@@ -18,7 +18,6 @@ import { useEditorStore } from '../../../store/editorStore'
 import { cn, formatTime } from '../../../lib/utils'
 import { Button } from '../../ui/button'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../../lib/media-assets'
-import type { FloatingMonitor } from '../../../types'
 
 type MediaCategory = 'audio' | 'image' | 'video'
 
@@ -33,19 +32,11 @@ const categoryConfig: Array<{
   { id: 'video', label: 'Video', icon: Video },
 ]
 
-const PlaceholderCategory = ({ icon, title, message }: { icon: ReactNode; title: string; message: string }) => (
-  <div className="rounded-lg border border-border bg-card/60 p-5 text-center">
-    <IconShell className="mx-auto mb-3 h-11 w-11">{icon}</IconShell>
-    <p className="text-sm font-semibold text-foreground">{title}</p>
-    <p className="mt-1 text-xs text-muted-foreground">{message}</p>
-  </div>
-)
-
 export function MediaAssetsPanel() {
   const [activeCategory, setActiveCategory] = useState<MediaCategory>('audio')
   const [isImporting, setIsImporting] = useState(false)
   const [isImportingVideo, setIsImportingVideo] = useState(false)
-  const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null)
+  const [isImportingImage, setIsImportingImage] = useState(false)
 
   const {
     currentTime,
@@ -60,6 +51,7 @@ export function MediaAssetsPanel() {
     updateFloatingMonitor,
     removeFloatingMonitor,
     addFloatingMonitorRegion,
+    beginAssetTimelineEdit,
   } = useEditorStore(
     useShallow((state) => ({
       currentTime: state.currentTime,
@@ -74,6 +66,7 @@ export function MediaAssetsPanel() {
       updateFloatingMonitor: state.updateFloatingMonitor,
       removeFloatingMonitor: state.removeFloatingMonitor,
       addFloatingMonitorRegion: state.addFloatingMonitorRegion,
+      beginAssetTimelineEdit: state.beginAssetTimelineEdit,
     })),
   )
 
@@ -131,42 +124,44 @@ export function MediaAssetsPanel() {
     }
   }
 
-  const activeMonitor = activeMonitorId ? floatingMonitors[activeMonitorId] : null
+  const handleImportImage = async () => {
+    try {
+      setIsImportingImage(true)
+      const result = await window.electronAPI.importMediaImageAsset()
+      if (result.asset) addFloatingMonitor({ ...result.asset, kind: 'image' })
+    } catch (error) {
+      console.error('Failed to import media image asset:', error)
+    } finally {
+      setIsImportingImage(false)
+    }
+  }
 
   const handlePlaceChangeSoundAtPlayhead = () => {
     addChangeSoundRegion({ startTime: currentTime })
   }
 
   const renderCategoryContent = () => {
-    if (activeCategory === 'image') {
-      return (
-        <PlaceholderCategory
-          icon={<Photo className="h-5 w-5" />}
-          title="Image Assets"
-          message="Coming soon. This category is part of the Media foundation."
-        />
-      )
-    }
-
-    if (activeCategory === 'video') {
+    if (activeCategory === 'video' || activeCategory === 'image') {
+      const isVideo = activeCategory === 'video'
+      const visualAssets = Object.values(floatingMonitors).filter((monitor) => (monitor.kind || 'video') === activeCategory)
       return (
         <div className="space-y-3">
           <Button
-            onClick={handleImportVideo}
-            disabled={isImportingVideo}
+            onClick={isVideo ? handleImportVideo : handleImportImage}
+            disabled={isVideo ? isImportingVideo : isImportingImage}
             className="icon-hover w-full justify-center gap-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
           >
-            <Upload className={cn('h-4 w-4', isImportingVideo && 'animate-pulse')} />
-            {isImportingVideo ? 'Importing...' : 'Import Video'}
+            <Upload className={cn('h-4 w-4', (isVideo ? isImportingVideo : isImportingImage) && 'animate-pulse')} />
+            {isVideo ? (isImportingVideo ? 'Importing...' : 'Import Video') : (isImportingImage ? 'Importing...' : 'Import Image')}
           </Button>
 
-          {Object.values(floatingMonitors).length === 0 ? (
+          {visualAssets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
-              <p className="text-sm font-medium text-foreground">No video assets</p>
-              <p className="mt-1 text-xs text-muted-foreground">Import a video, open its floating monitor, then add its timeline to project.</p>
+              <p className="text-sm font-medium text-foreground">No {isVideo ? 'video' : 'image'} assets</p>
+              <p className="mt-1 text-xs text-muted-foreground">Import {isVideo ? 'a video and edit its timeline' : 'an image'}, then add it as a monitor.</p>
             </div>
           ) : (
-            Object.values(floatingMonitors).map((monitor) => (
+            visualAssets.map((monitor) => (
               <div key={monitor.id} className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
                 <div className="flex items-start gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500">
@@ -187,28 +182,39 @@ export function MediaAssetsPanel() {
                     <Trash className="h-4 w-4" />
                   </button>
                 </div>
-                <video
-                  src={monitor.url}
-                  muted
-                  preload="metadata"
-                  onLoadedMetadata={(event) => {
-                    const duration = event.currentTarget.duration
-                    if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                      updateFloatingMonitor(monitor.id, {
-                        duration,
-                        timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
-                      })
-                    }
-                  }}
-                  className="mt-3 aspect-video w-full rounded-md bg-black object-cover"
-                />
+                {isVideo ? (
+                  <video
+                    src={monitor.url}
+                    muted
+                    preload="metadata"
+                    onLoadedMetadata={(event) => {
+                      const duration = event.currentTarget.duration
+                      if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                        updateFloatingMonitor(monitor.id, { duration, timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration })
+                      }
+                    }}
+                    className="mt-3 aspect-video w-full rounded-md bg-black object-cover"
+                  />
+                ) : (
+                  <img src={monitor.url} alt="" className="mt-3 aspect-video w-full rounded-md bg-black object-cover" />
+                )}
+                {isVideo && (
+                  <Button
+                    variant="outline"
+                    onClick={() => beginAssetTimelineEdit(monitor.id)}
+                    className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                  >
+                    <Video className="h-4 w-4 text-violet-500" />
+                    Edit in timeline
+                  </Button>
+                )}
                 <Button
                   variant="outline"
-                  onClick={() => setActiveMonitorId(monitor.id)}
-                  className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                  onClick={() => addFloatingMonitorRegion(monitor.id, { startTime: currentTime })}
+                  disabled={monitor.timelineDuration <= 0}
+                  className={`${isVideo ? 'mt-2' : 'mt-3'} w-full gap-2 border-violet-500/30 hover:bg-violet-500/10`}
                 >
-                  <Video className="h-4 w-4 text-violet-500" />
-                  Open floating monitor
+                  Add monitor to main timeline
                 </Button>
               </div>
             ))
@@ -337,126 +343,6 @@ export function MediaAssetsPanel() {
         </div>
 
         {renderCategoryContent()}
-      </div>
-      {activeMonitor && (
-        <FloatingMonitorEditor
-          monitor={activeMonitor}
-          mainCurrentTime={currentTime}
-          onClose={() => setActiveMonitorId(null)}
-          onUpdate={updateFloatingMonitor}
-          onAddToTimeline={() => addFloatingMonitorRegion(activeMonitor.id, { startTime: currentTime })}
-        />
-      )}
-    </div>
-  )
-}
-
-function FloatingMonitorEditor({
-  monitor,
-  mainCurrentTime,
-  onClose,
-  onUpdate,
-  onAddToTimeline,
-}: {
-  monitor: FloatingMonitor
-  mainCurrentTime: number
-  onClose: () => void
-  onUpdate: (id: string, updates: { duration?: number; timelineStart?: number; timelineDuration?: number }) => void
-  onAddToTimeline: () => void
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [time, setTime] = useState(monitor.timelineStart)
-  const timelineEnd = monitor.timelineStart + monitor.timelineDuration
-  const endValue = Math.min(monitor.duration, timelineEnd)
-
-  const updateTimelineStart = (timelineStart: number) => {
-    const safeStart = Math.max(0, Math.min(timelineStart, Math.max(0, endValue - 0.1)))
-    onUpdate(monitor.id, { timelineStart: safeStart, timelineDuration: Math.max(0.1, endValue - safeStart) })
-  }
-
-  const updateTimelineEnd = (timelineEndValue: number) => {
-    const safeEnd = Math.max(monitor.timelineStart + 0.1, Math.min(timelineEndValue, monitor.duration))
-    onUpdate(monitor.id, { timelineDuration: safeEnd - monitor.timelineStart })
-  }
-
-  return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/65 p-6 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Floating monitor">
-      <div className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-violet-500/35 bg-card shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Floating monitor</p>
-            <p className="text-xs text-muted-foreground">{monitor.name} · independent source timeline</p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-        </div>
-        <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1fr)_220px]">
-          <div>
-            <video
-              ref={videoRef}
-              src={monitor.url}
-              muted
-              controls
-              onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
-              onLoadedMetadata={(event) => {
-                const duration = event.currentTarget.duration
-                if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                  onUpdate(monitor.id, { duration, timelineDuration: monitor.timelineDuration || duration })
-                }
-                event.currentTarget.currentTime = monitor.timelineStart
-              }}
-              className="aspect-video w-full rounded-lg bg-black"
-            />
-            <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
-              <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Monitor timeline</span>
-                <span>{formatTime(time, true)} / {formatTime(monitor.duration, true)}</span>
-              </div>
-              <div className="relative h-8 rounded-md bg-muted/70">
-                <div
-                  className="absolute inset-y-1 rounded bg-violet-500/60"
-                  style={{
-                    left: `${monitor.duration ? (monitor.timelineStart / monitor.duration) * 100 : 0}%`,
-                    width: `${monitor.duration ? (monitor.timelineDuration / monitor.duration) * 100 : 100}%`,
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">In point</label>
-              <input
-                type="range"
-                min={0}
-                max={Math.max(0, endValue - 0.1)}
-                step={0.01}
-                value={monitor.timelineStart}
-                onChange={(event) => updateTimelineStart(Number(event.target.value))}
-                className="mt-2 w-full accent-violet-500"
-              />
-              <p className="mt-1 text-xs tabular-nums text-foreground">{formatTime(monitor.timelineStart, true)}</p>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Out point</label>
-              <input
-                type="range"
-                min={Math.min(monitor.duration, monitor.timelineStart + 0.1)}
-                max={monitor.duration || 0.1}
-                step={0.01}
-                value={endValue}
-                onChange={(event) => updateTimelineEnd(Number(event.target.value))}
-                className="mt-2 w-full accent-violet-500"
-              />
-              <p className="mt-1 text-xs tabular-nums text-foreground">{formatTime(endValue, true)}</p>
-            </div>
-            <div className="rounded-lg border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-              Add at main timeline: {formatTime(mainCurrentTime, true)}
-            </div>
-            <Button onClick={onAddToTimeline} disabled={monitor.timelineDuration <= 0} className="w-full bg-violet-600 text-white hover:bg-violet-500">
-              Add monitor to main timeline
-            </Button>
-          </div>
-        </div>
       </div>
     </div>
   )

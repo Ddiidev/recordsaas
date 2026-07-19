@@ -1304,10 +1304,39 @@ export const drawScene = (
     const renderSource = floatingMonitorSources[region.monitorId]
     if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
 
-    const width = Math.max(1, Math.min(outputWidth, outputWidth * monitor.width))
-    const height = Math.max(1, Math.min(outputHeight, outputHeight * monitor.height))
-    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * monitor.x))
-    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * monitor.y))
+    let source: CanvasImageSource = renderSource.source
+    let sourceWidth = renderSource.width
+    let sourceHeight = renderSource.height
+    if (monitor.timeline && typeof document !== 'undefined') {
+      const nestedCanvas = document.createElement('canvas')
+      nestedCanvas.width = sourceWidth
+      nestedCanvas.height = sourceHeight
+      const nestedContext = nestedCanvas.getContext('2d')
+      if (nestedContext) {
+        const nestedState: RenderableState = {
+          ...state,
+          ...monitor.timeline,
+          videoDimensions:
+            monitor.timeline.videoDimensions.width > 0 && monitor.timeline.videoDimensions.height > 0
+              ? monitor.timeline.videoDimensions
+              : { width: sourceWidth, height: sourceHeight },
+          floatingMonitors: {},
+          floatingMonitorRegions: {},
+          isWebcamVisible: false,
+          metadata: [],
+          cursorImages: {},
+          cursorBitmapsToRender: new Map(),
+        }
+        const assetTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
+        drawScene(nestedContext, nestedState, source, null, assetTime, sourceWidth, sourceHeight, null)
+        source = nestedCanvas
+      }
+    }
+
+    const width = Math.max(1, Math.min(outputWidth, outputWidth * region.width))
+    const height = Math.max(1, Math.min(outputHeight, outputHeight * region.height))
+    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * region.x))
+    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * region.y))
     const config: MediaRectConfig = {
       x,
       y,
@@ -1322,9 +1351,20 @@ export const drawScene = (
       borderColor: 'rgba(255, 255, 255, 0.72)',
       zIndex: 10_000 + region.zIndex,
     }
+    if (region.swapWithMain && desktopSource) {
+      draws.push({
+        zIndex: config.zIndex,
+        draw: () => drawMediaToConfig(config, desktopSource, desktopDims.width, desktopDims.height),
+      })
+      draws.push({
+        zIndex: config.zIndex + 0.1,
+        draw: () => drawMediaToConfig(mainRectConfig, source, sourceWidth, sourceHeight, false, 1, region.crop),
+      })
+      return
+    }
     draws.push({
       zIndex: config.zIndex,
-      draw: () => drawMediaToConfig(config, renderSource.source, renderSource.width, renderSource.height),
+      draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, false, 1, region.crop),
     })
   })
 

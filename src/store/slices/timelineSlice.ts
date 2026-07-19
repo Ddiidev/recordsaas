@@ -692,6 +692,12 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         startTime,
         duration: regionDuration,
         sourceStart: monitor.timelineStart,
+        x: monitor.x,
+        y: monitor.y,
+        width: monitor.width,
+        height: monitor.height,
+        crop: { top: 0, right: 0, bottom: 0, left: 0 },
+        swapWithMain: false,
         zIndex: 0,
       }
       state.selectedRegionId = id

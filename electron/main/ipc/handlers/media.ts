@@ -15,6 +15,7 @@ type MediaImportResult = {
 
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v']
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 
 const getRuntimeMediaDir = (): string => {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '.'
@@ -85,4 +86,8 @@ export async function handleImportMediaAudio(_event: IpcMainInvokeEvent): Promis
 
 export async function handleImportMediaVideo(_event: IpcMainInvokeEvent): Promise<MediaImportResult> {
   return importMediaAsset('Import Video Asset', VIDEO_EXTENSIONS)
+}
+
+export async function handleImportMediaImage(_event: IpcMainInvokeEvent): Promise<MediaImportResult> {
+  return importMediaAsset('Import Image Asset', IMAGE_EXTENSIONS)
 }

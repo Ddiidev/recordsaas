@@ -231,6 +231,7 @@ export const electronAPI = {
     ipcRenderer.invoke('recording:import-project-file', projectFilePath),
   importMediaAudioAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-audio'),
   importMediaVideoAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-video'),
+  importMediaImageAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-image'),
   getCursorScale: (): Promise<number> => ipcRenderer.invoke('desktop:get-cursor-scale'),
   setCursorScale: (scale: number): void => ipcRenderer.send('desktop:set-cursor-scale', scale),
 

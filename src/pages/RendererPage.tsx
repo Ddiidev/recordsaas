@@ -741,6 +741,19 @@ const loadBackgroundImage = async (
   }
 }
 
+const loadMediaImage = async (path: string): Promise<ImageBitmap | null> => {
+  const url = toMediaUrl(path)
+  if (!url || !('createImageBitmap' in window)) return null
+  try {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return createImageBitmap(await response.blob())
+  } catch (error) {
+    log.error(`[RendererPage] Failed to load monitor image: ${url}`, error)
+    return null
+  }
+}
+
 export function RendererPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -758,6 +771,7 @@ export function RendererPage() {
         let frameProvider: VideoFrameProvider | null = null
         let webcamFrameProvider: VideoFrameProvider | null = null
         const floatingMonitorFrameProviders = new Map<string, VideoFrameProvider>()
+        const floatingMonitorImages = new Map<string, ImageBitmap>()
         let bgImage: ExportBackgroundImage | null = null
 
         try {
@@ -832,7 +846,10 @@ export function RendererPage() {
             typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string',
           )
           const floatingMonitorPaths = Object.entries(projectStateWithCursorBitmaps.floatingMonitors || {}).filter(
-            ([, monitor]) => typeof monitor.path === 'string' && monitor.path.length > 0,
+            ([, monitor]) => typeof monitor.path === 'string' && monitor.path.length > 0 && monitor.kind !== 'image',
+          )
+          const floatingMonitorImagePaths = Object.entries(projectStateWithCursorBitmaps.floatingMonitors || {}).filter(
+            ([, monitor]) => typeof monitor.path === 'string' && monitor.path.length > 0 && monitor.kind === 'image',
           )
           const memoryBudget = await resolveExportMemoryBudget(
             outputWidth,
@@ -863,6 +880,10 @@ export function RendererPage() {
             for (const [monitorId, monitor] of floatingMonitorPaths) {
               const provider = await createVideoFrameProvider(monitor.path, memoryBudget, memoryController)
               floatingMonitorFrameProviders.set(monitorId, provider)
+            }
+            for (const [monitorId, monitor] of floatingMonitorImagePaths) {
+              const image = await loadMediaImage(monitor.path)
+              if (image) floatingMonitorImages.set(monitorId, image)
             }
           } catch (e) {
             const msg = e instanceof Error ? e.message : 'Unknown decoder initialization error'
@@ -1102,7 +1123,7 @@ export function RendererPage() {
 
             let mainFrame: VideoFrame | null = null
             let webcamFrame: VideoFrame | null = null
-            const floatingMonitorFrames: Record<string, { source: VideoFrame; width: number; height: number }> = {}
+            const floatingMonitorFrames: Record<string, { source: CanvasImageSource; width: number; height: number }> = {}
 
             if (useDecoder && frameProvider) {
               const mainDecodeStartedAt = performance.now()
@@ -1128,6 +1149,11 @@ export function RendererPage() {
             )
             await Promise.all(
               activeFloatingMonitorRegions.map(async (region) => {
+                const image = floatingMonitorImages.get(region.monitorId)
+                if (image) {
+                  floatingMonitorFrames[region.monitorId] = { source: image, width: image.width, height: image.height }
+                  return
+                }
                 const provider = floatingMonitorFrameProviders.get(region.monitorId)
                 if (!provider || floatingMonitorFrames[region.monitorId]) return
                 const monitorFrame = await provider.getFrameForTime(
@@ -1170,7 +1196,9 @@ export function RendererPage() {
               exportSettings.quality,
               floatingMonitorFrames,
             )
-            Object.values(floatingMonitorFrames).forEach(({ source }) => source.close())
+            Object.values(floatingMonitorFrames).forEach(({ source }) => {
+              if (source instanceof VideoFrame) source.close()
+            })
             perfStats.drawMs += performance.now() - drawStartedAt
 
             if (videoEncoder) {
@@ -1228,12 +1256,14 @@ export function RendererPage() {
           if (frameProvider) frameProvider.close()
           if (webcamFrameProvider) webcamFrameProvider.close()
           floatingMonitorFrameProviders.forEach((provider) => provider.close())
+          floatingMonitorImages.forEach((image) => image.close())
         } catch (error) {
           log.error('[RendererPage] CRITICAL ERROR during render process:', error)
           bgImage?.close()
           if (frameProvider) frameProvider.close()
           if (webcamFrameProvider) webcamFrameProvider.close()
           floatingMonitorFrameProviders.forEach((provider) => provider.close())
+          floatingMonitorImages.forEach((image) => image.close())
           const message = error instanceof Error ? error.message : 'Unknown render error'
           window.electronAPI.sendRenderError({ error: message })
         }

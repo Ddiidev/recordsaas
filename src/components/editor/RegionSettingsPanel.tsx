@@ -613,7 +613,7 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
     <div className="space-y-6">
       <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
         <p className="text-sm font-medium text-foreground">{monitor?.name || 'Floating monitor'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">Independent monitor timeline is placed as visual overlay here.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Arraste no preview. Ajuste tamanho, crop e swap aqui.</p>
       </div>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
@@ -627,6 +627,42 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
           value={region.sourceStart}
           onChange={(value) => updateRegion(region.id, { sourceStart: value })}
         />
+      </div>
+      <div className="space-y-3">
+        <p className="text-sm font-semibold text-sidebar-foreground">Monitor layout</p>
+        {([
+          ['x', 'Horizontal position'],
+          ['y', 'Vertical position'],
+          ['width', 'Width'],
+          ['height', 'Height'],
+        ] as const).map(([key, label]) => (
+          <div key={key} className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{label}</span>
+              <span className="font-semibold text-violet-500">{Math.round(region[key] * 100)}%</span>
+            </div>
+            <Slider min={key === 'width' || key === 'height' ? 0.1 : 0} max={1} step={0.01} value={region[key]} onChange={(value) => updateRegion(region.id, { [key]: value })} />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-3">
+        <p className="text-sm font-semibold text-sidebar-foreground">Crop</p>
+        {(['top', 'right', 'bottom', 'left'] as const).map((edge) => (
+          <div key={edge} className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span className="capitalize">{edge}</span>
+              <span className="font-semibold text-violet-500">{Math.round(region.crop[edge] * 100)}%</span>
+            </div>
+            <Slider min={0} max={0.9} step={0.01} value={region.crop[edge]} onChange={(value) => updateRegion(region.id, { crop: { ...region.crop, [edge]: value } })} />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between rounded-lg border border-border p-3">
+        <div>
+          <p className="text-sm font-medium text-foreground">Swap with main video</p>
+          <p className="text-xs text-muted-foreground">Monitor ocupa frame principal neste trecho.</p>
+        </div>
+        <Switch checked={region.swapWithMain} onCheckedChange={(swapWithMain) => updateRegion(region.id, { swapWithMain })} />
       </div>
       <Button
         variant="outline"

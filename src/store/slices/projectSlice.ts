@@ -15,6 +15,7 @@ import type {
   ChangeSoundRegion,
   FloatingMonitor,
   FloatingMonitorRegion,
+  AssetTimelineState,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
@@ -37,6 +38,7 @@ export const initialProjectState: ProjectState = {
   systemAudioMuted: false,
   mediaAudioClip: null,
   floatingMonitors: {},
+  assetTimelineEditing: null,
   videoDimensions: { width: 0, height: 0 },
   recordingGeometry: null,
   screenSize: null,
@@ -65,6 +67,49 @@ const fallbackNameFromPath = (filePath: string): string => {
 
 const clampAudioVolume = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : 1
+
+const cloneSerializable = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+
+const createAssetTimeline = (duration = 0, videoDimensions: VideoDimensions = { width: 0, height: 0 }): AssetTimelineState => ({
+  duration,
+  videoDimensions,
+  frameStyles: cloneSerializable(initialFrameState.frameStyles),
+  aspectRatio: initialFrameState.aspectRatio,
+  timelineLanes: [createDefaultTimelineLane()],
+  zoomRegions: {},
+  cutRegions: {},
+  speedRegions: {},
+  blurRegions: {},
+  swapRegions: {},
+  selectedRegionId: null,
+})
+
+const parseAssetTimeline = (
+  value: unknown,
+  duration: number,
+  videoDimensions: VideoDimensions = { width: 0, height: 0 },
+): AssetTimelineState => {
+  const fallback = createAssetTimeline(duration, videoDimensions)
+  if (!value || typeof value !== 'object') return fallback
+  const timeline = value as Partial<AssetTimelineState>
+  return {
+    ...fallback,
+    duration: typeof timeline.duration === 'number' && Number.isFinite(timeline.duration) ? Math.max(0, timeline.duration) : duration,
+    videoDimensions:
+      timeline.videoDimensions && typeof timeline.videoDimensions.width === 'number' && typeof timeline.videoDimensions.height === 'number'
+        ? timeline.videoDimensions
+        : videoDimensions,
+    frameStyles: timeline.frameStyles || fallback.frameStyles,
+    aspectRatio: timeline.aspectRatio || fallback.aspectRatio,
+    timelineLanes: Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0 ? timeline.timelineLanes : fallback.timelineLanes,
+    zoomRegions: timeline.zoomRegions || {},
+    cutRegions: timeline.cutRegions || {},
+    speedRegions: timeline.speedRegions || {},
+    blurRegions: timeline.blurRegions || {},
+    swapRegions: timeline.swapRegions || {},
+    selectedRegionId: typeof timeline.selectedRegionId === 'string' ? timeline.selectedRegionId : null,
+  }
+}
 
 const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
   if (!value || typeof value !== 'object') return null
@@ -97,7 +142,8 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
       if (typeof monitor.path !== 'string' || monitor.path.length === 0) return monitors
 
       const path = normalizeMediaPath(monitor.path)
-      const duration = typeof monitor.duration === 'number' && Number.isFinite(monitor.duration) ? clampToNonNegative(monitor.duration) : 0
+      const kind = monitor.kind === 'image' ? 'image' : 'video'
+      const duration = typeof monitor.duration === 'number' && Number.isFinite(monitor.duration) ? clampToNonNegative(monitor.duration) : kind === 'image' ? 5 : 0
       const timelineStart =
         typeof monitor.timelineStart === 'number' && Number.isFinite(monitor.timelineStart)
           ? Math.min(Math.max(0, monitor.timelineStart), duration)
@@ -110,6 +156,7 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
 
       monitors[id] = {
         id,
+        kind,
         path,
         url: toMediaUrl(path) || '',
         name: typeof monitor.name === 'string' && monitor.name.length > 0 ? monitor.name : fallbackNameFromPath(path),
@@ -120,6 +167,7 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         y: typeof monitor.y === 'number' && Number.isFinite(monitor.y) ? Math.max(0, Math.min(monitor.y, 1)) : 0.68,
         width: typeof monitor.width === 'number' && Number.isFinite(monitor.width) ? Math.max(0.1, Math.min(monitor.width, 1)) : 0.28,
         height: typeof monitor.height === 'number' && Number.isFinite(monitor.height) ? Math.max(0.1, Math.min(monitor.height, 1)) : 0.28,
+        timeline: parseAssetTimeline(monitor.timeline, duration),
       }
       return monitors
     },
@@ -151,6 +199,12 @@ const parseFloatingMonitorRegions = (
         startTime,
         duration,
         sourceStart,
+        x: typeof region.x === 'number' && Number.isFinite(region.x) ? Math.max(0, Math.min(region.x, 1)) : monitors[region.monitorId].x,
+        y: typeof region.y === 'number' && Number.isFinite(region.y) ? Math.max(0, Math.min(region.y, 1)) : monitors[region.monitorId].y,
+        width: typeof region.width === 'number' && Number.isFinite(region.width) ? Math.max(0.1, Math.min(region.width, 1)) : monitors[region.monitorId].width,
+        height: typeof region.height === 'number' && Number.isFinite(region.height) ? Math.max(0.1, Math.min(region.height, 1)) : monitors[region.monitorId].height,
+        crop: normalizeWebcamCrop(region.crop),
+        swapWithMain: region.swapWithMain === true,
         zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
       }
       return regions
@@ -897,6 +951,13 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   setVideoDimensions: (dims) =>
     set((state) => {
       state.videoDimensions = dims
+      if (state.assetTimelineEditing) {
+        const monitor = state.floatingMonitors[state.assetTimelineEditing.monitorId]
+        if (monitor) {
+          monitor.timeline = monitor.timeline || createAssetTimeline(state.duration, dims)
+          monitor.timeline.videoDimensions = cloneSerializable(dims)
+        }
+      }
       if (!state.recordingGeometry) {
         state.recordingGeometry = { x: 0, y: 0, width: dims.width, height: dims.height }
       }
@@ -908,6 +969,17 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   setDuration: (duration) =>
     set((state) => {
       state.duration = duration
+      if (state.assetTimelineEditing) {
+        const monitor = state.floatingMonitors[state.assetTimelineEditing.monitorId]
+        if (monitor) {
+          monitor.duration = Math.max(0, duration)
+          monitor.timelineStart = 0
+          monitor.timelineDuration = Math.max(0, duration)
+          monitor.timeline = monitor.timeline || createAssetTimeline(duration, state.videoDimensions)
+          monitor.timeline.duration = Math.max(0, duration)
+        }
+        return
+      }
       Object.values({
         ...state.zoomRegions,
         ...state.cutRegions,
@@ -1093,22 +1165,24 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       }
     })
   },
-  addFloatingMonitor: ({ path, name }) => {
+  addFloatingMonitor: ({ path, name, kind = 'video' }) => {
     set((state) => {
       const normalizedPath = normalizeMediaPath(path)
       const id = `floating-monitor-${Date.now()}`
       state.floatingMonitors[id] = {
         id,
+        kind,
         path: normalizedPath,
         url: toMediaUrl(normalizedPath) || '',
         name: name.trim() || fallbackNameFromPath(normalizedPath),
-        duration: 0,
+        duration: kind === 'image' ? 5 : 0,
         timelineStart: 0,
-        timelineDuration: 0,
+        timelineDuration: kind === 'image' ? 5 : 0,
         x: 0.68,
         y: 0.68,
         width: 0.28,
         height: 0.28,
+        timeline: createAssetTimeline(kind === 'image' ? 5 : 0),
       }
     })
   },
@@ -1137,6 +1211,121 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       if (shouldClearSelection) {
         state.selectedRegionId = null
       }
+    })
+  },
+  beginAssetTimelineEdit: (id) => {
+    set((state) => {
+      if (state.assetTimelineEditing) return
+      const monitor = state.floatingMonitors[id]
+      if (!monitor) return
+
+      const inheritedDuration = monitor.path === state.videoPath ? state.duration : 0
+      const sourceDuration = monitor.duration || inheritedDuration
+      if (sourceDuration > 0 && monitor.duration !== sourceDuration) {
+        monitor.duration = sourceDuration
+        monitor.timelineDuration = sourceDuration
+      }
+      const assetTimeline = cloneSerializable(
+        monitor.timeline?.duration ? monitor.timeline : createAssetTimeline(sourceDuration, state.videoDimensions),
+      )
+      state.assetTimelineEditing = {
+        monitorId: id,
+        mainProject: {
+          videoPath: state.videoPath,
+          videoUrl: state.videoUrl,
+          audioPath: state.audioPath,
+          audioUrl: state.audioUrl,
+          systemAudioPath: state.systemAudioPath,
+          systemAudioUrl: state.systemAudioUrl,
+          duration: state.duration,
+          videoDimensions: cloneSerializable(state.videoDimensions),
+          frameStyles: cloneSerializable(state.frameStyles),
+          aspectRatio: state.aspectRatio,
+          timelineLanes: cloneSerializable(state.timelineLanes),
+          zoomRegions: cloneSerializable(state.zoomRegions),
+          cutRegions: cloneSerializable(state.cutRegions),
+          speedRegions: cloneSerializable(state.speedRegions),
+          blurRegions: cloneSerializable(state.blurRegions),
+          swapRegions: cloneSerializable(state.swapRegions),
+          floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
+          isWebcamVisible: state.isWebcamVisible,
+          selectedRegionId: state.selectedRegionId,
+          currentTime: state.currentTime,
+        },
+      }
+
+      state.videoPath = monitor.path
+      state.videoUrl = monitor.url
+      state.audioPath = null
+      state.audioUrl = null
+      state.systemAudioPath = null
+      state.systemAudioUrl = null
+      state.duration = assetTimeline.duration || monitor.duration
+      state.videoDimensions = assetTimeline.videoDimensions
+      state.frameStyles = assetTimeline.frameStyles
+      state.aspectRatio = assetTimeline.aspectRatio
+      state.timelineLanes = assetTimeline.timelineLanes
+      state.zoomRegions = assetTimeline.zoomRegions
+      state.cutRegions = assetTimeline.cutRegions
+      state.speedRegions = assetTimeline.speedRegions
+      state.blurRegions = assetTimeline.blurRegions
+      state.swapRegions = assetTimeline.swapRegions
+      state.floatingMonitorRegions = {}
+      state.mediaAudioRegions = {}
+      state.changeSoundRegions = {}
+      state.isWebcamVisible = false
+      state.selectedRegionId = assetTimeline.selectedRegionId
+      state.currentTime = 0
+      state.isPlaying = false
+    })
+  },
+  finishAssetTimelineEdit: () => {
+    set((state) => {
+      const editing = state.assetTimelineEditing
+      if (!editing) return
+      const monitor = state.floatingMonitors[editing.monitorId]
+      if (monitor) {
+        monitor.duration = Math.max(monitor.duration, state.duration)
+        monitor.timelineStart = 0
+        monitor.timelineDuration = state.duration
+        monitor.timeline = {
+          duration: state.duration,
+          videoDimensions: cloneSerializable(state.videoDimensions),
+          frameStyles: cloneSerializable(state.frameStyles),
+          aspectRatio: state.aspectRatio,
+          timelineLanes: cloneSerializable(state.timelineLanes),
+          zoomRegions: cloneSerializable(state.zoomRegions),
+          cutRegions: cloneSerializable(state.cutRegions),
+          speedRegions: cloneSerializable(state.speedRegions),
+          blurRegions: cloneSerializable(state.blurRegions),
+          swapRegions: cloneSerializable(state.swapRegions),
+          selectedRegionId: state.selectedRegionId,
+        }
+      }
+
+      const main = editing.mainProject
+      state.videoPath = main.videoPath
+      state.videoUrl = main.videoUrl
+      state.audioPath = main.audioPath
+      state.audioUrl = main.audioUrl
+      state.systemAudioPath = main.systemAudioPath
+      state.systemAudioUrl = main.systemAudioUrl
+      state.duration = main.duration
+      state.videoDimensions = main.videoDimensions
+      state.frameStyles = main.frameStyles
+      state.aspectRatio = main.aspectRatio
+      state.timelineLanes = main.timelineLanes
+      state.zoomRegions = main.zoomRegions
+      state.cutRegions = main.cutRegions
+      state.speedRegions = main.speedRegions
+      state.blurRegions = main.blurRegions
+      state.swapRegions = main.swapRegions
+      state.floatingMonitorRegions = main.floatingMonitorRegions
+      state.isWebcamVisible = main.isWebcamVisible
+      state.selectedRegionId = main.selectedRegionId
+      state.currentTime = main.currentTime
+      state.isPlaying = false
+      state.assetTimelineEditing = null
     })
   },
   setOriginalProjectPath: (path) => {

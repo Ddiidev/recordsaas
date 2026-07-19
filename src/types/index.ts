@@ -193,6 +193,12 @@ export interface FloatingMonitorRegion {
   startTime: number
   duration: number
   sourceStart: number
+  x: number
+  y: number
+  width: number
+  height: number
+  crop: WebcamCrop
+  swapWithMain: boolean
   zIndex: number
 }
 
@@ -304,6 +310,7 @@ export interface MediaAudioClip {
 
 export interface FloatingMonitor {
   id: string
+  kind: 'video' | 'image'
   path: string
   url: string
   name: string
@@ -314,6 +321,47 @@ export interface FloatingMonitor {
   y: number
   width: number
   height: number
+  timeline?: AssetTimelineState
+}
+
+export interface AssetTimelineState {
+  duration: number
+  videoDimensions: VideoDimensions
+  frameStyles: FrameStyles
+  aspectRatio: AspectRatio
+  timelineLanes: TimelineLane[]
+  zoomRegions: Record<string, ZoomRegion>
+  cutRegions: Record<string, CutRegion>
+  speedRegions: Record<string, SpeedRegion>
+  blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
+  selectedRegionId: string | null
+}
+
+export interface AssetTimelineEditing {
+  monitorId: string
+  mainProject: {
+    videoPath: string | null
+    videoUrl: string | null
+    audioPath: string | null
+    audioUrl: string | null
+    systemAudioPath: string | null
+    systemAudioUrl: string | null
+    duration: number
+    videoDimensions: VideoDimensions
+    frameStyles: FrameStyles
+    aspectRatio: AspectRatio
+    timelineLanes: TimelineLane[]
+    zoomRegions: Record<string, ZoomRegion>
+    cutRegions: Record<string, CutRegion>
+    speedRegions: Record<string, SpeedRegion>
+    blurRegions: Record<string, BlurRegion>
+    swapRegions: Record<string, CameraSwapRegion>
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+    isWebcamVisible: boolean
+    selectedRegionId: string | null
+    currentTime: number
+  }
 }
 
 // --- Slice State & Actions Types ---
@@ -330,6 +378,7 @@ export interface ProjectState {
   systemAudioMuted: boolean
   mediaAudioClip: MediaAudioClip | null
   floatingMonitors: Record<string, FloatingMonitor>
+  assetTimelineEditing: AssetTimelineEditing | null
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
   screenSize: ScreenSize | null
@@ -365,9 +414,11 @@ export interface ProjectActions {
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void
   clearMediaAudioClip: () => void
-  addFloatingMonitor: (monitor: { path: string; name: string }) => void
+  addFloatingMonitor: (monitor: { path: string; name: string; kind?: 'video' | 'image' }) => void
   updateFloatingMonitor: (id: string, updates: Partial<Omit<FloatingMonitor, 'id' | 'path' | 'url'>>) => void
   removeFloatingMonitor: (id: string) => void
+  beginAssetTimelineEdit: (id: string) => void
+  finishAssetTimelineEdit: () => void
   setOriginalProjectPath: (path: string) => void
 }
 

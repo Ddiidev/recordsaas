@@ -20,6 +20,7 @@ import { cn } from '../../lib/utils'
 import { toMediaUrl } from '../../lib/media-url'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
+import { FloatingMonitorOverlayEditor } from './preview/FloatingMonitorOverlayEditor'
 import type { ChangeSoundSourceKey } from '../../types'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
@@ -87,6 +88,7 @@ export const Preview = memo(
       mediaAudioRegions,
       floatingMonitors,
       floatingMonitorRegions,
+      updateFloatingMonitor,
       changeSoundRegions,
       zoomRegions,
       cutRegions,
@@ -127,6 +129,7 @@ export const Preview = memo(
         mediaAudioRegions: state.mediaAudioRegions,
         floatingMonitors: state.floatingMonitors,
         floatingMonitorRegions: state.floatingMonitorRegions,
+        updateFloatingMonitor: state.updateFloatingMonitor,
         changeSoundRegions: state.changeSoundRegions,
         zoomRegions: state.zoomRegions,
         cutRegions: state.cutRegions,
@@ -170,6 +173,7 @@ export const Preview = memo(
     const systemAudioRef = useRef<HTMLAudioElement>(null)
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const floatingMonitorVideoRefs = useRef(new Map<string, HTMLVideoElement>())
+    const floatingMonitorImageRefs = useRef(new Map<string, HTMLImageElement>())
     const animationFrameId = useRef<number>()
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
@@ -296,6 +300,7 @@ export const Preview = memo(
         )
 
         Object.values(floatingMonitors).forEach((monitor) => {
+          if (monitor.kind === 'image') return
           const monitorVideo = floatingMonitorVideoRefs.current.get(monitor.id)
           if (!monitorVideo) return
           const activeRegion = getTopActiveRegionAtTime(
@@ -464,14 +469,20 @@ export const Preview = memo(
         }
       }
 
-      const floatingMonitorSources = Object.fromEntries(
-        Array.from(floatingMonitorVideoRefs.current.entries())
+      const floatingMonitorSources = Object.fromEntries([
+        ...Array.from(floatingMonitorVideoRefs.current.entries())
           .filter(([, monitorVideo]) => monitorVideo.videoWidth > 0 && monitorVideo.videoHeight > 0)
           .map(([monitorId, monitorVideo]) => [
             monitorId,
             { source: monitorVideo, width: monitorVideo.videoWidth, height: monitorVideo.videoHeight },
           ]),
-      )
+        ...Array.from(floatingMonitorImageRefs.current.entries())
+          .filter(([, monitorImage]) => monitorImage.naturalWidth > 0 && monitorImage.naturalHeight > 0)
+          .map(([monitorId, monitorImage]) => [
+            monitorId,
+            { source: monitorImage, width: monitorImage.naturalWidth, height: monitorImage.naturalHeight },
+          ]),
+      ])
       drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage, undefined, undefined, floatingMonitorSources)
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
@@ -972,6 +983,17 @@ export const Preview = memo(
               onUpdateRegion={(id, updates) => updateRegion(id, updates)}
             />
           )}
+          {videoUrl && (
+            <FloatingMonitorOverlayEditor
+              canvasRef={canvasRef}
+              regions={floatingMonitorRegions}
+              currentTime={previewTime}
+              timelineLanes={timelineLanes}
+              selectedRegionId={selectedRegionId}
+              onSelectRegion={setSelectedRegionId}
+              onUpdateRegion={(id, updates) => updateRegion(id, updates)}
+            />
+          )}
         </div>
 
         <video
@@ -1025,20 +1047,39 @@ export const Preview = memo(
             style={{ display: 'none' }}
           />
         )}
-        {Object.values(floatingMonitors).map((monitor) => (
-          <video
-            key={monitor.id}
-            ref={(element) => {
-              if (element) floatingMonitorVideoRefs.current.set(monitor.id, element)
-              else floatingMonitorVideoRefs.current.delete(monitor.id)
-            }}
-            src={monitor.url}
+        {Object.values(floatingMonitors).map((monitor) =>
+          monitor.kind === 'image' ? (
+            <img
+              key={monitor.id}
+              ref={(element) => {
+                if (element) floatingMonitorImageRefs.current.set(monitor.id, element)
+                else floatingMonitorImageRefs.current.delete(monitor.id)
+              }}
+              src={monitor.url}
+              alt=""
+              style={{ display: 'none' }}
+            />
+          ) : (
+            <video
+              key={monitor.id}
+              ref={(element) => {
+                if (element) floatingMonitorVideoRefs.current.set(monitor.id, element)
+                else floatingMonitorVideoRefs.current.delete(monitor.id)
+              }}
+              src={monitor.url}
             muted
             playsInline
             preload="auto"
+            onLoadedMetadata={(event) => {
+              const duration = event.currentTarget.duration
+              if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                updateFloatingMonitor(monitor.id, { duration, timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration })
+              }
+            }}
             style={{ display: 'none' }}
-          />
-        ))}
+            />
+          ),
+        )}
 
         {/* Control bar */}
         {videoUrl && (
