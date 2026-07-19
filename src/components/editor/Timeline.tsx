@@ -8,6 +8,7 @@ import { BlurRegionBlock } from './timeline/BlurRegionBlock'
 import { SwapRegionBlock } from './timeline/SwapRegionBlock'
 import { MediaAudioRegionBlock } from './timeline/MediaAudioRegionBlock'
 import { ChangeSoundRegionBlock } from './timeline/ChangeSoundRegionBlock'
+import { FloatingMonitorRegionBlock } from './timeline/FloatingMonitorRegionBlock'
 import { Playhead } from './timeline/Playhead'
 import { cn } from '../../lib/utils'
 import { Scissors, ChevronUp, ChevronDown, Trash, DotsVertical } from '@icons'
@@ -366,8 +367,9 @@ export function Timeline({
     }
   }, [laneActionMenu, sortedLanes])
 
-  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions } =
+  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions, floatingMonitorRegions } =
     useAllRegions()
+  const floatingMonitors = useEditorStore((state) => state.floatingMonitors)
 
   const allRegionsToRender = useMemo(() => {
     const combined = [
@@ -378,6 +380,7 @@ export function Timeline({
       ...Object.values(swapRegions),
       ...Object.values(mediaAudioRegions),
       ...Object.values(changeSoundRegions),
+      ...Object.values(floatingMonitorRegions),
     ]
     if (previewCutRegion) {
       combined.push({ ...previewCutRegion, laneId: previewCutRegion.laneId || fallbackLaneId })
@@ -391,6 +394,7 @@ export function Timeline({
     swapRegions,
     mediaAudioRegions,
     changeSoundRegions,
+    floatingMonitorRegions,
     previewCutRegion,
     fallbackLaneId,
   ])
@@ -405,7 +409,8 @@ export function Timeline({
       blurRegions[dragMovePreview.regionId] ||
       swapRegions[dragMovePreview.regionId] ||
       mediaAudioRegions[dragMovePreview.regionId] ||
-      changeSoundRegions[dragMovePreview.regionId]
+      changeSoundRegions[dragMovePreview.regionId] ||
+      floatingMonitorRegions[dragMovePreview.regionId]
 
     if (!sourceRegion) return null
 
@@ -424,6 +429,7 @@ export function Timeline({
     swapRegions,
     mediaAudioRegions,
     changeSoundRegions,
+    floatingMonitorRegions,
   ])
 
   const noopRegionMouseDown = useCallback(
@@ -778,6 +784,21 @@ export function Timeline({
                         )
                       }
 
+                      if (region.type === 'floating-monitor') {
+                        return (
+                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
+                            <FloatingMonitorRegionBlock
+                              region={region}
+                              name={floatingMonitors[region.monitorId]?.name || 'Floating monitor'}
+                              isSelected={isSelected}
+                              isBeingDragged={draggingRegionId === region.id}
+                              onMouseDown={handleRegionMouseDown}
+                              setRef={(el) => regionRefs.current.set(region.id, el)}
+                            />
+                          </div>
+                        )
+                      }
+
                       return null
                     })}
 
@@ -890,6 +911,21 @@ export function Timeline({
                             <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
                               <ChangeSoundRegionBlock
                                 region={changeSoundPreviewRegion}
+                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                isBeingDragged
+                                onMouseDown={noopRegionMouseDown}
+                                setRef={noopSetRegionRef}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (laneMovePreviewRegion.type === 'floating-monitor') {
+                          return (
+                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                              <FloatingMonitorRegionBlock
+                                region={laneMovePreviewRegion}
+                                name={floatingMonitors[laneMovePreviewRegion.monitorId]?.name || 'Floating monitor'}
                                 isSelected={selectedRegionId === laneMovePreviewRegion.id}
                                 isBeingDragged
                                 onMouseDown={noopRegionMouseDown}

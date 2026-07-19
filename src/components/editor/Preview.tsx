@@ -85,6 +85,8 @@ export const Preview = memo(
       systemAudioMuted,
       mediaAudioClip,
       mediaAudioRegions,
+      floatingMonitors,
+      floatingMonitorRegions,
       changeSoundRegions,
       zoomRegions,
       cutRegions,
@@ -123,6 +125,8 @@ export const Preview = memo(
         systemAudioMuted: state.systemAudioMuted,
         mediaAudioClip: state.mediaAudioClip,
         mediaAudioRegions: state.mediaAudioRegions,
+        floatingMonitors: state.floatingMonitors,
+        floatingMonitorRegions: state.floatingMonitorRegions,
         changeSoundRegions: state.changeSoundRegions,
         zoomRegions: state.zoomRegions,
         cutRegions: state.cutRegions,
@@ -165,6 +169,7 @@ export const Preview = memo(
     const recordingAudioRef = useRef<HTMLAudioElement>(null)
     const systemAudioRef = useRef<HTMLAudioElement>(null)
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
+    const floatingMonitorVideoRefs = useRef(new Map<string, HTMLVideoElement>())
     const animationFrameId = useRef<number>()
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
@@ -289,6 +294,27 @@ export const Preview = memo(
           resumePlayback,
           0.02,
         )
+
+        Object.values(floatingMonitors).forEach((monitor) => {
+          const monitorVideo = floatingMonitorVideoRefs.current.get(monitor.id)
+          if (!monitorVideo) return
+          const activeRegion = getTopActiveRegionAtTime(
+            Object.values(floatingMonitorRegions).filter((region) => region.monitorId === monitor.id),
+            playbackTime,
+            timelineLanes,
+          )
+          if (!activeRegion) {
+            monitorVideo.pause()
+            return
+          }
+          const sourceTime = Math.max(0, activeRegion.sourceStart + playbackTime - activeRegion.startTime)
+          if (monitorVideo.readyState > 0 && Math.abs(monitorVideo.currentTime - sourceTime) > 0.02) {
+            monitorVideo.currentTime = sourceTime
+          }
+          monitorVideo.playbackRate = video?.playbackRate ?? 1
+          if (resumePlayback && monitorVideo.paused) monitorVideo.play().catch(() => {})
+          if (!resumePlayback) monitorVideo.pause()
+        })
       },
       [
         isTimelineScrubbing,
@@ -298,6 +324,9 @@ export const Preview = memo(
         systemAudioVolume,
         videoRef,
         volume,
+        timelineLanes,
+        floatingMonitors,
+        floatingMonitorRegions,
       ],
     )
 
@@ -435,7 +464,15 @@ export const Preview = memo(
         }
       }
 
-      drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage)
+      const floatingMonitorSources = Object.fromEntries(
+        Array.from(floatingMonitorVideoRefs.current.entries())
+          .filter(([, monitorVideo]) => monitorVideo.videoWidth > 0 && monitorVideo.videoHeight > 0)
+          .map(([monitorId, monitorVideo]) => [
+            monitorId,
+            { source: monitorVideo, width: monitorVideo.videoWidth, height: monitorVideo.videoHeight },
+          ]),
+      )
+      drawScene(ctx, state, video, webcamVideo, video.currentTime, canvas.width, canvas.height, bgImage, undefined, undefined, floatingMonitorSources)
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
@@ -476,6 +513,8 @@ export const Preview = memo(
       videoDimensions,
       cursorStyles,
       cursorBitmapsToRender,
+      floatingMonitors,
+      floatingMonitorRegions,
     ])
 
     useEffect(() => {
@@ -986,6 +1025,20 @@ export const Preview = memo(
             style={{ display: 'none' }}
           />
         )}
+        {Object.values(floatingMonitors).map((monitor) => (
+          <video
+            key={monitor.id}
+            ref={(element) => {
+              if (element) floatingMonitorVideoRefs.current.set(monitor.id, element)
+              else floatingMonitorVideoRefs.current.delete(monitor.id)
+            }}
+            src={monitor.url}
+            muted
+            playsInline
+            preload="auto"
+            style={{ display: 'none' }}
+          />
+        ))}
 
         {/* Control bar */}
         {videoUrl && (

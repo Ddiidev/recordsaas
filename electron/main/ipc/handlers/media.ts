@@ -5,7 +5,7 @@ import log from 'electron-log/main'
 import { appState } from '../../state'
 import { ensureDirectoryExists } from '../../lib/utils'
 
-type MediaAudioImportResult = {
+type MediaImportResult = {
   canceled: boolean
   asset?: {
     path: string
@@ -14,6 +14,7 @@ type MediaAudioImportResult = {
 }
 
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg']
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v']
 
 const getRuntimeMediaDir = (): string => {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '.'
@@ -22,16 +23,16 @@ const getRuntimeMediaDir = (): string => {
 
 const sanitizeFileName = (fileName: string): string => fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
 
-export async function handleImportMediaAudio(_event: IpcMainInvokeEvent): Promise<MediaAudioImportResult> {
+const importMediaAsset = async (title: string, extensions: string[]): Promise<MediaImportResult> => {
   const ownerWindow = appState.editorWin || appState.recorderWin
   if (!ownerWindow || ownerWindow.isDestroyed()) {
     return { canceled: true }
   }
 
   const selection = await dialog.showOpenDialog(ownerWindow, {
-    title: 'Import Audio Asset',
+    title,
     properties: ['openFile'],
-    filters: [{ name: 'Audio', extensions: AUDIO_EXTENSIONS }],
+    filters: [{ name: title.replace('Import ', ''), extensions }],
   })
 
   if (selection.canceled || selection.filePaths.length === 0) {
@@ -47,24 +48,11 @@ export async function handleImportMediaAudio(_event: IpcMainInvokeEvent): Promis
 
     const parsed = path.parse(sourceName)
     const timestamp = Date.now()
-    const safeBaseName = sanitizeFileName(parsed.name || 'audio')
-    const safeExtension = (parsed.ext || '.audio').toLowerCase()
+    const safeBaseName = sanitizeFileName(parsed.name || 'media')
+    const safeExtension = (parsed.ext || '.media').toLowerCase()
     const targetPath = path.join(runtimeMediaDir, `${safeBaseName}-${timestamp}${safeExtension}`)
 
     await fs.copyFile(sourcePath, targetPath)
-
-    const previousMediaAudioPath = appState.currentEditorSessionFiles?.mediaAudioPath
-    if (previousMediaAudioPath && previousMediaAudioPath !== targetPath) {
-      try {
-        await fs.unlink(previousMediaAudioPath)
-      } catch (cleanupError) {
-        log.warn('[MediaIPC] Failed to cleanup previous imported media audio:', cleanupError)
-      }
-    }
-
-    if (appState.currentEditorSessionFiles) {
-      appState.currentEditorSessionFiles.mediaAudioPath = targetPath
-    }
 
     return {
       canceled: false,
@@ -74,7 +62,27 @@ export async function handleImportMediaAudio(_event: IpcMainInvokeEvent): Promis
       },
     }
   } catch (error) {
-    log.error('[MediaIPC] Failed to import media audio asset:', error)
+    log.error('[MediaIPC] Failed to import media asset:', error)
     return { canceled: true }
   }
+}
+
+export async function handleImportMediaAudio(_event: IpcMainInvokeEvent): Promise<MediaImportResult> {
+  const previousMediaAudioPath = appState.currentEditorSessionFiles?.mediaAudioPath
+  const result = await importMediaAsset('Import Audio Asset', AUDIO_EXTENSIONS)
+  if (result.asset && appState.currentEditorSessionFiles) {
+    if (previousMediaAudioPath && previousMediaAudioPath !== result.asset.path) {
+      try {
+        await fs.unlink(previousMediaAudioPath)
+      } catch (cleanupError) {
+        log.warn('[MediaIPC] Failed to cleanup previous imported media audio:', cleanupError)
+      }
+    }
+    appState.currentEditorSessionFiles.mediaAudioPath = result.asset.path
+  }
+  return result
+}
+
+export async function handleImportMediaVideo(_event: IpcMainInvokeEvent): Promise<MediaImportResult> {
+  return importMediaAsset('Import Video Asset', VIDEO_EXTENSIONS)
 }

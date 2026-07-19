@@ -13,6 +13,8 @@ import type {
   MediaAudioClip,
   MediaAudioRegion,
   ChangeSoundRegion,
+  FloatingMonitor,
+  FloatingMonitorRegion,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
@@ -34,6 +36,7 @@ export const initialProjectState: ProjectState = {
   systemAudioVolume: 1,
   systemAudioMuted: false,
   mediaAudioClip: null,
+  floatingMonitors: {},
   videoDimensions: { width: 0, height: 0 },
   recordingGeometry: null,
   screenSize: null,
@@ -82,6 +85,78 @@ const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
     duration,
     startTime,
   }
+}
+
+const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> => {
+  if (!value || typeof value !== 'object') return {}
+
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (monitors, [monitorId, rawMonitor]) => {
+      if (!rawMonitor || typeof rawMonitor !== 'object') return monitors
+      const monitor = rawMonitor as Partial<FloatingMonitor>
+      if (typeof monitor.path !== 'string' || monitor.path.length === 0) return monitors
+
+      const path = normalizeMediaPath(monitor.path)
+      const duration = typeof monitor.duration === 'number' && Number.isFinite(monitor.duration) ? clampToNonNegative(monitor.duration) : 0
+      const timelineStart =
+        typeof monitor.timelineStart === 'number' && Number.isFinite(monitor.timelineStart)
+          ? Math.min(Math.max(0, monitor.timelineStart), duration)
+          : 0
+      const timelineDuration =
+        typeof monitor.timelineDuration === 'number' && Number.isFinite(monitor.timelineDuration)
+          ? Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
+          : Math.max(0, duration - timelineStart)
+      const id = typeof monitor.id === 'string' && monitor.id.length > 0 ? monitor.id : monitorId || `floating-monitor-${Date.now()}`
+
+      monitors[id] = {
+        id,
+        path,
+        url: toMediaUrl(path) || '',
+        name: typeof monitor.name === 'string' && monitor.name.length > 0 ? monitor.name : fallbackNameFromPath(path),
+        duration,
+        timelineStart,
+        timelineDuration,
+        x: typeof monitor.x === 'number' && Number.isFinite(monitor.x) ? Math.max(0, Math.min(monitor.x, 1)) : 0.68,
+        y: typeof monitor.y === 'number' && Number.isFinite(monitor.y) ? Math.max(0, Math.min(monitor.y, 1)) : 0.68,
+        width: typeof monitor.width === 'number' && Number.isFinite(monitor.width) ? Math.max(0.1, Math.min(monitor.width, 1)) : 0.28,
+        height: typeof monitor.height === 'number' && Number.isFinite(monitor.height) ? Math.max(0.1, Math.min(monitor.height, 1)) : 0.28,
+      }
+      return monitors
+    },
+    {} as Record<string, FloatingMonitor>,
+  )
+}
+
+const parseFloatingMonitorRegions = (
+  value: unknown,
+  monitors: Record<string, FloatingMonitor>,
+  fallbackLaneId: string,
+): Record<string, FloatingMonitorRegion> => {
+  if (!value || typeof value !== 'object') return {}
+
+  return Object.entries(value as Record<string, unknown>).reduce(
+    (regions, [regionId, rawRegion]) => {
+      if (!rawRegion || typeof rawRegion !== 'object') return regions
+      const region = rawRegion as Partial<FloatingMonitorRegion>
+      if (typeof region.monitorId !== 'string' || !monitors[region.monitorId]) return regions
+      const startTime = typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
+      const sourceStart = typeof region.sourceStart === 'number' && Number.isFinite(region.sourceStart) ? clampToNonNegative(region.sourceStart) : 0
+      const duration = typeof region.duration === 'number' && Number.isFinite(region.duration) ? Math.max(0.1, region.duration) : 0.1
+      const id = typeof region.id === 'string' && region.id.length > 0 ? region.id : regionId || `floating-monitor-region-${Date.now()}`
+      regions[id] = {
+        id,
+        type: 'floating-monitor',
+        monitorId: region.monitorId,
+        laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
+        startTime,
+        duration,
+        sourceStart,
+        zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
+      }
+      return regions
+    },
+    {} as Record<string, FloatingMonitorRegion>,
+  )
 }
 
 const parseMediaAudioRegion = (
@@ -641,7 +716,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const recordingGeometry = (parsedData.recordingGeometry ||
         parsedData.geometry ||
         fallbackGeometry) as RecordingGeometry
-      const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
+        const parsedMediaAudioClip = parseMediaAudioClip(parsedData.mediaAudioClip)
+        const parsedFloatingMonitors = parseFloatingMonitors(parsedData.floatingMonitors)
       const newZoomRegions = generateAutoZoomRegions(
         processedMetadata,
         recordingGeometry,
@@ -664,6 +740,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
         state.swapRegions = parseSwapRegions(parsedData.swapRegions, fallbackTimelineLaneId)
         state.mediaAudioClip = parsedMediaAudioClip
+        state.floatingMonitors = parsedFloatingMonitors
         if (
           typeof parsedData.systemAudioPath === 'string' &&
           parsedData.systemAudioPath.length > 0 &&
@@ -681,6 +758,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           parsedData.mediaAudioRegions,
           fallbackMediaLaneId,
           parsedMediaAudioClip,
+        )
+        state.floatingMonitorRegions = parseFloatingMonitorRegions(
+          parsedData.floatingMonitorRegions,
+          parsedFloatingMonitors,
+          fallbackTimelineLaneId,
         )
         state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
         if ('webcamLayout' in parsedData) {
@@ -731,6 +813,22 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           region.volume = Math.max(0, Math.min(region.volume, 1))
           region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
           region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+        })
+        Object.values(state.floatingMonitorRegions).forEach((region) => {
+          if (!state.timelineLanes.some((lane) => lane.id === region.laneId)) {
+            region.laneId = fallbackMediaLaneId
+          }
+          region.startTime = clampStartTime(region.startTime, state.duration)
+          if (region.startTime + region.duration > state.duration) {
+            region.duration = Math.max(0.1, state.duration - region.startTime)
+          }
+          const monitor = state.floatingMonitors[region.monitorId]
+          if (!monitor) {
+            delete state.floatingMonitorRegions[region.id]
+          } else {
+            region.sourceStart = Math.max(0, Math.min(region.sourceStart, monitor.duration))
+            region.duration = Math.min(region.duration, Math.max(0.1, monitor.duration - region.sourceStart))
+          }
         })
         if (state.mediaAudioClip) {
           state.mediaAudioClip.startTime = clampStartTime(state.mediaAudioClip.startTime, state.duration)
@@ -845,6 +943,17 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         region.volume = Math.max(0, Math.min(region.volume, 1))
         region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
         region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+      })
+      Object.values(state.floatingMonitorRegions).forEach((region) => {
+        region.startTime = clampStartTime(region.startTime, duration)
+        if (region.startTime + region.duration > duration) {
+          region.duration = Math.max(0.1, duration - region.startTime)
+        }
+        const monitor = state.floatingMonitors[region.monitorId]
+        if (monitor?.duration) {
+          region.sourceStart = Math.max(0, Math.min(region.sourceStart, monitor.duration))
+          region.duration = Math.min(region.duration, Math.max(0.1, monitor.duration - region.sourceStart))
+        }
       })
       if (state.mediaAudioClip) {
         state.mediaAudioClip.startTime = clampStartTime(state.mediaAudioClip.startTime, duration)
@@ -979,6 +1088,52 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const shouldClearSelection = selectedRegionId ? !!state.mediaAudioRegions[selectedRegionId] : false
       state.mediaAudioClip = null
       state.mediaAudioRegions = {}
+      if (shouldClearSelection) {
+        state.selectedRegionId = null
+      }
+    })
+  },
+  addFloatingMonitor: ({ path, name }) => {
+    set((state) => {
+      const normalizedPath = normalizeMediaPath(path)
+      const id = `floating-monitor-${Date.now()}`
+      state.floatingMonitors[id] = {
+        id,
+        path: normalizedPath,
+        url: toMediaUrl(normalizedPath) || '',
+        name: name.trim() || fallbackNameFromPath(normalizedPath),
+        duration: 0,
+        timelineStart: 0,
+        timelineDuration: 0,
+        x: 0.68,
+        y: 0.68,
+        width: 0.28,
+        height: 0.28,
+      }
+    })
+  },
+  updateFloatingMonitor: (id, updates) => {
+    set((state) => {
+      const monitor = state.floatingMonitors[id]
+      if (!monitor) return
+      Object.assign(monitor, updates)
+      monitor.duration = clampToNonNegative(monitor.duration)
+      monitor.timelineStart = Math.max(0, Math.min(monitor.timelineStart, monitor.duration))
+      monitor.timelineDuration = Math.max(0, Math.min(monitor.timelineDuration, monitor.duration - monitor.timelineStart))
+      monitor.x = Math.max(0, Math.min(monitor.x, 1))
+      monitor.y = Math.max(0, Math.min(monitor.y, 1))
+      monitor.width = Math.max(0.1, Math.min(monitor.width, 1))
+      monitor.height = Math.max(0.1, Math.min(monitor.height, 1))
+    })
+  },
+  removeFloatingMonitor: (id) => {
+    set((state) => {
+      const shouldClearSelection =
+        !!state.selectedRegionId && state.floatingMonitorRegions[state.selectedRegionId]?.monitorId === id
+      delete state.floatingMonitors[id]
+      Object.values(state.floatingMonitorRegions).forEach((region) => {
+        if (region.monitorId === id) delete state.floatingMonitorRegions[region.id]
+      })
       if (shouldClearSelection) {
         state.selectedRegionId = null
       }

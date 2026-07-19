@@ -53,7 +53,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
   ipcMain.handle('recording:import-project', recordingHandlers.handleImportProject)
   ipcMain.handle('recording:import-project-file', recordingHandlers.handleImportProjectFile)
-  ipcMain.handle('media:import-audio', mediaHandlers.handleImportMediaAudio)
+    ipcMain.handle('media:import-audio', mediaHandlers.handleImportMediaAudio)
+    ipcMain.handle('media:import-video', mediaHandlers.handleImportMediaVideo)
 
   // Export
   ipcMain.handle('export:start', exportHandlers.handleStartExport)

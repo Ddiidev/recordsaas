@@ -185,6 +185,17 @@ export interface CameraSwapRegion {
   transitionDuration?: number
 }
 
+export interface FloatingMonitorRegion {
+  id: string
+  type: 'floating-monitor'
+  laneId: string
+  monitorId: string
+  startTime: number
+  duration: number
+  sourceStart: number
+  zIndex: number
+}
+
 export type TimelineRegion =
   | ZoomRegion
   | CutRegion
@@ -193,6 +204,7 @@ export type TimelineRegion =
   | CameraSwapRegion
   | MediaAudioRegion
   | ChangeSoundRegion
+  | FloatingMonitorRegion
 
 export interface MetaDataItem {
   timestamp: number
@@ -290,6 +302,20 @@ export interface MediaAudioClip {
   startTime: number
 }
 
+export interface FloatingMonitor {
+  id: string
+  path: string
+  url: string
+  name: string
+  duration: number
+  timelineStart: number
+  timelineDuration: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 // --- Slice State & Actions Types ---
 
 export interface ProjectState {
@@ -303,6 +329,7 @@ export interface ProjectState {
   systemAudioVolume: number
   systemAudioMuted: boolean
   mediaAudioClip: MediaAudioClip | null
+  floatingMonitors: Record<string, FloatingMonitor>
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
   screenSize: ScreenSize | null
@@ -338,6 +365,9 @@ export interface ProjectActions {
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void
   clearMediaAudioClip: () => void
+  addFloatingMonitor: (monitor: { path: string; name: string }) => void
+  updateFloatingMonitor: (id: string, updates: Partial<Omit<FloatingMonitor, 'id' | 'path' | 'url'>>) => void
+  removeFloatingMonitor: (id: string) => void
   setOriginalProjectPath: (path: string) => void
 }
 
@@ -375,6 +405,7 @@ export interface TimelineState {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
   previewCutRegion: CutRegion | null
   selectedRegionId: string | null
   activeZoomRegionId: string | null
@@ -399,6 +430,7 @@ export interface TimelineActions {
     duration?: number
   }) => void
   addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
+  addFloatingMonitorRegion: (monitorId: string, params?: { startTime?: number; laneId?: string }) => void
   splitMediaAudioRegion: (regionId: string, splitTime: number) => void
   splitChangeSoundRegion: (regionId: string, splitTime: number) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
@@ -488,7 +520,9 @@ export type RenderableState = Pick<
   | 'speedRegions'
   | 'blurRegions'
   | 'swapRegions'
+  | 'floatingMonitorRegions'
   | 'timelineLanes'
+  | 'floatingMonitors'
   | 'metadata'
   | 'recordingGeometry'
   | 'cursorImages'

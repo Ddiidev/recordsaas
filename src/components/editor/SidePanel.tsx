@@ -107,6 +107,7 @@ export function SidePanel() {
     swapRegions,
     mediaAudioRegions,
     changeSoundRegions,
+    floatingMonitorRegions,
     webcamVideoUrl,
     hasAudioTrack,
     setSelectedRegionId,
@@ -122,6 +123,7 @@ export function SidePanel() {
       swapRegions: state.swapRegions,
       mediaAudioRegions: state.mediaAudioRegions,
       changeSoundRegions: state.changeSoundRegions,
+      floatingMonitorRegions: state.floatingMonitorRegions,
       webcamVideoUrl: state.webcamVideoUrl,
       hasAudioTrack: state.hasAudioTrack,
       setSelectedRegionId: state.setSelectedRegionId,
@@ -141,6 +143,7 @@ export function SidePanel() {
       swapRegions[selectedRegionId] ||
       mediaAudioRegions[selectedRegionId] ||
       changeSoundRegions[selectedRegionId]
+      || floatingMonitorRegions[selectedRegionId]
     )
   }, [
     selectedRegionId,
@@ -151,6 +154,7 @@ export function SidePanel() {
     swapRegions,
     mediaAudioRegions,
     changeSoundRegions,
+    floatingMonitorRegions,
   ])
 
   // Auto switch to 'general' tab when a region is selected

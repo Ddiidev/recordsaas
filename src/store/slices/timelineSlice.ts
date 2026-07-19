@@ -10,6 +10,7 @@ import type {
   SwapPresetDefaults,
   MediaAudioRegion,
   ChangeSoundRegion,
+  FloatingMonitorRegion,
   TimelineLane,
   TimelineRegion,
   Preset,
@@ -30,6 +31,7 @@ export const initialTimelineState: TimelineState = {
   swapRegions: {},
   mediaAudioRegions: {},
   changeSoundRegions: {},
+  floatingMonitorRegions: {},
   previewCutRegion: null,
   selectedRegionId: null,
   activeZoomRegionId: null,
@@ -95,6 +97,7 @@ const getAllRegions = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }): TimelineRegion[] => [
   ...Object.values(state.zoomRegions),
   ...Object.values(state.cutRegions),
@@ -103,6 +106,7 @@ const getAllRegions = (state: {
   ...Object.values(state.swapRegions),
   ...Object.values(state.mediaAudioRegions),
   ...Object.values(state.changeSoundRegions),
+  ...Object.values(state.floatingMonitorRegions),
 ]
 
 const getRegionById = (
@@ -114,6 +118,7 @@ const getRegionById = (
     swapRegions: Record<string, CameraSwapRegion>
     mediaAudioRegions: Record<string, MediaAudioRegion>
     changeSoundRegions: Record<string, ChangeSoundRegion>
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
   },
   id: string,
 ): TimelineRegion | null =>
@@ -124,6 +129,7 @@ const getRegionById = (
   state.swapRegions[id] ||
   state.mediaAudioRegions[id] ||
   state.changeSoundRegions[id] ||
+  state.floatingMonitorRegions[id] ||
   null
 
 const ensureRegionLaneIds = (state: {
@@ -135,6 +141,7 @@ const ensureRegionLaneIds = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }) => {
   const fallbackLaneId = getFallbackLaneId(state.timelineLanes)
   getAllRegions(state).forEach((region) => {
@@ -157,6 +164,7 @@ const recalculateZIndices = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }) => {
   state.timelineLanes = normalizeTimelineLanes(state.timelineLanes)
   ensureRegionLaneIds(state)
@@ -184,6 +192,8 @@ const recalculateZIndices = (state: {
         state.mediaAudioRegions[region.id].zIndex = newZIndex
       } else if (state.changeSoundRegions[region.id]) {
         state.changeSoundRegions[region.id].zIndex = newZIndex
+      } else if (state.floatingMonitorRegions[region.id]) {
+        state.floatingMonitorRegions[region.id].zIndex = newZIndex
       }
     })
   })
@@ -659,6 +669,35 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       recalculateZIndices(state)
     })
   },
+  addFloatingMonitorRegion: (monitorId, params) => {
+    const { duration, floatingMonitors } = get()
+    const monitor = floatingMonitors[monitorId]
+    if (!monitor || duration <= 0 || monitor.timelineDuration <= 0) return
+
+    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
+    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
+    const startTime = Math.max(0, Math.min(params?.startTime ?? get().currentTime, duration))
+    const regionDuration = Math.max(
+      TIMELINE.MINIMUM_REGION_DURATION,
+      Math.min(monitor.timelineDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - startTime)),
+    )
+    const id = `floating-monitor-region-${Date.now()}`
+
+    set((state) => {
+      state.floatingMonitorRegions[id] = {
+        id,
+        type: 'floating-monitor',
+        monitorId,
+        laneId: params?.laneId || selectedRegion?.laneId || fallbackLaneId,
+        startTime,
+        duration: regionDuration,
+        sourceStart: monitor.timelineStart,
+        zIndex: 0,
+      }
+      state.selectedRegionId = id
+      recalculateZIndices(state)
+    })
+  },
   splitMediaAudioRegion: (regionId, splitTime) => {
     set((state) => {
       const region = state.mediaAudioRegions[regionId]
@@ -758,6 +797,12 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           region.volume = Math.max(0, Math.min(region.volume, 1))
           region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
           region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+        } else if (region.type === 'floating-monitor') {
+          region.sourceStart = Math.max(0, region.sourceStart)
+          const monitor = state.floatingMonitors[region.monitorId]
+          if (monitor?.duration) {
+            region.duration = Math.min(region.duration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart))
+          }
         }
         if (oldDuration !== region.duration || oldLaneId !== region.laneId) {
           recalculateZIndices(state)
@@ -788,6 +833,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       delete state.swapRegions[id]
       delete state.mediaAudioRegions[id]
       delete state.changeSoundRegions[id]
+      delete state.floatingMonitorRegions[id]
       if (state.selectedRegionId === id) {
         state.selectedRegionId = null
       }

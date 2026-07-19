@@ -156,11 +156,13 @@ Media-audio contract state:
 - `mediaAudioClip: MediaAudioClip | null`
 - `mediaAudioRegions: Record<string, MediaAudioRegion>`
 - `changeSoundRegions: Record<string, ChangeSoundRegion>`
+- `floatingMonitors: Record<string, FloatingMonitor>` and `floatingMonitorRegions: Record<string, FloatingMonitorRegion>`
 
 Canonical contract fields:
 - `MediaAudioClip`: `id`, `path` (runtime absolute), `url` (`media://...`), `name`, `duration`, `startTime`.
 - `MediaAudioRegion`: `id`, `type='media-audio'`, `laneId`, `startTime`, `duration`, `sourceStart`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
 - `ChangeSoundRegion`: `id`, `type='change-sound'`, `laneId`, `startTime`, `duration`, `sourceKey='recording-mic' | 'system-audio'`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
+- `FloatingMonitor`: imported MP4/MOV/M4V visual asset with independent trimmed source timeline (`timelineStart`, `timelineDuration`) and normalized overlay geometry. `FloatingMonitorRegion` places that trim on the main timeline with `monitorId`, `sourceStart`, lane precedence, and duration.
 
 Core business rules:
 1. Media audio playback follows `mediaAudioRegions` and is independent from recording-mic source.
@@ -169,7 +171,8 @@ Core business rules:
 4. Region-level mute/volume/fade are enforced on applicable tracks.
 5. Computer audio follows the main recording timeline, supports whole-track editor volume/mute, and can be targeted by `change-sound` regions.
 6. Final mix includes recording + optional computer audio + media when present.
-7. Image/video media categories can remain placeholder if no render/export behavior is implemented.
+7. Image media can remain placeholder if no render/export behavior is implemented.
+8. Imported video assets are visual floating monitors. Open a monitor from `Media > Video` to trim its own source timeline, then add it to the main timeline. Preview and WebCodecs export must render active monitor regions; video-audio mixing remains owned by the audio asset flow.
 
 Export startup invariant:
 - The export progress window, tray cancel path, `powerSaveBlocker`, and process-priority boost must be initialized before authorization, audio preparation, worker loading, or FFmpeg work.

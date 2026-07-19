@@ -10,6 +10,7 @@ import type {
   CameraSwapRegion,
   MediaAudioRegion,
   ChangeSoundRegion,
+  FloatingMonitorRegion,
 } from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
@@ -601,6 +602,45 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
   )
 }
 
+function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) {
+  const { monitor, updateRegion, deleteRegion } = useEditorStore((state) => ({
+    monitor: state.floatingMonitors[region.monitorId],
+    updateRegion: state.updateRegion,
+    deleteRegion: state.deleteRegion,
+  }))
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
+        <p className="text-sm font-medium text-foreground">{monitor?.name || 'Floating monitor'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Independent monitor timeline is placed as visual overlay here.</p>
+      </div>
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Source offset</span>
+          <span className="text-xs font-semibold text-violet-500 tabular-nums">{region.sourceStart.toFixed(2)}s</span>
+        </div>
+        <Slider
+          min={0}
+          max={Math.max(0, (monitor?.duration || 0) - region.duration)}
+          step={0.01}
+          value={region.sourceStart}
+          onChange={(value) => updateRegion(region.id, { sourceStart: value })}
+        />
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => deleteRegion(region.id)}
+        className="w-full h-10 bg-destructive/10 hover:bg-destructive text-destructive hover:text-destructive-foreground"
+      >
+        <Trash className="w-4 h-4" />
+        <span>Delete monitor clip</span>
+      </Button>
+    </div>
+  )
+}
+
 export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
   const RegionIcon =
     region.type === 'zoom'
@@ -615,6 +655,8 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
               ? Music
               : region.type === 'change-sound'
                 ? AdjustmentsHorizontal
+                : region.type === 'floating-monitor'
+                  ? Video
                 : Search
   const regionColor =
     region.type === 'zoom'
@@ -629,6 +671,8 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
               ? 'text-emerald-500'
               : region.type === 'change-sound'
                 ? 'text-sky-500'
+                : region.type === 'floating-monitor'
+                  ? 'text-violet-500'
                 : 'text-amber-500'
   const regionBg =
     region.type === 'zoom'
@@ -643,6 +687,8 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
               ? 'bg-emerald-500/10'
               : region.type === 'change-sound'
                 ? 'bg-sky-500/10'
+                : region.type === 'floating-monitor'
+                  ? 'bg-violet-500/10'
                 : 'bg-amber-500/10'
 
   return (
@@ -668,6 +714,8 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
                         ? 'Audio clip trim, split, and fades'
                         : region.type === 'change-sound'
                           ? 'Recording audio mix controls'
+                          : region.type === 'floating-monitor'
+                            ? 'Floating video monitor controls'
                           : 'Blur asset controls'}
             </p>
           </div>
@@ -693,6 +741,8 @@ export function RegionSettingsPanel({ region }: RegionSettingsPanelProps) {
 
         {/* Change Sound Controls */}
         {region.type === 'change-sound' && <ChangeSoundSettings region={region} />}
+
+        {region.type === 'floating-monitor' && <FloatingMonitorSettings region={region} />}
 
         {/* Cut Region Info */}
         {region.type === 'cut' && (

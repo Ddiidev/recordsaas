@@ -46,7 +46,7 @@ type CurrentProcessMemoryInfo = {
   shared: number
 }
 
-type MediaAudioImportResult = {
+type MediaImportResult = {
   canceled: boolean
   asset?: {
     path: string
@@ -229,7 +229,8 @@ export const electronAPI = {
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),
   importProjectFile: (projectFilePath: string): Promise<RecordingResult> =>
     ipcRenderer.invoke('recording:import-project-file', projectFilePath),
-  importMediaAudioAsset: (): Promise<MediaAudioImportResult> => ipcRenderer.invoke('media:import-audio'),
+  importMediaAudioAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-audio'),
+  importMediaVideoAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-video'),
   getCursorScale: (): Promise<number> => ipcRenderer.invoke('desktop:get-cursor-scale'),
   setCursorScale: (scale: number): void => ipcRenderer.send('desktop:set-cursor-scale', scale),
 

@@ -98,6 +98,35 @@ type ImportedProjectPayload = {
       zIndex?: number
     }
   >
+  floatingMonitors?: Record<
+    string,
+    {
+      id?: string
+      path?: string | null
+      url?: string | null
+      name?: string | null
+      duration?: number
+      timelineStart?: number
+      timelineDuration?: number
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+    }
+  >
+  floatingMonitorRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'floating-monitor'
+      monitorId?: string
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceStart?: number
+      zIndex?: number
+    }
+  >
   recordingGeometry?: RecordingGeometry
   geometry?: RecordingGeometry
   scaleFactor?: number
@@ -3128,6 +3157,22 @@ export async function importProjectFromPath(sourceProjectPath: string) {
 
     const rawMediaAudioClip = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioClip') || null
     const importedMediaAudioPath = await importMediaFile(rawMediaAudioClip?.path || null, 'media audio clip')
+    const rawFloatingMonitors = getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitors') || {}
+    const importedFloatingMonitors: NonNullable<ImportedProjectPayload['floatingMonitors']> = {}
+    if (rawFloatingMonitors && typeof rawFloatingMonitors === 'object') {
+      for (const [monitorId, rawMonitor] of Object.entries(rawFloatingMonitors)) {
+        if (!rawMonitor || typeof rawMonitor !== 'object') continue
+        const importedPath = await importMediaFile(rawMonitor.path || null, `floating monitor ${monitorId}`)
+        if (!importedPath) continue
+        importedFloatingMonitors[monitorId] = {
+          ...rawMonitor,
+          id: rawMonitor.id || monitorId,
+          path: importedPath,
+          url: toMediaUrl(importedPath) || '',
+          name: rawMonitor.name || path.basename(importedPath),
+        }
+      }
+    }
 
     const fallbackEvents = Array.isArray(projectData.events)
       ? projectData.events
@@ -3164,6 +3209,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       recordingGeometry: mergedGeometry,
       timelineLanes: normalizedTimelineLanes,
       systemAudioPath: systemAudioPath || undefined,
+      floatingMonitors: importedFloatingMonitors,
     }
 
     if (rawMediaAudioClip && importedMediaAudioPath) {
@@ -3301,6 +3347,25 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       }
     }
     mergedRuntimeMetadata.changeSoundRegions = normalizedChangeSoundRegions
+
+    const rawFloatingMonitorRegions = getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitorRegions') || {}
+    const normalizedFloatingMonitorRegions: NonNullable<ImportedProjectPayload['floatingMonitorRegions']> = {}
+    if (rawFloatingMonitorRegions && typeof rawFloatingMonitorRegions === 'object') {
+      for (const [regionId, rawRegion] of Object.entries(rawFloatingMonitorRegions)) {
+        if (!rawRegion || typeof rawRegion !== 'object' || !rawRegion.monitorId || !importedFloatingMonitors[rawRegion.monitorId]) continue
+        normalizedFloatingMonitorRegions[regionId] = {
+          id: rawRegion.id || regionId,
+          type: 'floating-monitor',
+          monitorId: rawRegion.monitorId,
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
+          startTime: typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime) ? Math.max(0, rawRegion.startTime) : 0,
+          duration: typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration) ? Math.max(0.1, rawRegion.duration) : 0.1,
+          sourceStart: typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart) ? Math.max(0, rawRegion.sourceStart) : 0,
+          zIndex: typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex) ? rawRegion.zIndex : 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.floatingMonitorRegions = normalizedFloatingMonitorRegions
 
     if (mergedRuntimeMetadata.events.length === 0) {
       log.warn('[RecordingManager] Imported project contains no mouse events after metadata merge.')

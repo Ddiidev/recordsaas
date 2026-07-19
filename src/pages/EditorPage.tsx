@@ -20,6 +20,7 @@ import { Input } from '../components/ui/input'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
+import type { FloatingMonitor } from '../types'
 
 const generateDefaultProjectName = () => {
   const now = new Date()
@@ -120,11 +121,20 @@ export function EditorPage() {
           systemAudioPath,
           webcamVideoPath,
           mediaAudioClip,
+          floatingMonitors,
           originalProjectPath,
           duration: projectDuration,
         } = storeState
 
-        const mediaFiles = [videoPath, metadataPath, audioPath, systemAudioPath, webcamVideoPath, mediaAudioClip?.path]
+        const mediaFiles = [
+          videoPath,
+          metadataPath,
+          audioPath,
+          systemAudioPath,
+          webcamVideoPath,
+          mediaAudioClip?.path,
+          ...Object.values(floatingMonitors).map((monitor) => monitor.path),
+        ]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
 
@@ -166,6 +176,21 @@ export function EditorPage() {
             url: `media://${serializedMediaPath}`,
           }
         }
+        stateToSave.floatingMonitors = Object.fromEntries(
+          Object.entries((stateToSave.floatingMonitors as Record<string, FloatingMonitor> | undefined) || {}).map(
+            ([monitorId, monitor]) => {
+            const serializedPath = getMediaPathBasename(monitor.path)
+            return [
+              monitorId,
+              {
+                ...monitor,
+                path: serializedPath,
+                url: `media://${serializedPath}`,
+              },
+            ]
+            },
+          ),
+        )
 
         const projectData = JSON.stringify(stateToSave, null, 2)
 

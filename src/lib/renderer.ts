@@ -23,6 +23,11 @@ type MediaRectConfig = Rect & {
 }
 
 type BackgroundImageSource = HTMLImageElement | ImageBitmap
+export type FloatingMonitorRenderSource = {
+  source: CanvasImageSource
+  width: number
+  height: number
+}
 type ResolvedLayout = {
   mode: WebcamLayout['mode']
   desktopConfig: MediaRectConfig
@@ -650,6 +655,7 @@ export const drawScene = (
   preloadedBgImage: BackgroundImageSource | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
+  floatingMonitorSources: Record<string, FloatingMonitorRenderSource> = {},
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
@@ -657,6 +663,7 @@ export const drawScene = (
   const swapRegions = getObjectValuesCached(state.swapRegions)
   const zoomRegions = getObjectValuesCached(state.zoomRegions)
   const blurRegions = getObjectValuesCached(state.blurRegions)
+  const floatingMonitorRegions = getObjectValuesCached(state.floatingMonitorRegions)
   const activeBlurRegions =
     blurRegions.length > 0
       ? sortRegionsByLanePrecedence(
@@ -1287,6 +1294,39 @@ export const drawScene = (
       })
     }
   }
+
+  const activeFloatingMonitorRegions = sortRegionsByLanePrecedence(
+    floatingMonitorRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+    laneContext,
+  )
+  activeFloatingMonitorRegions.forEach((region) => {
+    const monitor = state.floatingMonitors[region.monitorId]
+    const renderSource = floatingMonitorSources[region.monitorId]
+    if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
+
+    const width = Math.max(1, Math.min(outputWidth, outputWidth * monitor.width))
+    const height = Math.max(1, Math.min(outputHeight, outputHeight * monitor.height))
+    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * monitor.x))
+    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * monitor.y))
+    const config: MediaRectConfig = {
+      x,
+      y,
+      width,
+      height,
+      radius: Math.min(width, height) * 0.04,
+      shadowBlur: Math.min(width, height) * 0.04,
+      shadowOffsetX: 0,
+      shadowOffsetY: Math.min(width, height) * 0.012,
+      shadowColor: 'rgba(0, 0, 0, 0.35)',
+      borderWidth: Math.max(1, Math.min(width, height) * 0.005),
+      borderColor: 'rgba(255, 255, 255, 0.72)',
+      zIndex: 10_000 + region.zIndex,
+    }
+    draws.push({
+      zIndex: config.zIndex,
+      draw: () => drawMediaToConfig(config, renderSource.source, renderSource.width, renderSource.height),
+    })
+  })
 
   // Draw layers sorted by zIndex
   draws.sort((a, b) => a.zIndex - b.zIndex).forEach((d) => d.draw())
