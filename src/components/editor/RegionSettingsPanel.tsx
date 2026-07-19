@@ -486,12 +486,15 @@ function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
 }
 
 function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
-  const { updateRegion, deleteRegion, splitChangeSoundRegion, currentTime } = useEditorStore((state) => ({
-    updateRegion: state.updateRegion,
-    deleteRegion: state.deleteRegion,
-    splitChangeSoundRegion: state.splitChangeSoundRegion,
-    currentTime: state.currentTime,
-  }))
+  const { updateRegion, deleteRegion, splitChangeSoundRegion, currentTime, systemAudioUrl } = useEditorStore(
+    (state) => ({
+      updateRegion: state.updateRegion,
+      deleteRegion: state.deleteRegion,
+      splitChangeSoundRegion: state.splitChangeSoundRegion,
+      currentTime: state.currentTime,
+      systemAudioUrl: state.systemAudioUrl,
+    }),
+  )
 
   const canSplitAtPlayhead =
     currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
@@ -510,6 +513,9 @@ function ChangeSoundSettings({ region }: { region: ChangeSoundRegion }) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="recording-mic">Microfone</SelectItem>
+            <SelectItem value="system-audio" disabled={!systemAudioUrl}>
+              Computer Audio
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>

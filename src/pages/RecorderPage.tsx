@@ -30,10 +30,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { isLinuxCursorScaleOption, RECORDER_WINDOW_SIZES } from '../lib/recorder-window'
 import { cn } from '../lib/utils'
 import type { AuthSession } from '../types/auth'
-import {
-  HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY,
-  type ScreenEncoderStatus,
-} from '../types/screen-encoder'
+import { HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY, type ScreenEncoderStatus } from '../types/screen-encoder'
 import {
   NATIVE_RECORDING_ANALYSIS_SETTING_KEY,
   NATIVE_RECORDING_PROFILE_ID,
@@ -95,7 +92,9 @@ export function RecorderPage() {
   const [isImportProjectModalOpen, setImportProjectModalOpen] = useState(false)
   const [recordingProfileCreateRequestId, setRecordingProfileCreateRequestId] = useState(0)
   const [recordingProfileAnalyzeRequestId, setRecordingProfileAnalyzeRequestId] = useState(0)
-  const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<Record<ToolbarSelectKey | 'systemAudio', boolean>>({
+  const [toolbarSelectOpenStates, setToolbarSelectOpenStates] = useState<
+    Record<ToolbarSelectKey | 'systemAudio', boolean>
+  >({
     display: false,
     webcam: false,
     mic: false,
@@ -125,8 +124,13 @@ export function RecorderPage() {
 
   const isAnyToolbarSelectOpen = Object.values(toolbarSelectOpenStates).some(Boolean)
   const isWebcamPreviewVisible = selectedWebcamId !== 'none' && actionInProgress === 'none' && !isRecording
-  const recorderWindowPreset =
-    isSettingsModalOpen ? 'settings' : isImportProjectModalOpen ? 'importProject' : isWebcamPreviewVisible ? 'preview' : 'toolbar'
+  const recorderWindowPreset = isSettingsModalOpen
+    ? 'settings'
+    : isImportProjectModalOpen
+      ? 'importProject'
+      : isWebcamPreviewVisible
+        ? 'preview'
+        : 'toolbar'
   const accountTooltip = useMemo(() => {
     if (authSession.isAuthenticated) {
       return authSession.user?.name || authSession.user?.email || 'Logged in'
@@ -320,7 +324,11 @@ export function RecorderPage() {
     if (mics.length > 0 && !mics.some((m) => m.id === selectedMicId)) {
       setSelectedMicId('none')
     }
-    if (windowsAudioDevices.length > 0 && selectedComputerAudioId !== 'default' && !windowsAudioDevices.some((d) => d.id === selectedComputerAudioId)) {
+    if (
+      windowsAudioDevices.length > 0 &&
+      selectedComputerAudioId !== 'default' &&
+      !windowsAudioDevices.some((d) => d.id === selectedComputerAudioId)
+    ) {
       setSelectedComputerAudioId('default')
     }
   }, [isInitializing, webcams, mics, windowsAudioDevices, selectedWebcamId, selectedMicId, selectedComputerAudioId])
@@ -368,7 +376,10 @@ export function RecorderPage() {
   }, [loadAuthSession])
 
   useEffect(() => {
-    window.electronAPI.getVersion().then((v) => setAppVersion(v)).catch(() => setAppVersion(''))
+    window.electronAPI
+      .getVersion()
+      .then((v) => setAppVersion(v))
+      .catch(() => setAppVersion(''))
   }, [])
 
   // Effect to manage the webcam preview stream
@@ -509,11 +520,7 @@ export function RecorderPage() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   // @ts-ignore
   const resolveEncoderWarning = (decision: EncoderWarningDecision) => {
-    if (
-      decision === 'continue' &&
-      encoderWarningStatus?.preference === 'auto' &&
-      suppressGenericEncoderWarning
-    ) {
+    if (decision === 'continue' && encoderWarningStatus?.preference === 'auto' && suppressGenericEncoderWarning) {
       window.electronAPI.setSetting(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY, true)
     }
 
@@ -522,8 +529,6 @@ export function RecorderPage() {
     encoderWarningResolverRef.current = null
     resolver?.(decision)
   }
-
-
 
   const resolvePreparationCountdownSeconds = async () => {
     try {
@@ -586,8 +591,9 @@ export function RecorderPage() {
         source,
         geometry: source === 'area' ? areaGeometry : undefined,
         displayId: source === 'fullscreen' ? Number(selectedDisplayId) : undefined,
-        webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.id, index: webcams.indexOf(webcam) } : undefined,
-        mic: mic ? { deviceId: mic.id, deviceLabel: mic.id, index: mics.indexOf(mic) } : undefined,
+        // DirectShow needs the friendly device name; the alternative/PnP id is only for persistence and UI selection.
+        webcam: webcam ? { deviceId: webcam.id, deviceLabel: webcam.name, index: webcams.indexOf(webcam) } : undefined,
+        mic: mic ? { deviceId: mic.id, deviceLabel: mic.name, index: mics.indexOf(mic) } : undefined,
         computerAudioEnabled,
         computerAudioDeviceId: selectedComputerAudioId !== 'default' ? selectedComputerAudioId : undefined,
         recordingProfile: selectedRecordingProfile,
@@ -727,71 +733,68 @@ export function RecorderPage() {
     window.electronAPI.setSetting(SELECTED_RECORDING_PROFILE_SETTING_KEY, id)
   }
 
-  const computerAudioControl = platform === 'win32' && computerAudioSupported ? (
-    <Select
-      value={computerAudioEnabled ? selectedComputerAudioId : 'none'}
-      onValueChange={handleComputerAudioChange}
-      onOpenChange={handleToolbarSelectOpenChange('systemAudio')}
-      disabled={isRecording || actionInProgress !== 'none'}
-    >
-      <SelectTrigger
-        variant="minimal"
-        className="w-full h-8"
-        aria-label="Select PC audio device"
+  const computerAudioControl =
+    platform === 'win32' && computerAudioSupported ? (
+      <Select
+        value={computerAudioEnabled ? selectedComputerAudioId : 'none'}
+        onValueChange={handleComputerAudioChange}
+        onOpenChange={handleToolbarSelectOpenChange('systemAudio')}
+        disabled={isRecording || actionInProgress !== 'none'}
       >
-        <SelectValue asChild>
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
-              <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
-            </IconShell>
-            <span className={cn('truncate', !computerAudioEnabled && 'text-muted-foreground')}>
-              {computerAudioEnabled
-                ? truncateRecorderLabel(
-                    selectedComputerAudioId === 'default'
-                      ? 'Default PC audio'
-                      : windowsAudioDevices.find((d) => d.id === selectedComputerAudioId)?.name || 'Default PC audio',
-                    20,
-                  )
-                : 'No PC audio'}
-            </span>
-          </div>
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent side="right" avoidCollisions>
-        <SelectItem value="none">No PC audio</SelectItem>
-        <SelectItem value="default">Default PC audio</SelectItem>
-        {windowsAudioDevices.map((d) => (
-          <SelectItem key={d.id} value={d.id}>
-            {truncateRecorderLabel(d.name)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  ) : (
-    <div
-      className={cn(
-        'flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2',
-        !computerAudioSupported && 'opacity-70',
-      )}
-      style={{ WebkitAppRegion: 'no-drag' }}
-    >
-      <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
-        <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
-      </IconShell>
-      <div className="flex flex-col leading-none flex-1 min-w-0">
-        <span className="text-[10px] font-medium text-foreground">PC audio</span>
-        <span className="text-[9px] text-muted-foreground">
-          {computerAudioEnabled ? 'Included' : computerAudioSupported ? 'Off' : 'Unsupported'}
-        </span>
+        <SelectTrigger variant="minimal" className="w-full h-8" aria-label="Select PC audio device">
+          <SelectValue asChild>
+            <div className="flex items-center gap-1.5 text-[11px]">
+              <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
+                <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+              </IconShell>
+              <span className={cn('truncate', !computerAudioEnabled && 'text-muted-foreground')}>
+                {computerAudioEnabled
+                  ? truncateRecorderLabel(
+                      selectedComputerAudioId === 'default'
+                        ? 'Default PC audio'
+                        : windowsAudioDevices.find((d) => d.id === selectedComputerAudioId)?.name || 'Default PC audio',
+                      20,
+                    )
+                  : 'No PC audio'}
+              </span>
+            </div>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent side="right" avoidCollisions>
+          <SelectItem value="none">No PC audio</SelectItem>
+          <SelectItem value="default">Default PC audio</SelectItem>
+          {windowsAudioDevices.map((d) => (
+            <SelectItem key={d.id} value={d.id}>
+              {truncateRecorderLabel(d.name)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ) : (
+      <div
+        className={cn(
+          'flex h-8 items-center gap-1.5 rounded-md border border-border bg-card px-2',
+          !computerAudioSupported && 'opacity-70',
+        )}
+        style={{ WebkitAppRegion: 'no-drag' }}
+      >
+        <IconShell active={computerAudioEnabled} disabled={!computerAudioEnabled} className="h-5 w-5 shrink-0">
+          <Volume size={12} className={computerAudioEnabled ? 'text-primary' : 'text-muted-foreground/70'} />
+        </IconShell>
+        <div className="flex flex-col leading-none flex-1 min-w-0">
+          <span className="text-[10px] font-medium text-foreground">PC audio</span>
+          <span className="text-[9px] text-muted-foreground">
+            {computerAudioEnabled ? 'Included' : computerAudioSupported ? 'Off' : 'Unsupported'}
+          </span>
+        </div>
+        <Switch
+          checked={computerAudioEnabled}
+          onCheckedChange={(c) => handleComputerAudioChange(c ? 'default' : 'none')}
+          disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
+          className="scale-75"
+        />
       </div>
-      <Switch
-        checked={computerAudioEnabled}
-        onCheckedChange={(c) => handleComputerAudioChange(c ? 'default' : 'none')}
-        disabled={!computerAudioSupported || isRecording || actionInProgress !== 'none'}
-        className="scale-75"
-      />
-    </div>
-  )
+    )
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -970,11 +973,7 @@ export function RecorderPage() {
                   onOpenChange={handleToolbarSelectOpenChange('mic')}
                   disabled={isRecording || actionInProgress !== 'none'}
                 >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-full h-8"
-                    aria-label="Select microphone"
-                  >
+                  <SelectTrigger variant="minimal" className="w-full h-8" aria-label="Select microphone">
                     <SelectValue asChild>
                       <div className="flex items-center gap-1.5 text-[11px]">
                         <IconShell
@@ -1014,11 +1013,7 @@ export function RecorderPage() {
                   onOpenChange={handleToolbarSelectOpenChange('display')}
                   disabled={source !== 'fullscreen' || isRecording || actionInProgress !== 'none'}
                 >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-full h-8"
-                    aria-label="Select display"
-                  >
+                  <SelectTrigger variant="minimal" className="w-full h-8" aria-label="Select display">
                     <SelectValue asChild>
                       <div className="flex items-center gap-1.5 text-[11px]">
                         <IconShell active className="h-5 w-5 shrink-0">
@@ -1052,11 +1047,7 @@ export function RecorderPage() {
                   onOpenChange={handleToolbarSelectOpenChange('webcam')}
                   disabled={isRecording || actionInProgress !== 'none'}
                 >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-full h-8"
-                    aria-label="Select webcam"
-                  >
+                  <SelectTrigger variant="minimal" className="w-full h-8" aria-label="Select webcam">
                     <SelectValue asChild>
                       <div className="flex items-center gap-1.5 text-[11px]">
                         <IconShell
@@ -1065,18 +1056,16 @@ export function RecorderPage() {
                           className="h-5 w-5 shrink-0"
                         >
                           {selectedWebcamId !== 'none' ? (
-                            <IconSwitch
-                              regular={DeviceComputerCamera}
-                              solid={CameraSolid}
-                              active
-                              className="h-3 w-3"
-                            />
+                            <IconSwitch regular={DeviceComputerCamera} solid={CameraSolid} active className="h-3 w-3" />
                           ) : (
                             <DeviceComputerCameraOff size={12} className="text-muted-foreground/70" />
                           )}
                         </IconShell>
                         <span className={cn('truncate', selectedWebcamId === 'none' && 'text-muted-foreground')}>
-                          {truncateRecorderLabel(webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam', 20)}
+                          {truncateRecorderLabel(
+                            webcams.find((w) => w.id === selectedWebcamId)?.name || 'No webcam',
+                            20,
+                          )}
                         </span>
                       </div>
                     </SelectValue>
@@ -1116,11 +1105,7 @@ export function RecorderPage() {
                   onOpenChange={handleToolbarSelectOpenChange('profile')}
                   disabled={isRecording || actionInProgress !== 'none'}
                 >
-                  <SelectTrigger
-                    variant="minimal"
-                    className="w-full h-8"
-                    aria-label="Select recording profile"
-                  >
+                  <SelectTrigger variant="minimal" className="w-full h-8" aria-label="Select recording profile">
                     <SelectValue asChild>
                       <div className="flex items-center gap-1.5 text-[11px]">
                         <IconShell active className="h-5 w-5 shrink-0">
@@ -1145,9 +1130,7 @@ export function RecorderPage() {
               </div>
 
               {/* Version */}
-              {appVersion && (
-                <div className="recorder-sidebar-version">v{appVersion}</div>
-              )}
+              {appVersion && <div className="recorder-sidebar-version">v{appVersion}</div>}
             </div>
 
             {/* Main Content - Webcam Preview / No Signal Placeholder */}

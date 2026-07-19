@@ -14,6 +14,8 @@ interface UseTimelineInteractionProps {
   defaultLaneId: string
   resolveLaneIdFromClientY: (clientY: number) => string | null
   timelineStartOffsetPx: number
+  onScrubStateChange?: (isScrubbing: boolean) => void
+  onScrubEnd?: () => void
 }
 
 type DragMovePreview = {
@@ -51,9 +53,18 @@ export const useTimelineInteraction = ({
   defaultLaneId,
   resolveLaneIdFromClientY,
   timelineStartOffsetPx,
+  onScrubStateChange,
+  onScrubEnd,
 }: UseTimelineInteractionProps) => {
-  const { addCutRegion, deleteRegion, setPreviewCutRegion, updateRegion, setCurrentTime, setSelectedRegionId } =
-    useEditorStore()
+  const {
+    addCutRegion,
+    deleteRegion,
+    setPreviewCutRegion,
+    updateRegion,
+    setCurrentTime,
+    setPlaying,
+    setSelectedRegionId,
+  } = useEditorStore()
   const draggedLaneIdRef = useRef<string | null>(null)
 
   const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
@@ -346,6 +357,7 @@ export const useTimelineInteraction = ({
 
     const handleMouseUp = (e: MouseEvent) => {
       document.body.style.cursor = 'default'
+      if (isDraggingPlayhead) onScrubEnd?.()
       setIsDraggingPlayhead(false)
 
       if (draggingRegion) {
@@ -581,6 +593,8 @@ export const useTimelineInteraction = ({
     defaultLaneId,
     resolveLaneIdFromClientY,
     timelineStartOffsetPx,
+    onScrubStateChange,
+    onScrubEnd,
   ])
 
   return {
@@ -591,6 +605,8 @@ export const useTimelineInteraction = ({
     handleRegionMouseDown,
     handlePlayheadMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
       e.stopPropagation()
+      setPlaying(false)
+      onScrubStateChange?.(true)
       setIsDraggingPlayhead(true)
       document.body.style.cursor = 'ew-resize'
     },

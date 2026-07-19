@@ -142,7 +142,7 @@ export interface MediaAudioRegion {
   zIndex: number
 }
 
-export type RecordingAudioSourceKey = 'recording-mic'
+export type ChangeSoundSourceKey = 'recording-mic' | 'system-audio'
 
 export interface ChangeSoundRegion {
   id: string
@@ -150,7 +150,7 @@ export interface ChangeSoundRegion {
   laneId: string
   startTime: number
   duration: number
-  sourceKey: RecordingAudioSourceKey
+  sourceKey: ChangeSoundSourceKey
   isMuted: boolean
   volume: number
   fadeInDuration: number

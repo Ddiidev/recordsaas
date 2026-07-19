@@ -69,7 +69,10 @@ Recording profile invariant:
 - When the recorder opens `Settings`, keep the window interactive (`setIgnoreMouseEvents(false)`) and render the modal in an isolated top stacking context; do not rely on transparent-window hit-testing for the close button.
 - On Windows, webcam capture options must be probed before recording when an explicit size is requested. If DShow rejects the target size, fall back to a supported common size or device default instead of aborting the recording.
 - On Windows, when webcam capture is enabled, screen capture and webcam capture must run in separate FFmpeg processes. Keep screen+mic in the main process and webcam in an auxiliary process so a slow DShow camera cannot starve `ddagrab` screen frames. Stop/cancel paths must shut down every FFmpeg process before validating or discarding session files.
+- On Windows, pass the friendly DShow device name to FFmpeg (`deviceLabel`); keep the alternative/PnP identifier only as the persisted selection id. Do not use the PnP id as `video=` or `audio=` input text.
+- The Windows DShow webcam probe must require at least one captured frame, not only a successful device open/exit code. If the device returns zero frames, stop before starting the rest of the recording and show a camera-busy/driver diagnostic.
 - On Windows, DShow webcam capture should use enlarged input buffering (`thread_queue_size`/`rtbufsize`) and should fall back from requested 60fps to 30fps when the camera rejects 60fps. Do not lower screen FPS just because the webcam only supports 30fps.
+- Never apply Windows `PRIORITY_LOW`/Idle to the DShow webcam process; use at least `PRIORITY_BELOW_NORMAL` so it can deliver the first frame.
 - Custom profiles may choose screen resolution `native | sd | hd | full-hd | 2k`, screen FPS `30 | 60 | 120`, webcam resolution `native | sd | hd | full-hd | 2k`, and webcam FPS `synced | 30 | 60`; synced webcam FPS follows the screen FPS capped at 60fps.
 - Performance settings own `general.forceHighPerformanceGpu`, `export.memoryLimitPercent`, and FFmpeg recording process priority. General settings must not duplicate those controls.
 - General setting `general.recordingProcessPriority` controls FFmpeg recording process scheduling with `low | normal | high | advanced`. On Windows, `normal` intentionally maps to below-normal OS priority, `low` maps to low priority, and `high` maps to above-normal without using realtime/admin-only priority.
@@ -157,14 +160,14 @@ Media-audio contract state:
 Canonical contract fields:
 - `MediaAudioClip`: `id`, `path` (runtime absolute), `url` (`media://...`), `name`, `duration`, `startTime`.
 - `MediaAudioRegion`: `id`, `type='media-audio'`, `laneId`, `startTime`, `duration`, `sourceStart`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
-- `ChangeSoundRegion`: `id`, `type='change-sound'`, `laneId`, `startTime`, `duration`, `sourceKey='recording-mic'`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
+- `ChangeSoundRegion`: `id`, `type='change-sound'`, `laneId`, `startTime`, `duration`, `sourceKey='recording-mic' | 'system-audio'`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
 
 Core business rules:
 1. Media audio playback follows `mediaAudioRegions` and is independent from recording-mic source.
-2. `change-sound` regions affect recording audio only.
+2. `change-sound` regions affect only their selected source (`recording-mic` or `system-audio`); regions from one source must not change lane precedence, volume, mute, or fades on the other source.
 3. Lane precedence applies when overlaps occur (upper lane wins).
 4. Region-level mute/volume/fade are enforced on applicable tracks.
-5. Computer audio follows the main recording timeline and supports only whole-track editor volume/mute.
+5. Computer audio follows the main recording timeline, supports whole-track editor volume/mute, and can be targeted by `change-sound` regions.
 6. Final mix includes recording + optional computer audio + media when present.
 7. Image/video media categories can remain placeholder if no render/export behavior is implemented.
 
@@ -364,6 +367,9 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
 - Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
 - Playhead interaction baseline: dragging can start from the full playhead control line (not only the triangle), with `ew-resize` cursor semantics.
+- Ruler scrubbing must update continuously from mouse down through window-level mouse move, pause playback while seeking, and clamp the target to the timeline duration.
+- Every main-video seek must redraw the canvas after `seeked` and resynchronize webcam, recording audio, computer audio, and media audio before playback resumes.
+- While timeline scrubbing is active, coalesce video seek requests with animation-frame scheduling and pause separated audio elements without changing their timestamps; perform one audio sync after scrubbing ends to avoid queued AAC seeks.
 
 Toolbar and preview control sizing:
 - `ToolbarButton` default: `h-10 px-4 rounded-lg`.
@@ -372,6 +378,7 @@ Toolbar and preview control sizing:
 - Timeline zoom slider wrapper width: `w-24`.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
+- Side-by-side webcam geometry must preserve the selected camera shape/aspect ratio at every frame-padding value. Padding `0` removes the gap only; it must not stretch the camera to the full sidebar height. Keep the webcam anchored to the inner horizontal edge and vertically centered unless its fitted height naturally reaches the top/bottom bounds.
 - Recorder floating window presets (`src/lib/recorder-window.ts`): `toolbar 1220x200`, `preview 1220x420`, `settings 1380x820`.
 - Recorder toolbar parity rule: Linux and macOS must match the Windows control order and close-button position; Linux-only cursor scale controls belong in `Settings > General`, not in the main recorder toolbar.
 - Recorder overflow/click rule: root recorder surfaces must not scroll, webcam preview should only mount while visible, and click-through hover behavior is limited to `win32`/`darwin`; Linux recorder windows stay fully interactive. Opening any recorder toolbar dropdown temporarily disables click-through until the menu closes.

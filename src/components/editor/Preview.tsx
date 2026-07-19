@@ -20,10 +20,46 @@ import { cn } from '../../lib/utils'
 import { toMediaUrl } from '../../lib/media-url'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
+import type { ChangeSoundSourceKey } from '../../types'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
 const WEBCAM_SCRUB_RESYNC_DRIFT_SECS = 0.02
+
+type ResolvedAudioPlayback = {
+  isActive: boolean
+  sourceTime: number
+  volumeMultiplier: number
+}
+
+const syncResolvedAudioElement = (
+  element: HTMLAudioElement | null,
+  resolved: ResolvedAudioPlayback,
+  nextVolume: number,
+  playbackRate: number,
+  shouldPlay: boolean,
+  maxDrift: number,
+) => {
+  if (!element) return
+
+  if (!resolved.isActive) {
+    element.pause()
+    if (element.readyState > 0) element.currentTime = 0
+    return
+  }
+
+  if (element.readyState > 0 && Math.abs(element.currentTime - resolved.sourceTime) > maxDrift) {
+    element.currentTime = resolved.sourceTime
+  }
+  element.volume = Math.max(0, Math.min(1, nextVolume))
+  element.playbackRate = playbackRate
+
+  if (shouldPlay) {
+    if (element.paused) element.play().catch(console.error)
+  } else {
+    element.pause()
+  }
+}
 
 const describeMediaError = (element: HTMLMediaElement | null): string => {
   const error = element?.error
@@ -35,9 +71,11 @@ export const Preview = memo(
   ({
     videoRef,
     onSeekFrame,
+    isTimelineScrubbing,
   }: {
     videoRef: React.RefObject<HTMLVideoElement>
     onSeekFrame: (direction: 'next' | 'prev') => void
+    isTimelineScrubbing: boolean
   }) => {
     const {
       videoUrl,
@@ -128,18 +166,20 @@ export const Preview = memo(
     const systemAudioRef = useRef<HTMLAudioElement>(null)
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const animationFrameId = useRef<number>()
+    const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
     const hasSeparateAudioTracks = !!audioUrl || !!systemAudioUrl || !!mediaAudioClip?.url
 
-    const resolveRecordingForTime = useCallback(
-      (playbackTime: number) => {
-        if (!audioUrl) {
+    const resolveChangeSoundForTime = useCallback(
+      (sourceKey: ChangeSoundSourceKey, sourceAvailable: boolean, playbackTime: number) => {
+        if (!sourceAvailable) {
           return { isActive: false, sourceTime: 0, volumeMultiplier: 0 }
         }
 
-        const activeRegion = getTopActiveRegionAtTime(Object.values(changeSoundRegions), playbackTime, timelineLanes)
+        const sourceRegions = Object.values(changeSoundRegions).filter((region) => region.sourceKey === sourceKey)
+        const activeRegion = getTopActiveRegionAtTime(sourceRegions, playbackTime, timelineLanes)
         if (!activeRegion) {
           return { isActive: true, sourceTime: playbackTime, volumeMultiplier: 1 }
         }
@@ -160,7 +200,17 @@ export const Preview = memo(
           volumeMultiplier: Math.max(0, Math.min(1, baseGain * Math.min(fadeInGain, fadeOutGain))),
         }
       },
-      [audioUrl, changeSoundRegions, timelineLanes],
+      [changeSoundRegions, timelineLanes],
+    )
+
+    const resolveRecordingForTime = useCallback(
+      (playbackTime: number) => resolveChangeSoundForTime('recording-mic', Boolean(audioUrl), playbackTime),
+      [audioUrl, resolveChangeSoundForTime],
+    )
+
+    const resolveSystemAudioForTime = useCallback(
+      (playbackTime: number) => resolveChangeSoundForTime('system-audio', Boolean(systemAudioUrl), playbackTime),
+      [resolveChangeSoundForTime, systemAudioUrl],
     )
 
     const resolveMediaForTime = useCallback(
@@ -191,6 +241,64 @@ export const Preview = memo(
         }
       },
       [mediaAudioClip, mediaAudioRegions, timelineLanes],
+    )
+
+    const syncMediaToVideoTime = useCallback(
+      (playbackTime: number, resumePlayback: boolean) => {
+        const video = videoRef.current
+        const webcamVideo = webcamVideoRef.current
+        const recordingAudio = recordingAudioRef.current
+        const systemAudio = systemAudioRef.current
+        const mediaAudio = mediaAudioRef.current
+
+        if (
+          !isTimelineScrubbing &&
+          webcamVideo &&
+          webcamVideo.readyState >= 2 &&
+          !webcamVideo.seeking &&
+          Math.abs(webcamVideo.currentTime - playbackTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+        ) {
+          webcamVideo.currentTime = playbackTime
+        }
+
+        const resolvedRecording = resolveRecordingForTime(playbackTime)
+        syncResolvedAudioElement(
+          recordingAudio,
+          resolvedRecording,
+          volume * resolvedRecording.volumeMultiplier,
+          video?.playbackRate ?? 1,
+          resumePlayback,
+          0.02,
+        )
+        const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
+        syncResolvedAudioElement(
+          systemAudio,
+          resolvedSystemAudio,
+          systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+          video?.playbackRate ?? 1,
+          resumePlayback,
+          0.02,
+        )
+
+        const resolvedMedia = resolveMediaForTime(playbackTime)
+        syncResolvedAudioElement(
+          mediaAudio,
+          resolvedMedia,
+          resolvedMedia.volumeMultiplier,
+          video?.playbackRate ?? 1,
+          resumePlayback,
+          0.02,
+        )
+      },
+      [
+        isTimelineScrubbing,
+        resolveMediaForTime,
+        resolveRecordingForTime,
+        resolveSystemAudioForTime,
+        systemAudioVolume,
+        videoRef,
+        volume,
+      ],
     )
 
     // --- Start of Changes for Fullscreen Controls ---
@@ -305,17 +413,24 @@ export const Preview = memo(
         return
       }
 
-      if (webcamVideo) {
+      if (webcamVideo && !isTimelineScrubbing) {
         webcamVideo.playbackRate = video.playbackRate
         const drift = Math.abs(webcamVideo.currentTime - video.currentTime)
         if (state.isPlaying) {
           if (webcamVideo.paused && webcamVideo.readyState >= 2) {
             webcamVideo.play().catch(() => {})
           }
-          if (drift > WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS) {
+          const now = performance.now()
+          if (
+            drift > WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS &&
+            webcamVideo.readyState >= 2 &&
+            !webcamVideo.seeking &&
+            now - lastWebcamResyncAtRef.current >= 250
+          ) {
             webcamVideo.currentTime = video.currentTime
+            lastWebcamResyncAtRef.current = now
           }
-        } else if (drift > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+        } else if (webcamVideo.readyState >= 2 && !webcamVideo.seeking && drift > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
           webcamVideo.currentTime = video.currentTime
         }
       }
@@ -324,7 +439,7 @@ export const Preview = memo(
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
-    }, [videoRef, bgImage])
+    }, [videoRef, bgImage, isTimelineScrubbing])
 
     useEffect(() => {
       if (isPlaying) {
@@ -377,51 +492,20 @@ export const Preview = memo(
       const recordingAudio = recordingAudioRef.current
       const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
+      if (isTimelineScrubbing) {
+        video.pause()
+        webcamVideo?.pause()
+        syncMediaToVideoTime(video.currentTime, false)
+        return
+      }
       if (isPlaying) {
         video.play().catch(console.error)
         webcamVideo?.play().catch(console.error)
-        if (recordingAudio) {
-          const resolvedRecording = resolveRecordingForTime(video.currentTime)
-          if (resolvedRecording.isActive) {
-            if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
-              recordingAudio.currentTime = resolvedRecording.sourceTime
-            }
-            recordingAudio.playbackRate = video.playbackRate
-            recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
-            recordingAudio.play().catch(console.error)
-          } else {
-            recordingAudio.pause()
-            recordingAudio.currentTime = 0
-          }
-        }
-        if (systemAudio) {
-          if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
-            systemAudio.currentTime = video.currentTime
-          }
-          systemAudio.playbackRate = video.playbackRate
-          systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
-          systemAudio.play().catch(console.error)
-        }
-        if (mediaAudio) {
-          const resolvedMedia = resolveMediaForTime(video.currentTime)
-          if (resolvedMedia.isActive) {
-            if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
-              mediaAudio.currentTime = resolvedMedia.sourceTime
-            }
-            mediaAudio.playbackRate = video.playbackRate
-            mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
-            mediaAudio.play().catch(console.error)
-          } else {
-            mediaAudio.pause()
-            mediaAudio.currentTime = 0
-          }
-        }
+        syncMediaToVideoTime(video.currentTime, true)
       } else {
         video.pause()
         webcamVideo?.pause()
-        recordingAudio?.pause()
-        systemAudio?.pause()
-        mediaAudio?.pause()
+        syncMediaToVideoTime(video.currentTime, false)
         // When pausing, reset playbackRate to 1 so scrubbing is at normal speed
         video.playbackRate = 1
         if (webcamVideo) webcamVideo.playbackRate = 1
@@ -429,64 +513,21 @@ export const Preview = memo(
         if (systemAudio) systemAudio.playbackRate = 1
         if (mediaAudio) mediaAudio.playbackRate = 1
       }
-    }, [isPlaying, resolveRecordingForTime, resolveMediaForTime, videoRef, volume, systemAudioVolume])
+    }, [isPlaying, isTimelineScrubbing, syncMediaToVideoTime, videoRef])
 
     useEffect(() => {
       const video = videoRef.current
-      const recordingAudio = recordingAudioRef.current
-      if (!video || !recordingAudio) return
-
-      const resolvedRecording = resolveRecordingForTime(video.currentTime)
-      if (!resolvedRecording.isActive) {
-        recordingAudio.pause()
-        recordingAudio.currentTime = 0
-        return
-      }
-
-      if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
-        recordingAudio.currentTime = resolvedRecording.sourceTime
-      }
-      recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
-      if (!isPlaying) {
-        recordingAudio.pause()
-      }
-    }, [audioUrl, isPlaying, resolveRecordingForTime, videoRef, volume])
+      if (!video) return
+      syncMediaToVideoTime(video.currentTime, isPlaying)
+    }, [audioUrl, isPlaying, mediaAudioClip, syncMediaToVideoTime, systemAudioUrl, videoRef])
 
     useEffect(() => {
+      if (isTimelineScrubbing) return
       const video = videoRef.current
-      const systemAudio = systemAudioRef.current
-      if (!video || !systemAudio) return
-
-      if (Math.abs(systemAudio.currentTime - video.currentTime) > 0.1) {
-        systemAudio.currentTime = video.currentTime
-      }
-      systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
-      systemAudio.muted = systemAudioMuted
-      if (!isPlaying) {
-        systemAudio.pause()
-      }
-    }, [systemAudioUrl, isPlaying, videoRef, volume, isMuted, systemAudioVolume, systemAudioMuted])
-
-    useEffect(() => {
-      const video = videoRef.current
-      const mediaAudio = mediaAudioRef.current
-      if (!video || !mediaAudio) return
-
-      const resolvedMedia = resolveMediaForTime(video.currentTime)
-      if (!resolvedMedia.isActive) {
-        mediaAudio.pause()
-        mediaAudio.currentTime = 0
-        return
-      }
-
-      if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
-        mediaAudio.currentTime = resolvedMedia.sourceTime
-      }
-      mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
-      if (!isPlaying) {
-        mediaAudio.pause()
-      }
-    }, [resolveMediaForTime, videoRef])
+      if (!video) return
+      syncMediaToVideoTime(video.currentTime, !video.paused)
+      renderCanvas()
+    }, [isTimelineScrubbing, renderCanvas, syncMediaToVideoTime, videoRef])
 
     // Effect to handle volume and mute state
     useEffect(() => {
@@ -511,7 +552,9 @@ export const Preview = memo(
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
-        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+        const playbackTime = video?.currentTime ?? currentTime
+        const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
+        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume * resolvedSystemAudio.volumeMultiplier))
         systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
@@ -527,6 +570,7 @@ export const Preview = memo(
       hasSeparateAudioTracks,
       currentTime,
       resolveRecordingForTime,
+      resolveSystemAudioForTime,
       resolveMediaForTime,
       systemAudioVolume,
       systemAudioMuted,
@@ -539,6 +583,7 @@ export const Preview = memo(
       const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
       let playbackTime = video.currentTime
+      let shouldPlayAudio = isPlaying
 
       // Handle cut regions without depending on store currentTime updates during playback
       if (isPlaying) {
@@ -546,28 +591,6 @@ export const Preview = memo(
         if (activeCutRegion) {
           playbackTime = activeCutRegion.startTime + activeCutRegion.duration
           video.currentTime = playbackTime
-          const resolvedRecording = resolveRecordingForTime(playbackTime)
-          const resolvedMedia = resolveMediaForTime(playbackTime)
-
-          if (recordingAudio) {
-            if (resolvedRecording.isActive) {
-              recordingAudio.currentTime = resolvedRecording.sourceTime
-            } else {
-              recordingAudio.pause()
-              recordingAudio.currentTime = 0
-            }
-          }
-          if (systemAudio) {
-            systemAudio.currentTime = playbackTime
-          }
-          if (mediaAudio) {
-            if (resolvedMedia.isActive) {
-              mediaAudio.currentTime = resolvedMedia.sourceTime
-            } else {
-              mediaAudio.pause()
-              mediaAudio.currentTime = 0
-            }
-          }
           syncCurrentTimeToStore(playbackTime, true)
         }
       }
@@ -585,20 +608,7 @@ export const Preview = memo(
         playbackTime = endTrimRegion.startTime
         video.currentTime = playbackTime
         video.pause()
-        if (recordingAudio) {
-          const resolvedRecording = resolveRecordingForTime(playbackTime)
-          recordingAudio.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
-          recordingAudio.pause()
-        }
-        if (systemAudio) {
-          systemAudio.currentTime = playbackTime
-          systemAudio.pause()
-        }
-        if (mediaAudio) {
-          const resolvedMedia = resolveMediaForTime(playbackTime)
-          mediaAudio.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
-          mediaAudio.pause()
-        }
+        shouldPlayAudio = false
         syncCurrentTimeToStore(playbackTime, true)
       }
       if (webcamVideoRef.current) {
@@ -610,52 +620,33 @@ export const Preview = memo(
           webcamVideoRef.current.currentTime = playbackTime
         }
       }
-      if (recordingAudio) {
-        const resolvedRecording = resolveRecordingForTime(playbackTime)
-        if (resolvedRecording.isActive) {
-          if (Math.abs(recordingAudio.currentTime - resolvedRecording.sourceTime) > 0.1) {
-            recordingAudio.currentTime = resolvedRecording.sourceTime
-          }
-          recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
-          recordingAudio.playbackRate = video.playbackRate
-          if (isPlaying && recordingAudio.paused) {
-            recordingAudio.play().catch(console.error)
-          }
-        } else {
-          if (!recordingAudio.paused) {
-            recordingAudio.pause()
-          }
-          recordingAudio.currentTime = 0
-        }
-      }
-      if (systemAudio) {
-        if (Math.abs(systemAudio.currentTime - playbackTime) > 0.1) {
-          systemAudio.currentTime = playbackTime
-        }
-        systemAudio.volume = Math.max(0, Math.min(1, volume * systemAudioVolume))
-        systemAudio.playbackRate = video.playbackRate
-        if (isPlaying && systemAudio.paused) {
-          systemAudio.play().catch(console.error)
-        }
-      }
-      if (mediaAudio) {
-        const resolvedMedia = resolveMediaForTime(playbackTime)
-        if (resolvedMedia.isActive) {
-          if (Math.abs(mediaAudio.currentTime - resolvedMedia.sourceTime) > 0.1) {
-            mediaAudio.currentTime = resolvedMedia.sourceTime
-          }
-          mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
-          mediaAudio.playbackRate = video.playbackRate
-          if (isPlaying && mediaAudio.paused) {
-            mediaAudio.play().catch(console.error)
-          }
-        } else {
-          if (!mediaAudio.paused) {
-            mediaAudio.pause()
-          }
-          mediaAudio.currentTime = 0
-        }
-      }
+      const resolvedRecording = resolveRecordingForTime(playbackTime)
+      syncResolvedAudioElement(
+        recordingAudio,
+        resolvedRecording,
+        volume * resolvedRecording.volumeMultiplier,
+        video.playbackRate,
+        shouldPlayAudio,
+        0.1,
+      )
+      const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
+      syncResolvedAudioElement(
+        systemAudio,
+        resolvedSystemAudio,
+        systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+        video.playbackRate,
+        shouldPlayAudio,
+        0.1,
+      )
+      const resolvedMedia = resolveMediaForTime(playbackTime)
+      syncResolvedAudioElement(
+        mediaAudio,
+        resolvedMedia,
+        resolvedMedia.volumeMultiplier,
+        video.playbackRate,
+        shouldPlayAudio,
+        0.1,
+      )
 
       if (isPlaying) {
         const now = performance.now()
@@ -717,13 +708,8 @@ export const Preview = memo(
 
         const timeFromStore = useEditorStore.getState().currentTime
 
-        const onSeekComplete = () => {
-          renderCanvas()
-          video.removeEventListener('seeked', onSeekComplete)
-        }
-
-        video.addEventListener('seeked', onSeekComplete)
-        // Restore the video's time from the store to prevent rewinding
+        // Restore the video's time from the store to prevent rewinding. The
+        // persistent seeked handler redraws the canvas and syncs audio.
         video.currentTime = timeFromStore
       }
     }
@@ -749,18 +735,14 @@ export const Preview = memo(
           `[Preview] Recording audio metadata loaded: duration=${recordingAudio.duration} src=${recordingAudio.currentSrc}`,
         )
         const resolvedRecording = resolveRecordingForTime(video.currentTime)
-        if (!resolvedRecording.isActive) {
-          recordingAudio.pause()
-          recordingAudio.currentTime = 0
-        } else {
-          recordingAudio.currentTime = resolvedRecording.sourceTime
-          recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
-          if (video.paused) {
-            recordingAudio.pause()
-          } else {
-            recordingAudio.play().catch(console.error)
-          }
-        }
+        syncResolvedAudioElement(
+          recordingAudio,
+          resolvedRecording,
+          volume * resolvedRecording.volumeMultiplier,
+          video.playbackRate,
+          !video.paused,
+          0,
+        )
       }
     }, [resolveRecordingForTime, videoRef, volume])
 
@@ -771,16 +753,18 @@ export const Preview = memo(
         console.info(
           `[Preview] Computer audio metadata loaded: duration=${systemAudio.duration} src=${systemAudio.currentSrc}`,
         )
-        systemAudio.currentTime = video.currentTime
-        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume))
+        const resolvedSystemAudio = resolveSystemAudioForTime(video.currentTime)
         systemAudio.muted = systemAudioMuted
-        if (video.paused) {
-          systemAudio.pause()
-        } else {
-          systemAudio.play().catch(console.error)
-        }
+        syncResolvedAudioElement(
+          systemAudio,
+          resolvedSystemAudio,
+          systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+          video.playbackRate,
+          !video.paused,
+          0,
+        )
       }
-    }, [videoRef, systemAudioVolume, systemAudioMuted])
+    }, [resolveSystemAudioForTime, videoRef, systemAudioVolume, systemAudioMuted])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
@@ -793,29 +777,28 @@ export const Preview = memo(
           setMediaAudioDuration(mediaAudio.duration)
         }
         const resolvedMedia = resolveMediaForTime(video.currentTime)
-
-        if (!resolvedMedia.isActive) {
-          mediaAudio.pause()
-          mediaAudio.currentTime = 0
-        } else {
-          mediaAudio.currentTime = resolvedMedia.sourceTime
-          mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
-          if (video.paused) {
-            mediaAudio.pause()
-          } else {
-            mediaAudio.play().catch(console.error)
-          }
-        }
+        syncResolvedAudioElement(
+          mediaAudio,
+          resolvedMedia,
+          resolvedMedia.volumeMultiplier,
+          video.playbackRate,
+          !video.paused,
+          0,
+        )
       }
-    }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, videoRef, volume])
+    }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, videoRef])
 
     const handleVideoPlay = useCallback(() => {
+      if (isTimelineScrubbing) {
+        videoRef.current?.pause()
+        return
+      }
       setPlaying(true)
       const video = videoRef.current
       if (video) {
         setPlaybackUiTime(video.currentTime)
       }
-    }, [setPlaying, videoRef])
+    }, [isTimelineScrubbing, setPlaying, videoRef])
 
     const handleVideoPause = useCallback(() => {
       setPlaying(false)
@@ -824,11 +807,16 @@ export const Preview = memo(
       if (video) {
         setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
-        if (webcamVideo && Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+        if (
+          !isTimelineScrubbing &&
+          webcamVideo &&
+          !webcamVideo.seeking &&
+          Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+        ) {
           webcamVideo.currentTime = video.currentTime
         }
       }
-    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+    }, [isTimelineScrubbing, setPlaying, videoRef, syncCurrentTimeToStore])
 
     const handleVideoEnded = useCallback(() => {
       setPlaying(false)
@@ -837,11 +825,43 @@ export const Preview = memo(
       if (video) {
         setPlaybackUiTime(video.currentTime)
         syncCurrentTimeToStore(video.currentTime, true)
-        if (webcamVideo && Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS) {
+        if (
+          !isTimelineScrubbing &&
+          webcamVideo &&
+          !webcamVideo.seeking &&
+          Math.abs(webcamVideo.currentTime - video.currentTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+        ) {
           webcamVideo.currentTime = video.currentTime
         }
       }
-    }, [setPlaying, videoRef, syncCurrentTimeToStore])
+    }, [isTimelineScrubbing, setPlaying, videoRef, syncCurrentTimeToStore])
+
+    const handleVideoSeeking = useCallback(() => {
+      const video = videoRef.current
+      if (!video) return
+
+      if (isTimelineScrubbing) {
+        webcamVideoRef.current?.pause()
+        recordingAudioRef.current?.pause()
+        systemAudioRef.current?.pause()
+        mediaAudioRef.current?.pause()
+        return
+      }
+
+      syncMediaToVideoTime(video.currentTime, false)
+    }, [isTimelineScrubbing, syncMediaToVideoTime, videoRef])
+
+    const handleVideoSeeked = useCallback(() => {
+      const video = videoRef.current
+      if (!video) return
+
+      setPlaybackUiTime(video.currentTime)
+      syncCurrentTimeToStore(video.currentTime, true)
+      renderCanvas()
+      if (!isTimelineScrubbing) {
+        syncMediaToVideoTime(video.currentTime, !video.paused)
+      }
+    }, [isTimelineScrubbing, renderCanvas, syncCurrentTimeToStore, syncMediaToVideoTime, videoRef])
 
     const handleScrub = (value: number) => {
       if (videoRef.current) {
@@ -849,20 +869,7 @@ export const Preview = memo(
         setPlaybackUiTime(value)
         syncCurrentTimeToStore(value, true)
       }
-      if (webcamVideoRef.current) {
-        webcamVideoRef.current.currentTime = value
-      }
-      if (recordingAudioRef.current) {
-        const resolvedRecording = resolveRecordingForTime(value)
-        recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
-      }
-      if (systemAudioRef.current) {
-        systemAudioRef.current.currentTime = value
-      }
-      if (mediaAudioRef.current) {
-        const resolvedMedia = resolveMediaForTime(value)
-        mediaAudioRef.current.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
-      }
+      syncMediaToVideoTime(value, !!videoRef.current && !videoRef.current.paused)
     }
 
     const handleRewind = () => {
@@ -877,20 +884,7 @@ export const Preview = memo(
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
       }
-      if (webcamVideoRef.current) {
-        webcamVideoRef.current.currentTime = rewindTime
-      }
-      if (recordingAudioRef.current) {
-        const resolvedRecording = resolveRecordingForTime(rewindTime)
-        recordingAudioRef.current.currentTime = resolvedRecording.isActive ? resolvedRecording.sourceTime : 0
-      }
-      if (systemAudioRef.current) {
-        systemAudioRef.current.currentTime = rewindTime
-      }
-      if (mediaAudioRef.current) {
-        const resolvedMedia = resolveMediaForTime(rewindTime)
-        mediaAudioRef.current.currentTime = resolvedMedia.isActive ? resolvedMedia.sourceTime : 0
-      }
+      syncMediaToVideoTime(rewindTime, !!videoRef.current && !videoRef.current.paused)
     }
 
     const previewTime = isPlaying ? playbackUiTime : currentTime
@@ -945,6 +939,8 @@ export const Preview = memo(
           ref={videoRef}
           src={videoUrl || undefined}
           onTimeUpdate={handleTimeUpdate}
+          onSeeking={handleVideoSeeking}
+          onSeeked={handleVideoSeeked}
           onLoadedMetadata={handleLoadedMetadata}
           onError={handleVideoError}
           onPlay={handleVideoPlay}

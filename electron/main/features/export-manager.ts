@@ -87,7 +87,7 @@ type ChangeSoundRegionLike = {
   laneId?: string
   startTime: number
   duration: number
-  sourceKey: 'recording-mic'
+  sourceKey: 'recording-mic' | 'system-audio'
   isMuted: boolean
   volume: number
   fadeInDuration: number
@@ -409,7 +409,7 @@ const parseChangeSoundRegionsFromState = (projectState: Record<string, unknown>)
       laneId: parsed.laneId,
       startTime,
       duration,
-      sourceKey: 'recording-mic',
+      sourceKey: parsed.sourceKey === 'system-audio' ? 'system-audio' : 'recording-mic',
       isMuted: parsed.isMuted === true,
       volume,
       fadeInDuration,
@@ -460,7 +460,7 @@ const collectChangeSoundBoundaries = (regions: ChangeSoundRegionLike[], duration
   return boundaries
 }
 
-const buildRecordingExportAudioSegments = (
+const buildChangeSoundExportAudioSegments = (
   timelineSegments: TimelineAudioSegment[],
   regions: ChangeSoundRegionLike[],
   lanes: LaneLike[],
@@ -1408,8 +1408,8 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   // Prepare final audio for export:
-  // - recording track (modulated by change-sound regions)
-  // - optional computer audio track
+  // - recording track (optionally modulated by source-specific change-sound regions)
+  // - optional computer audio track (optionally modulated by source-specific change-sound regions)
   // - media track (independent media regions)
   // - optional mix of all available tracks
   let resolvedAudioInputPath: string | null = null
@@ -1419,7 +1419,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
     const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
-    const recordingVolume = typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume) ? Math.max(0, Math.min(projectStateRecord.recordingVolume, 1)) : 1
+    const recordingVolume =
+      typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume)
+        ? Math.max(0, Math.min(projectStateRecord.recordingVolume, 1))
+        : 1
     const recordingMuted = projectStateRecord.recordingMuted === true || recordingVolume <= 0
     const systemAudioVolume =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
@@ -1433,19 +1436,27 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       : [{ id: 'lane-1', order: 0 }]
     const mediaRegions = parseMediaAudioRegionsFromState(projectStateRecord, mediaClip)
     const changeSoundRegions = parseChangeSoundRegionsFromState(projectStateRecord)
+    const recordingChangeSoundRegions = changeSoundRegions.filter((region) => region.sourceKey === 'recording-mic')
+    const systemChangeSoundRegions = changeSoundRegions.filter((region) => region.sourceKey === 'system-audio')
     const duration =
       typeof projectState.duration === 'number' && Number.isFinite(projectState.duration)
         ? Math.max(0, projectState.duration)
         : 0
     const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
     const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
-    const baseTimelineSegments = buildAudioTimelineSegments(duration, cutRegions, speedRegions, timelineLanes)
     const recordingTimelineSegments = buildAudioTimelineSegments(
       duration,
       cutRegions,
       speedRegions,
       timelineLanes,
-      collectChangeSoundBoundaries(changeSoundRegions, duration),
+      collectChangeSoundBoundaries(recordingChangeSoundRegions, duration),
+    )
+    const systemAudioTimelineSegments = buildAudioTimelineSegments(
+      duration,
+      cutRegions,
+      speedRegions,
+      timelineLanes,
+      collectChangeSoundBoundaries(systemChangeSoundRegions, duration),
     )
     const mediaTimelineSegments = buildAudioTimelineSegments(
       duration,
@@ -1460,23 +1471,24 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       Math.abs(recordingTimelineSegments[0].duration - duration) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].speed - 1) < 0.01 &&
       Math.abs(recordingVolume - 1) < 0.001 &&
-      changeSoundRegions.length === 0
+      recordingChangeSoundRegions.length === 0
     const systemAudioHasNoTransform =
-      baseTimelineSegments.length === 1 &&
-      Math.abs(baseTimelineSegments[0].start) < 0.001 &&
-      Math.abs(baseTimelineSegments[0].duration - duration) < 0.001 &&
-      Math.abs(baseTimelineSegments[0].speed - 1) < 0.01 &&
+      systemAudioTimelineSegments.length === 1 &&
+      Math.abs(systemAudioTimelineSegments[0].start) < 0.001 &&
+      Math.abs(systemAudioTimelineSegments[0].duration - duration) < 0.001 &&
+      Math.abs(systemAudioTimelineSegments[0].speed - 1) < 0.01 &&
       Math.abs(systemAudioVolume - 1) < 0.001 &&
-      !systemAudioMuted
+      !systemAudioMuted &&
+      systemChangeSoundRegions.length === 0
 
     let recordingTrackPath: string | null = null
     let systemTrackPath: string | null = null
     let mediaTrackPath: string | null = null
 
     if (recordingPath && !recordingMuted) {
-      const recordingSegments = buildRecordingExportAudioSegments(
+      const recordingSegments = buildChangeSoundExportAudioSegments(
         recordingTimelineSegments,
-        changeSoundRegions,
+        recordingChangeSoundRegions,
         timelineLanes,
       ).map((segment) => ({
         ...segment,
@@ -1502,12 +1514,14 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
 
     if (systemAudioPath && !systemAudioMuted) {
-      const systemSegments = buildRecordingExportAudioSegments(baseTimelineSegments, [], timelineLanes).map(
-        (segment) => ({
-          ...segment,
-          volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
-        }),
-      )
+      const systemSegments = buildChangeSoundExportAudioSegments(
+        systemAudioTimelineSegments,
+        systemChangeSoundRegions,
+        timelineLanes,
+      ).map((segment) => ({
+        ...segment,
+        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
+      }))
       if (systemSegments.length > 0) {
         if (systemAudioHasNoTransform) {
           log.info('[ExportManager] Reusing original computer audio; no computer audio edits detected.')

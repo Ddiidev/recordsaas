@@ -87,6 +87,7 @@ export function EditorPage() {
   const [projectExportName, setProjectExportName] = useState(generateDefaultProjectName)
   const [projectNameError, setProjectNameError] = useState<string | null>(null)
   const [isProjectNameValid, setProjectNameValid] = useState(true)
+  const [isTimelineScrubbing, setIsTimelineScrubbing] = useState(false)
   const isImportedProject = !!useEditorStore((state) => state.originalProjectPath)
 
   useEffect(() => {
@@ -516,7 +517,7 @@ export function EditorPage() {
                 isPreviewFullScreen && 'fixed inset-0 z-50 bg-black p-0',
               )}
             >
-              <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} />
+              <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} isTimelineScrubbing={isTimelineScrubbing} />
             </div>
             <div className={cn('flex-shrink-0', isPreviewFullScreen && 'hidden')}>
               <PreviewControls />
@@ -527,7 +528,7 @@ export function EditorPage() {
                 isPreviewFullScreen && 'hidden', // Hide Timeline in fullscreen
               )}
             >
-              <Timeline videoRef={videoRef} />
+              <Timeline videoRef={videoRef} onScrubStateChange={setIsTimelineScrubbing} />
             </div>
           </div>
         </div>

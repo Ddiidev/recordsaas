@@ -65,7 +65,13 @@ const Ruler = memo(
 )
 Ruler.displayName = 'Ruler'
 
-export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElement> }) {
+export function Timeline({
+  videoRef,
+  onScrubStateChange,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement>
+  onScrubStateChange?: (isScrubbing: boolean) => void
+}) {
   const {
     currentTime,
     duration,
@@ -90,6 +96,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
 
   const {
     setCurrentTime,
+    setPlaying,
     setSelectedRegionId,
     addTimelineLane,
     moveTimelineLane,
@@ -110,6 +117,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
   const laneRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const regionRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const animationFrameRef = useRef<number>()
+  const rulerAnimationFrameRef = useRef<number | null>(null)
+  const pendingRulerClientXRef = useRef<number | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0)
@@ -118,6 +127,7 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     position: { x: number; y: number }
   } | null>(null)
   const [mediaAssetDropLaneId, setMediaAssetDropLaneId] = useState<string | null>(null)
+  const [isDraggingRuler, setIsDraggingRuler] = useState(false)
 
   useEffect(() => {
     const containerEl = containerRef.current
@@ -160,6 +170,104 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     },
     [duration, setCurrentTime, videoRef],
   )
+
+  const applyRulerTime = useCallback(
+    (clientX: number) => {
+      if (!timelineRef.current) return
+      const rect = timelineRef.current.getBoundingClientRect()
+      updateVideoTime(trackPxToTime(clientX - rect.left))
+    },
+    [trackPxToTime, updateVideoTime],
+  )
+
+  const updateRulerTime = useCallback(
+    (clientX: number) => {
+      pendingRulerClientXRef.current = clientX
+      if (rulerAnimationFrameRef.current !== null) return
+
+      rulerAnimationFrameRef.current = requestAnimationFrame(() => {
+        rulerAnimationFrameRef.current = null
+        const pendingClientX = pendingRulerClientXRef.current
+        pendingRulerClientXRef.current = null
+        if (pendingClientX !== null) applyRulerTime(pendingClientX)
+      })
+    },
+    [applyRulerTime],
+  )
+
+  const flushRulerTime = useCallback(
+    (clientX: number) => {
+      if (rulerAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(rulerAnimationFrameRef.current)
+        rulerAnimationFrameRef.current = null
+      }
+      pendingRulerClientXRef.current = null
+      applyRulerTime(clientX)
+    },
+    [applyRulerTime],
+  )
+
+  const releaseScrubAfterSeek = useCallback(() => {
+    const video = videoRef.current
+    if (!video) {
+      onScrubStateChange?.(false)
+      return
+    }
+
+    let released = false
+    let quietTimer: number | null = null
+    let initialFallbackTimer: number | null = null
+    let hardFallbackTimer: number | null = null
+
+    const release = () => {
+      if (released) return
+      released = true
+      video.removeEventListener('seeked', handleSeeked)
+      if (quietTimer !== null) window.clearTimeout(quietTimer)
+      if (initialFallbackTimer !== null) window.clearTimeout(initialFallbackTimer)
+      if (hardFallbackTimer !== null) window.clearTimeout(hardFallbackTimer)
+      onScrubStateChange?.(false)
+    }
+
+    const handleSeeked = () => {
+      if (quietTimer !== null) window.clearTimeout(quietTimer)
+      quietTimer = window.setTimeout(release, 120)
+    }
+
+    video.addEventListener('seeked', handleSeeked)
+    initialFallbackTimer = window.setTimeout(() => {
+      if (!video.seeking) release()
+    }, 250)
+    hardFallbackTimer = window.setTimeout(release, 10000)
+  }, [onScrubStateChange, videoRef])
+
+  useEffect(() => {
+    return () => {
+      if (rulerAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(rulerAnimationFrameRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isDraggingRuler) return
+
+    const handleMouseMove = (event: MouseEvent) => {
+      updateRulerTime(event.clientX)
+    }
+    const handleMouseUp = (event: MouseEvent) => {
+      flushRulerTime(event.clientX)
+      setIsDraggingRuler(false)
+      releaseScrubAfterSeek()
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [flushRulerTime, isDraggingRuler, releaseScrubAfterSeek, updateRulerTime])
 
   const resolveLaneIdFromClientY = useCallback(
     (clientY: number): string | null => {
@@ -208,6 +316,8 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
     defaultLaneId: fallbackLaneId,
     resolveLaneIdFromClientY,
     timelineStartOffsetPx,
+    onScrubStateChange,
+    onScrubEnd: releaseScrubAfterSeek,
   })
 
   const rulerTicks = useMemo(() => {
@@ -426,15 +536,17 @@ export function Timeline({ videoRef }: { videoRef: React.RefObject<HTMLVideoElem
 
   const handleRulerMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
       event.stopPropagation()
       if (duration === 0 || !timelineRef.current) return
 
-      const rect = timelineRef.current.getBoundingClientRect()
-      const clickX = event.clientX - rect.left
-      updateVideoTime(trackPxToTime(clickX))
+      setPlaying(false)
+      setIsDraggingRuler(true)
+      onScrubStateChange?.(true)
+      updateRulerTime(event.clientX)
       setSelectedRegionId(null)
     },
-    [duration, setSelectedRegionId, trackPxToTime, updateVideoTime],
+    [duration, onScrubStateChange, setPlaying, setSelectedRegionId, updateRulerTime],
   )
 
   return (

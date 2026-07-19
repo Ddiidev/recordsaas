@@ -28,7 +28,8 @@ import {
 import { getScreenEncoderDefinition, getScreenEncoderStatus } from './screen-encoder'
 
 const FFMPEG_PATH = getFFmpegPath()
-const WINDOWS_SYSTEM_AUDIO_HELPER_PATH = process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
+const WINDOWS_SYSTEM_AUDIO_HELPER_PATH =
+  process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
 const store = new Store()
 
 const getFFmpegVersionLine = (): string | undefined => {
@@ -89,7 +90,7 @@ type ImportedProjectPayload = {
       laneId?: string
       startTime?: number
       duration?: number
-      sourceKey?: 'recording-mic'
+      sourceKey?: 'recording-mic' | 'system-audio'
       isMuted?: boolean
       volume?: number
       fadeInDuration?: number
@@ -276,9 +277,23 @@ const normalizeRecordingProcessPriorities = (value: unknown): RecordingProcessPr
   }
 }
 
-const getRecordingProcessPriorityCandidates = (priority: RecordingProcessPriority): number[] => {
+const getRecordingProcessPriorityCandidates = (
+  priority: RecordingProcessPriority,
+  role?: FfmpegProcessRole,
+): number[] => {
   if (process.platform === 'win32') {
-    if (priority === 'low') return [osConstants.priority.PRIORITY_LOW]
+    if (priority === 'low') {
+      // DShow capture cannot be put in Windows Idle priority: it can stop
+      // receiving frames before FFmpeg writes the first packet.
+      if (role === 'webcam') {
+        return [osConstants.priority.PRIORITY_BELOW_NORMAL, osConstants.priority.PRIORITY_NORMAL]
+      }
+      return [
+        osConstants.priority.PRIORITY_LOW,
+        osConstants.priority.PRIORITY_BELOW_NORMAL,
+        osConstants.priority.PRIORITY_NORMAL,
+      ]
+    }
     if (priority === 'high') return [osConstants.priority.PRIORITY_ABOVE_NORMAL, osConstants.priority.PRIORITY_NORMAL]
     return [osConstants.priority.PRIORITY_BELOW_NORMAL, osConstants.priority.PRIORITY_NORMAL]
   }
@@ -292,10 +307,11 @@ const applyRecordingProcessPriority = (
   childProcess: ChildProcessWithoutNullStreams,
   priority: RecordingProcessPriority,
   label: string,
+  role?: FfmpegProcessRole,
 ) => {
   if (!childProcess.pid) return
 
-  for (const candidate of getRecordingProcessPriorityCandidates(priority)) {
+  for (const candidate of getRecordingProcessPriorityCandidates(priority, role)) {
     try {
       setPriority(childProcess.pid, candidate)
       log.info(
@@ -483,7 +499,7 @@ const probeWin32DshowWebcamInput = (
   size: { width: number; height: number } | undefined,
 ): Promise<boolean> =>
   new Promise((resolve) => {
-    const args = ['-hide_banner', '-f', 'dshow']
+    const args = ['-hide_banner', '-loglevel', 'info', '-f', 'dshow']
     appendWin32DshowWebcamBufferOptions(args)
     args.push('-framerate', String(fps))
     if (size) {
@@ -493,6 +509,7 @@ const probeWin32DshowWebcamInput = (
 
     const probe = spawn(FFMPEG_PATH, args, { windowsHide: true })
     let settled = false
+    let stderr = ''
 
     const settle = (result: boolean) => {
       if (settled) return
@@ -510,15 +527,21 @@ const probeWin32DshowWebcamInput = (
       settle(false)
     }, 3000)
 
+    probe.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
     probe.once('error', () => settle(false))
-    probe.once('exit', (code) => settle(code === 0))
+    probe.once('close', (code) => {
+      const producedFrame = /(?:^|\s)frame=\s*[1-9]\d*/m.test(stderr)
+      settle(code === 0 && producedFrame)
+    })
   })
 
 const resolveWebcamInputOptions = async (
   profile: RecordingProfileRuntime,
   context: WebcamInputContext,
   webcam: { deviceLabel: string },
-): Promise<WebcamInputOptions> => {
+): Promise<WebcamInputOptions | null> => {
   const fps = resolveWebcamFps(profile)
   const desiredSize = resolveDesiredWebcamSize(profile, context)
 
@@ -547,9 +570,9 @@ const resolveWebcamInputOptions = async (
 
   const fallbackFps = fps === 60 ? 30 : fps
   log.warn(
-    `[RecordingManager] Webcam probe failed for all explicit FPS/size combinations; falling back to DShow device default at ${fallbackFps}fps.`,
+    `[RecordingManager] Webcam probe opened the device but received no frames for any explicit FPS/size combination. requestedFps=${fps} fallbackFps=${fallbackFps}`,
   )
-  return { fps: fallbackFps }
+  return null
 }
 
 const parseProbeTimeSeconds = (value: string): number | null => {
@@ -730,9 +753,9 @@ function normalizeWindowsSystemAudioSampleFormat(
   }
 }
 
-function probeWindowsSystemAudioHelper(deviceId?: string):
-  | { supported: true; probe: WindowsSystemAudioProbe }
-  | { supported: false; reason?: string } {
+function probeWindowsSystemAudioHelper(
+  deviceId?: string,
+): { supported: true; probe: WindowsSystemAudioProbe } | { supported: false; reason?: string } {
   const probeArgs = deviceId ? ['--probe', '--device-id', deviceId] : ['--probe']
   const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, probeArgs, {
     encoding: 'utf-8',
@@ -750,8 +773,11 @@ function probeWindowsSystemAudioHelper(deviceId?: string):
   if (result.status !== 0) {
     return {
       supported: false,
-      reason:
-        (result.stderr || result.stdout || `Windows system-audio helper exited with code ${result.status}`).trim(),
+      reason: (
+        result.stderr ||
+        result.stdout ||
+        `Windows system-audio helper exited with code ${result.status}`
+      ).trim(),
     }
   }
 
@@ -831,7 +857,10 @@ function resolveLinuxSystemAudioSource(): string | null {
     timeout: 4000,
   })
   if (sourceList.error || sourceList.status !== 0) {
-    log.warn('[LinuxAudio] Failed to list PulseAudio sources through pactl:', sourceList.error || sourceList.stderr || sourceList.stdout)
+    log.warn(
+      '[LinuxAudio] Failed to list PulseAudio sources through pactl:',
+      sourceList.error || sourceList.stderr || sourceList.stdout,
+    )
     return null
   }
 
@@ -841,7 +870,10 @@ function resolveLinuxSystemAudioSource(): string | null {
   })
   const defaultSink = pactlResult.status === 0 ? (pactlResult.stdout || '').trim() : ''
   if (pactlResult.error || pactlResult.status !== 0) {
-    log.warn('[LinuxAudio] Could not resolve default PulseAudio sink:', pactlResult.error || pactlResult.stderr || pactlResult.stdout)
+    log.warn(
+      '[LinuxAudio] Could not resolve default PulseAudio sink:',
+      pactlResult.error || pactlResult.stderr || pactlResult.stdout,
+    )
   }
 
   const sourceNames = (sourceList.stdout || '')
@@ -854,9 +886,7 @@ function resolveLinuxSystemAudioSource(): string | null {
   const monitorSources = sourceNames.filter((name) => name.endsWith('.monitor'))
   const preferredMonitor = defaultSink ? `${defaultSink}.monitor` : null
   const selectedSource =
-    (preferredMonitor && monitorSources.find((name) => name === preferredMonitor)) ||
-    monitorSources[0] ||
-    null
+    (preferredMonitor && monitorSources.find((name) => name === preferredMonitor)) || monitorSources[0] || null
 
   if (!selectedSource) {
     log.warn('[LinuxAudio] No PulseAudio monitor source was found for computer audio capture.')
@@ -943,7 +973,11 @@ function resolveComputerAudioCaptureConfig(deviceId?: string): ComputerAudioCapt
   }
 }
 
-export function getComputerAudioSupport(): { supported: boolean; reason?: string; backend?: ComputerAudioBackend | null } {
+export function getComputerAudioSupport(): {
+  supported: boolean
+  reason?: string
+  backend?: ComputerAudioBackend | null
+} {
   const support = resolveComputerAudioCaptureConfig()
   if (support.supported) {
     return { supported: true, backend: support.backend }
@@ -1286,10 +1320,7 @@ async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<
   log.info(`[AudioTrim] Trimming ${trimMs}ms from beginning of ${audioPath}`)
 
   return new Promise((resolve, reject) => {
-    const codecArgs =
-      ext.toLowerCase() === '.wav'
-        ? ['-c:a', 'pcm_s16le']
-        : ['-c:a', 'copy']
+    const codecArgs = ext.toLowerCase() === '.wav' ? ['-c:a', 'pcm_s16le'] : ['-c:a', 'copy']
     const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, ...codecArgs, trimmedPath]
 
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
@@ -1551,20 +1582,19 @@ async function startActualRecording(
       recordingProcessPriorityMode,
       recordingProcessPriorities,
     )
-    applyRecordingProcessPriority(process, processPriority, `ffmpeg:${spec.role}`)
+    applyRecordingProcessPriority(process, processPriority, `ffmpeg:${spec.role}`, spec.role)
     return { ...spec, process }
   })
   appState.ffmpegProcess = ffmpegRuns.find((run) => run.role === 'main')?.process || ffmpegRuns[0]?.process || null
   appState.ffmpegProcesses = ffmpegRuns.map((run) => run.process)
-  const systemAudioEncoderRun =
-    systemAudioEncoderArgs ? ffmpegRuns.find((run) => run.role === 'system-audio') || null : null
+  const systemAudioEncoderRun = systemAudioEncoderArgs
+    ? ffmpegRuns.find((run) => run.role === 'system-audio') || null
+    : null
 
-  let systemAudioHelperRun:
-    | {
-        role: 'system-audio'
-        process: ChildProcessWithoutNullStreams
-      }
-    | null = null
+  let systemAudioHelperRun: {
+    role: 'system-audio'
+    process: ChildProcessWithoutNullStreams
+  } | null = null
 
   if (systemAudioPath && systemAudioCapture?.backend === 'windows-helper') {
     log.info('[SystemAudioHelper] Starting helper in stdout mode.')
@@ -1587,6 +1617,7 @@ async function startActualRecording(
     let fatalStartupHandled = false
     let recordingReady = false
     const readyRoles = new Set<FfmpegProcessRole>()
+    const ffmpegStartupErrorText = new Map<FfmpegProcessRole, string>()
     let startupErrorText = ''
     let startupTimeout: NodeJS.Timeout | null = setTimeout(() => {
       if (recordingReady || fatalStartupHandled) return
@@ -1609,8 +1640,7 @@ async function startActualRecording(
       resolve(value)
     }
 
-    const expectedReadyCount =
-      ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
+    const expectedReadyCount = ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
 
     const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
@@ -1676,7 +1706,7 @@ async function startActualRecording(
         }
 
         log.error(`[FFMPEG:${run.role}] Process exited before recording became ready. code=${code} signal=${signal}`)
-        const startupDetail = startupErrorText.trim()
+        const startupDetail = (ffmpegStartupErrorText.get(run.role) || '').trim()
         const errorMessage = startupDetail.includes('Device or resource busy')
           ? `The selected recording device is busy.\n\n${startupDetail}\n\nClose any app that is using the webcam or microphone and try again.`
           : startupDetail.length > 0
@@ -1690,7 +1720,8 @@ async function startActualRecording(
       // Monitor FFmpeg's stderr for progress, errors, and sync timing
       ffmpeg.stderr.on('data', (data: any) => {
         const message = data.toString()
-        startupErrorText = `[${run.role}] ${message}`
+        const current = ffmpegStartupErrorText.get(run.role) || ''
+        ffmpegStartupErrorText.set(run.role, `${current}${message}`.slice(-16000))
         log.warn(`[FFMPEG:${run.role} stderr]: ${message}`)
 
         if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
@@ -1810,11 +1841,7 @@ function appendScreenOutputArgs(
   args.push(screenOut)
 }
 
-function buildSystemAudioFfmpegArgs(
-  audioOut: string,
-  inputName: string,
-  config: RecordingAudioOutputConfig,
-): string[] {
+function buildSystemAudioFfmpegArgs(audioOut: string, inputName: string, config: RecordingAudioOutputConfig): string[] {
   return ['-y', '-f', 'pulse', '-i', inputName, '-vn', ...getRecordedAudioCodecArgs(config), audioOut]
 }
 
@@ -1843,10 +1870,7 @@ function buildWindowsHelperSystemAudioFfmpegArgs(
   ]
 }
 
-type RecordingAudioOutputConfig = Pick<
-  RecordingProfileRuntime,
-  'audioCodec' | 'audioBitrateKbps' | 'audioSampleRate'
->
+type RecordingAudioOutputConfig = Pick<RecordingProfileRuntime, 'audioCodec' | 'audioBitrateKbps' | 'audioSampleRate'>
 
 function getRecordedAudioFileExtension(codec: RecordingAudioCodec): '.aac' | '.mp3' {
   return codec === 'mp3' ? '.mp3' : '.aac'
@@ -2008,7 +2032,9 @@ export async function startRecording(options: any) {
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
   log.info('[RecordingManager] Resolved screen encoder:', screenEncoderStatus)
 
-  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig(options.computerAudioDeviceId) : null
+  const computerAudioCapture = computerAudioEnabled
+    ? resolveComputerAudioCaptureConfig(options.computerAudioDeviceId)
+    : null
   if (computerAudioEnabled && !computerAudioCapture?.supported) {
     dialog.showErrorBox(
       'Computer Audio Unavailable',
@@ -2131,6 +2157,15 @@ export async function startRecording(options: any) {
   }
   if (webcam) {
     const webcamInputOptions = await resolveWebcamInputOptions(recordingProfile, webcamInputContext, webcam)
+    if (!webcamInputOptions) {
+      const deviceName = webcam.deviceLabel || 'selected webcam'
+      log.error(`[RecordingManager] Webcam opened but did not produce any frames: ${deviceName}`)
+      dialog.showErrorBox(
+        'Webcam Unavailable',
+        `RecordSaaS opened "${deviceName}" but received no video frames.\n\nClose Camera, Teams, Zoom, Chrome tabs, OBS, or any other app using the webcam, then try again. If no app is using it, restart the webcam or Windows and try again.`,
+      )
+      return { canceled: true }
+    }
     switch (process.platform) {
       case 'linux':
         webcamInputArgs.push('-f', 'v4l2')
@@ -2246,19 +2281,27 @@ export async function startRecording(options: any) {
     const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor)
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(selectedGeometry.x, scaleFactor)
     const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(selectedGeometry.y, scaleFactor)
-    recordingGeometry =
-      windowsCaptureRect || { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
+    recordingGeometry = windowsCaptureRect || {
+      x: selectedGeometry.x,
+      y: selectedGeometry.y,
+      width: safeWidth,
+      height: safeHeight,
+    }
     outputOptions.screenScale =
       resolveScaledDimensions(physicalWidth, physicalHeight, recordingProfile.screenResolution) || undefined
-    const windowsDisplayRect =
-      process.platform === 'win32' ? getWindowsPhysicalDisplayRect(containingDisplay) : null
+    const windowsDisplayRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(containingDisplay) : null
     outputOptions.screenCaptureDisplay = {
       id: containingDisplay.id,
-      label: containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
+      label:
+        containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
       bounds: containingDisplay.bounds,
       scaleFactor,
-      physicalBounds:
-        windowsDisplayRect || { x: physicalX, y: physicalY, width: physicalWidth, height: physicalHeight },
+      physicalBounds: windowsDisplayRect || {
+        x: physicalX,
+        y: physicalY,
+        width: physicalWidth,
+        height: physicalHeight,
+      },
     }
 
     switch (process.platform) {
@@ -3248,7 +3291,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
           laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
           startTime,
           duration,
-          sourceKey: 'recording-mic',
+          sourceKey: rawRegion.sourceKey === 'system-audio' ? 'system-audio' : 'recording-mic',
           isMuted: rawRegion.isMuted === true,
           volume,
           fadeInDuration,

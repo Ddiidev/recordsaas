@@ -490,9 +490,11 @@ const resolveLayoutConfig = ({
 
   if (webcamLayout.mode === 'side-by-side') {
     const cameraBounds = hasFramePadding ? insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75) : sidebarArea
-    const cameraRect = hasFramePadding
-      ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
-      : cameraBounds
+    const fittedCameraRect = fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+    const cameraRect: Rect = {
+      ...fittedCameraRect,
+      x: sidebarOnLeft ? cameraBounds.x + cameraBounds.width - fittedCameraRect.width : cameraBounds.x,
+    }
     return {
       mode: 'side-by-side',
       desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),

@@ -190,7 +190,7 @@ const parseChangeSoundRegion = (value: unknown, fallbackLaneId: string): ChangeS
     typeof region.duration === 'number' && Number.isFinite(region.duration)
       ? Math.max(0.1, clampToNonNegative(region.duration))
       : 1
-  const sourceKey = region.sourceKey === 'recording-mic' ? 'recording-mic' : 'recording-mic'
+  const sourceKey = region.sourceKey === 'system-audio' ? 'system-audio' : 'recording-mic'
   const isMuted = region.isMuted === true
   const volume =
     typeof region.volume === 'number' && Number.isFinite(region.volume) ? Math.max(0, Math.min(region.volume, 1)) : 1
