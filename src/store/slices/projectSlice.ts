@@ -1362,6 +1362,12 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const assetTimeline = cloneSerializable(
         monitor.timeline?.duration ? monitor.timeline : createAssetTimeline(sourceDuration, state.videoDimensions),
       )
+      const assetCursorStyles = cloneSerializable(
+        assetTimeline.cursorStyles || {
+          ...state.cursorStyles,
+          showCursor: false,
+        },
+      )
       state.assetTimelineEditing = {
         monitorId: monitor.id,
         mainProject: {
@@ -1406,7 +1412,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.blurRegions = assetTimeline.blurRegions
       state.swapRegions = assetTimeline.swapRegions
       state.floatingMonitorRegions = assetTimeline.floatingMonitorRegions
-      state.cursorStyles = cloneSerializable(assetTimeline.cursorStyles || state.cursorStyles)
+      state.cursorStyles = assetCursorStyles
       state.mediaAudioRegions = {}
       state.changeSoundRegions = {}
       state.isWebcamVisible = false
