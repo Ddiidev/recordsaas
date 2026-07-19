@@ -47,6 +47,8 @@ export function MediaAssetsPanel() {
     addChangeSoundRegion,
     clearMediaAudioClip,
     floatingMonitors,
+    floatingMonitorRegions,
+    selectedRegionId,
     addFloatingMonitor,
     updateFloatingMonitor,
     removeFloatingMonitor,
@@ -62,6 +64,8 @@ export function MediaAssetsPanel() {
       addChangeSoundRegion: state.addChangeSoundRegion,
       clearMediaAudioClip: state.clearMediaAudioClip,
       floatingMonitors: state.floatingMonitors,
+      floatingMonitorRegions: state.floatingMonitorRegions,
+      selectedRegionId: state.selectedRegionId,
       addFloatingMonitor: state.addFloatingMonitor,
       updateFloatingMonitor: state.updateFloatingMonitor,
       removeFloatingMonitor: state.removeFloatingMonitor,
@@ -75,6 +79,7 @@ export function MediaAssetsPanel() {
     if (mediaAudioClip.duration <= 0) return 'Loading...'
     return formatTime(mediaAudioClip.duration, true)
   }, [mediaAudioClip])
+  const selectedMonitorId = selectedRegionId ? floatingMonitorRegions[selectedRegionId]?.monitorId : null
 
   const handleImportAudio = async () => {
     try {
@@ -171,71 +176,82 @@ export function MediaAssetsPanel() {
               </p>
             </div>
           ) : (
-            visualAssets.map((monitor) => (
-              <div key={monitor.id} className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
-                <div className="flex items-start gap-2">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500">
-                    <Video className="h-4 w-4" />
+            visualAssets.map((monitor) => {
+              const isTimelineSelected = isVideo && monitor.id === selectedMonitorId
+              return (
+                <div
+                  key={monitor.id}
+                  className={cn(
+                    'rounded-lg border bg-violet-500/5 p-3 transition-colors',
+                    isTimelineSelected
+                      ? 'border-violet-500 bg-violet-500/10 ring-2 ring-violet-500/35'
+                      : 'border-violet-500/30',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500">
+                      <Video className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-foreground">{monitor.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {monitor.duration > 0 ? formatTime(monitor.duration, true) : 'Loading duration...'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFloatingMonitor(monitor.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Remove ${monitor.name}`}
+                    >
+                      <Trash className="h-4 w-4" />
+                    </button>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-foreground">{monitor.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {monitor.duration > 0 ? formatTime(monitor.duration, true) : 'Loading duration...'}
-                    </p>
+                  <div className="relative mt-3">
+                    {isVideo ? (
+                      <video
+                        src={monitor.url}
+                        muted
+                        preload="metadata"
+                        onLoadedMetadata={(event) => {
+                          const duration = event.currentTarget.duration
+                          if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                            updateFloatingMonitor(monitor.id, {
+                              duration,
+                              timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
+                            })
+                          }
+                        }}
+                        className="aspect-video w-full rounded-md bg-black object-cover"
+                      />
+                    ) : (
+                      <img src={monitor.url} alt="" className="aspect-video w-full rounded-md bg-black object-cover" />
+                    )}
+                    {monitor.isEditedCopy && (
+                      <span className="absolute right-1 top-1 rounded-sm bg-emerald-500 px-2 py-0.5 font-mono text-sm font-bold leading-none text-white shadow-sm">
+                        Edit
+                      </span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => removeFloatingMonitor(monitor.id)}
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    aria-label={`Remove ${monitor.name}`}
+                  <Button
+                    variant="outline"
+                    onClick={() => beginAssetTimelineEdit(monitor.id)}
+                    className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
                   >
-                    <Trash className="h-4 w-4" />
-                  </button>
+                    <Video className="h-4 w-4 text-violet-500" />
+                    Edit copy in timeline
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => addFloatingMonitorRegion(monitor.id, { startTime: currentTime })}
+                    disabled={monitor.timelineDuration <= 0}
+                    className="mt-2 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                  >
+                    Add monitor to main timeline
+                  </Button>
                 </div>
-                <div className="relative mt-3">
-                  {isVideo ? (
-                    <video
-                      src={monitor.url}
-                      muted
-                      preload="metadata"
-                      onLoadedMetadata={(event) => {
-                        const duration = event.currentTarget.duration
-                        if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
-                          updateFloatingMonitor(monitor.id, {
-                            duration,
-                            timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
-                          })
-                        }
-                      }}
-                      className="aspect-video w-full rounded-md bg-black object-cover"
-                    />
-                  ) : (
-                    <img src={monitor.url} alt="" className="aspect-video w-full rounded-md bg-black object-cover" />
-                  )}
-                  {monitor.isEditedCopy && (
-                    <span className="absolute right-1 top-1 rounded-sm bg-emerald-500 px-2 py-0.5 font-mono text-sm font-bold leading-none text-white shadow-sm">
-                      Edit
-                    </span>
-                  )}
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => beginAssetTimelineEdit(monitor.id)}
-                  className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
-                >
-                  <Video className="h-4 w-4 text-violet-500" />
-                  Edit copy in timeline
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => addFloatingMonitorRegion(monitor.id, { startTime: currentTime })}
-                  disabled={monitor.timelineDuration <= 0}
-                  className="mt-2 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
-                >
-                  Add monitor to main timeline
-                </Button>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       )

@@ -1327,17 +1327,20 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const sourceMonitor = state.floatingMonitors[id]
       if (!sourceMonitor) return
 
-      const cloneId = `floating-monitor-${Date.now()}`
-      const originalName = sourceMonitor.originalName || sourceMonitor.name
-      const monitor: FloatingMonitor = {
-        ...cloneSerializable(sourceMonitor),
-        id: cloneId,
-        name: `${originalName} Edit`,
-        originalName,
-        isEditedCopy: true,
-        timeline: cloneSerializable(sourceMonitor.timeline),
+      let monitor = sourceMonitor
+      if (!sourceMonitor.isEditedCopy) {
+        const cloneId = `floating-monitor-${Date.now()}`
+        const originalName = sourceMonitor.originalName || sourceMonitor.name
+        monitor = {
+          ...cloneSerializable(sourceMonitor),
+          id: cloneId,
+          name: `${originalName} Edit`,
+          originalName,
+          isEditedCopy: true,
+          timeline: cloneSerializable(sourceMonitor.timeline),
+        }
+        state.floatingMonitors[cloneId] = monitor
       }
-      state.floatingMonitors[cloneId] = monitor
 
       const inheritedDuration = monitor.path === state.videoPath ? state.duration : 0
       const sourceDuration = monitor.duration || inheritedDuration
@@ -1349,7 +1352,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         monitor.timeline?.duration ? monitor.timeline : createAssetTimeline(sourceDuration, state.videoDimensions),
       )
       state.assetTimelineEditing = {
-        monitorId: id,
+        monitorId: monitor.id,
         mainProject: {
           videoPath: state.videoPath,
           videoUrl: state.videoUrl,

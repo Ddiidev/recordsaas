@@ -839,7 +839,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
             Math.min(region.shadowOffsetY, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max),
           )
           const monitor = state.floatingMonitors[region.monitorId]
-          if (monitor?.duration) {
+          if (monitor?.kind !== 'image' && monitor?.duration) {
             region.duration = Math.min(
               region.duration,
               Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart),
