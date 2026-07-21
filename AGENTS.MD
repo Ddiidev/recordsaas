@@ -3,6 +3,7 @@
 This is the single source of truth for LLM-driven maintenance of the RecordSaaS desktop application.
 
 Use this file to avoid full-repo re-analysis on every request.
+Mandatory read order for every new maintenance prompt: read `AGENT_MEMORY.MD` in full first, then read Section 8 of this guide, Section 3, and only the domain-specific sections required by the task. `AGENT_MEMORY.MD` is concise, persistent, confirmed regression knowledge; WIPs remain the full task history.
 Default execution flow: read Section 8 (workflow), then Section 3 (code map), then only the domain-specific sections required by the task.
 LLM obligation: if code behavior, contracts, or UI/system conventions change, this file must be updated in the same change set.
 Primary maintenance target in this repo is `AGENTS.MD` (and `agent.md` only if that file exists as an additional guide).
@@ -373,7 +374,8 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Playhead interaction baseline: dragging can start from the full playhead control line (not only the triangle), with `ew-resize` cursor semantics.
 - Ruler scrubbing must update continuously from mouse down through window-level mouse move, pause playback while seeking, and clamp the target to the timeline duration.
 - Every main-video seek must redraw the canvas after `seeked` and resynchronize webcam, recording audio, computer audio, and media audio before playback resumes.
-- While timeline scrubbing is active, coalesce video seek requests with animation-frame scheduling and pause separated audio elements without changing their timestamps; perform one audio sync after scrubbing ends to avoid queued AAC seeks.
+- While timeline scrubbing is active, coalesce video seek requests with animation-frame scheduling and pause separated audio elements without changing their timestamps; attach the final `seeked` listener before issuing final seek and release scrub on its next frame so immediate Play is not cancelled.
+- Per-media `play()` calls must be serialized while a prior promise is pending. Treat `AbortError` from seek/pause as expected, retry once only when playback remains requested, and never emit an error loop.
 
 Toolbar and preview control sizing:
 - `ToolbarButton` default: `h-10 px-4 rounded-lg`.

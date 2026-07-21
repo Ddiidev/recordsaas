@@ -216,7 +216,7 @@ export function Timeline({
     }
 
     let released = false
-    let quietTimer: number | null = null
+    let releaseFrame: number | null = null
     let initialFallbackTimer: number | null = null
     let hardFallbackTimer: number | null = null
 
@@ -224,21 +224,21 @@ export function Timeline({
       if (released) return
       released = true
       video.removeEventListener('seeked', handleSeeked)
-      if (quietTimer !== null) window.clearTimeout(quietTimer)
+      if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame)
       if (initialFallbackTimer !== null) window.clearTimeout(initialFallbackTimer)
       if (hardFallbackTimer !== null) window.clearTimeout(hardFallbackTimer)
       onScrubStateChange?.(false)
     }
 
     const handleSeeked = () => {
-      if (quietTimer !== null) window.clearTimeout(quietTimer)
-      quietTimer = window.setTimeout(release, 120)
+      if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame)
+      releaseFrame = window.requestAnimationFrame(release)
     }
 
     video.addEventListener('seeked', handleSeeked)
     initialFallbackTimer = window.setTimeout(() => {
-      if (!video.seeking) release()
-    }, 250)
+      if (!video.seeking) handleSeeked()
+    }, 32)
     hardFallbackTimer = window.setTimeout(release, 10000)
   }, [onScrubStateChange, videoRef])
 
@@ -257,9 +257,9 @@ export function Timeline({
       updateRulerTime(event.clientX)
     }
     const handleMouseUp = (event: MouseEvent) => {
+      releaseScrubAfterSeek()
       flushRulerTime(event.clientX)
       setIsDraggingRuler(false)
-      releaseScrubAfterSeek()
     }
 
     window.addEventListener('mousemove', handleMouseMove)
@@ -367,8 +367,16 @@ export function Timeline({
     }
   }, [laneActionMenu, sortedLanes])
 
-  const { zoomRegions, cutRegions, speedRegions, blurRegions, swapRegions, mediaAudioRegions, changeSoundRegions, floatingMonitorRegions } =
-    useAllRegions()
+  const {
+    zoomRegions,
+    cutRegions,
+    speedRegions,
+    blurRegions,
+    swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
+    floatingMonitorRegions,
+  } = useAllRegions()
   const floatingMonitors = useEditorStore((state) => state.floatingMonitors)
 
   const allRegionsToRender = useMemo(() => {

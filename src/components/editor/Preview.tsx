@@ -85,7 +85,7 @@ const syncResolvedAudioElement = (
   if (!element) return
 
   if (!resolved.isActive) {
-    element.pause()
+    requestMediaPlayback(element, false)
     if (element.readyState > 0) element.currentTime = 0
     return
   }
@@ -96,11 +96,51 @@ const syncResolvedAudioElement = (
   element.volume = Math.max(0, Math.min(1, nextVolume))
   element.playbackRate = playbackRate
 
-  if (shouldPlay) {
-    if (element.paused) element.play().catch(console.error)
-  } else {
+  requestMediaPlayback(element, shouldPlay)
+}
+
+const pendingMediaPlayRequests = new WeakSet<HTMLMediaElement>()
+const requestedMediaPlayback = new WeakMap<HTMLMediaElement, boolean>()
+const interruptedMediaPlayRetries = new WeakMap<HTMLMediaElement, number>()
+
+const isExpectedPlayInterruption = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === 'AbortError'
+
+const requestMediaPlayback = (element: HTMLMediaElement | null, shouldPlay: boolean) => {
+  if (!element) return
+
+  requestedMediaPlayback.set(element, shouldPlay)
+  if (!shouldPlay) {
+    interruptedMediaPlayRetries.delete(element)
     element.pause()
+    return
   }
+  if (!element.paused || pendingMediaPlayRequests.has(element)) return
+
+  pendingMediaPlayRequests.add(element)
+  let wasInterrupted = false
+  const playRequest = element.play()
+  void playRequest
+    .catch((error: unknown) => {
+      wasInterrupted = isExpectedPlayInterruption(error)
+      if (!wasInterrupted) {
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        console.error(`[Preview] Media playback failed: ${detail}`)
+      }
+    })
+    .finally(() => {
+      pendingMediaPlayRequests.delete(element)
+      if (!wasInterrupted) {
+        interruptedMediaPlayRetries.delete(element)
+        return
+      }
+
+      const retryCount = interruptedMediaPlayRetries.get(element) ?? 0
+      if (requestedMediaPlayback.get(element) && element.paused && retryCount < 1) {
+        interruptedMediaPlayRetries.set(element, retryCount + 1)
+        window.requestAnimationFrame(() => requestMediaPlayback(element, true))
+      }
+    })
 }
 
 const describeMediaError = (element: HTMLMediaElement | null): string => {
@@ -357,7 +397,7 @@ export const Preview = memo(
         )
         const activeInstanceKeys = new Set(activeInstances.map((instance) => instance.sourceKey))
         floatingMonitorVideoRefs.current.forEach((monitorVideo, sourceKey) => {
-          if (!activeInstanceKeys.has(sourceKey)) monitorVideo.pause()
+          if (!activeInstanceKeys.has(sourceKey)) requestMediaPlayback(monitorVideo, false)
         })
         activeInstances.forEach(({ sourceKey, monitor, sourceTime }) => {
           if (monitor.kind === 'image') return
@@ -367,8 +407,7 @@ export const Preview = memo(
             monitorVideo.currentTime = sourceTime
           }
           monitorVideo.playbackRate = video?.playbackRate ?? 1
-          if (resumePlayback && monitorVideo.paused) monitorVideo.play().catch(() => {})
-          if (!resumePlayback) monitorVideo.pause()
+          requestMediaPlayback(monitorVideo, resumePlayback)
         })
       },
       [
@@ -536,7 +575,7 @@ export const Preview = memo(
         const drift = Math.abs(webcamVideo.currentTime - video.currentTime)
         if (state.isPlaying) {
           if (webcamVideo.paused && webcamVideo.readyState >= 2) {
-            webcamVideo.play().catch(() => {})
+            requestMediaPlayback(webcamVideo, true)
           }
           const now = performance.now()
           if (
@@ -625,18 +664,18 @@ export const Preview = memo(
       const systemAudio = systemAudioRef.current
       const mediaAudio = mediaAudioRef.current
       if (isTimelineScrubbing) {
-        video.pause()
-        webcamVideo?.pause()
+        requestMediaPlayback(video, false)
+        requestMediaPlayback(webcamVideo, false)
         syncMediaToVideoTime(video.currentTime, false)
         return
       }
       if (isPlaying) {
-        video.play().catch(console.error)
-        webcamVideo?.play().catch(console.error)
+        requestMediaPlayback(video, true)
+        requestMediaPlayback(webcamVideo, true)
         syncMediaToVideoTime(video.currentTime, true)
       } else {
-        video.pause()
-        webcamVideo?.pause()
+        requestMediaPlayback(video, false)
+        requestMediaPlayback(webcamVideo, false)
         syncMediaToVideoTime(video.currentTime, false)
         // When pausing, reset playbackRate to 1 so scrubbing is at normal speed
         video.playbackRate = 1
@@ -739,7 +778,7 @@ export const Preview = memo(
       if (isPlaying && endTrimRegion && playbackTime >= endTrimRegion.startTime) {
         playbackTime = endTrimRegion.startTime
         video.currentTime = playbackTime
-        video.pause()
+        requestMediaPlayback(video, false)
         shouldPlayAudio = false
         syncCurrentTimeToStore(playbackTime, true)
       }
@@ -852,9 +891,9 @@ export const Preview = memo(
       if (mainVideo && webcamVideo) {
         webcamVideo.currentTime = mainVideo.currentTime
         if (mainVideo.paused) {
-          webcamVideo.pause()
+          requestMediaPlayback(webcamVideo, false)
         } else {
-          webcamVideo.play().catch(console.error)
+          requestMediaPlayback(webcamVideo, true)
         }
       }
     }, [videoRef])
@@ -922,7 +961,7 @@ export const Preview = memo(
 
     const handleVideoPlay = useCallback(() => {
       if (isTimelineScrubbing) {
-        videoRef.current?.pause()
+        requestMediaPlayback(videoRef.current, false)
         return
       }
       setPlaying(true)
@@ -973,10 +1012,10 @@ export const Preview = memo(
       if (!video) return
 
       if (isTimelineScrubbing) {
-        webcamVideoRef.current?.pause()
-        recordingAudioRef.current?.pause()
-        systemAudioRef.current?.pause()
-        mediaAudioRef.current?.pause()
+        requestMediaPlayback(webcamVideoRef.current, false)
+        requestMediaPlayback(recordingAudioRef.current, false)
+        requestMediaPlayback(systemAudioRef.current, false)
+        requestMediaPlayback(mediaAudioRef.current, false)
         return
       }
 
