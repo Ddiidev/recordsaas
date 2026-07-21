@@ -103,7 +103,12 @@ export const useTimelineInteraction = ({
         initialX: e.clientX,
         initialStartTime: region.startTime,
         initialDuration: region.duration,
-        initialSourceStart: region.type === 'media-audio' ? region.sourceStart : null,
+        initialSourceStart:
+          region.type === 'media-audio' ||
+          (region.type === 'floating-monitor' &&
+            useEditorStore.getState().floatingMonitors[region.monitorId]?.kind !== 'image')
+            ? region.sourceStart
+            : null,
         initialLaneId,
         isCut: region.type === 'cut',
       })
@@ -466,6 +471,15 @@ export const useTimelineInteraction = ({
                 )
               }
             }
+            if (dragRegion.regionType === 'floating-monitor' && dragRegion.initialSourceStart !== null) {
+              const monitor = state.floatingMonitors[state.floatingMonitorRegions[dragRegion.id]?.monitorId]
+              if (monitor?.kind !== 'image' && monitor?.duration) {
+                maxDuration = Math.min(
+                  maxDuration,
+                  Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - dragRegion.initialSourceStart),
+                )
+              }
+            }
             const intendedDuration = dragRegion.initialDuration + dTime
             return { intendedDuration, maxDuration }
           }
@@ -496,7 +510,10 @@ export const useTimelineInteraction = ({
                 minStartTime = prevObs.startTime + prevObs.duration
               }
             }
-            if (dragRegion.regionType === 'media-audio' && dragRegion.initialSourceStart !== null) {
+            if (
+              (dragRegion.regionType === 'media-audio' || dragRegion.regionType === 'floating-monitor') &&
+              dragRegion.initialSourceStart !== null
+            ) {
               const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
               minStartTime = Math.max(minStartTime, sourceBoundStart)
             }
@@ -528,7 +545,10 @@ export const useTimelineInteraction = ({
             }
             finalUpdates.duration = newDuration
             finalUpdates.startTime = newStartTime
-            if (draggingRegion.regionType === 'media-audio' && draggingRegion.initialSourceStart !== null) {
+            if (
+              (draggingRegion.regionType === 'media-audio' || draggingRegion.regionType === 'floating-monitor') &&
+              draggingRegion.initialSourceStart !== null
+            ) {
               const sourceDelta = newStartTime - draggingRegion.initialStartTime
               finalUpdates.sourceStart = Math.max(0, draggingRegion.initialSourceStart + sourceDelta)
             }

@@ -104,7 +104,10 @@ type ImportedProjectPayload = {
       id?: string
       path?: string | null
       url?: string | null
+      kind?: 'video' | 'image'
       name?: string | null
+      originalName?: string | null
+      isEditedCopy?: boolean
       duration?: number
       timelineStart?: number
       timelineDuration?: number
@@ -112,6 +115,7 @@ type ImportedProjectPayload = {
       y?: number
       width?: number
       height?: number
+      timeline?: Record<string, unknown>
     }
   >
   floatingMonitorRegions?: Record<
@@ -124,6 +128,20 @@ type ImportedProjectPayload = {
       startTime?: number
       duration?: number
       sourceStart?: number
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+      crop?: { top?: number; right?: number; bottom?: number; left?: number }
+      borderRadius?: number
+      isFlipped?: boolean
+      border?: boolean
+      borderWidth?: number
+      borderColor?: string
+      shadowBlur?: number
+      shadowOffsetX?: number
+      shadowOffsetY?: number
+      shadowColor?: string
       zIndex?: number
     }
   >
@@ -3348,19 +3366,36 @@ export async function importProjectFromPath(sourceProjectPath: string) {
     }
     mergedRuntimeMetadata.changeSoundRegions = normalizedChangeSoundRegions
 
-    const rawFloatingMonitorRegions = getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitorRegions') || {}
+    const rawFloatingMonitorRegions =
+      getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitorRegions') || {}
     const normalizedFloatingMonitorRegions: NonNullable<ImportedProjectPayload['floatingMonitorRegions']> = {}
     if (rawFloatingMonitorRegions && typeof rawFloatingMonitorRegions === 'object') {
       for (const [regionId, rawRegion] of Object.entries(rawFloatingMonitorRegions)) {
-        if (!rawRegion || typeof rawRegion !== 'object' || !rawRegion.monitorId || !importedFloatingMonitors[rawRegion.monitorId]) continue
+        if (
+          !rawRegion ||
+          typeof rawRegion !== 'object' ||
+          !rawRegion.monitorId ||
+          !importedFloatingMonitors[rawRegion.monitorId]
+        )
+          continue
         normalizedFloatingMonitorRegions[regionId] = {
+          ...rawRegion,
           id: rawRegion.id || regionId,
           type: 'floating-monitor',
           monitorId: rawRegion.monitorId,
           laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
-          startTime: typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime) ? Math.max(0, rawRegion.startTime) : 0,
-          duration: typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration) ? Math.max(0.1, rawRegion.duration) : 0.1,
-          sourceStart: typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart) ? Math.max(0, rawRegion.sourceStart) : 0,
+          startTime:
+            typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+              ? Math.max(0, rawRegion.startTime)
+              : 0,
+          duration:
+            typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+              ? Math.max(0.1, rawRegion.duration)
+              : 0.1,
+          sourceStart:
+            typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart)
+              ? Math.max(0, rawRegion.sourceStart)
+              : 0,
           zIndex: typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex) ? rawRegion.zIndex : 0,
         }
       }

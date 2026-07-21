@@ -11,7 +11,7 @@ import { ExportModal } from '../components/editor/ExportModal'
 import { WindowControls } from '../components/editor/WindowControls'
 import { PresetModal } from '../components/editor/PresetModal'
 import { SettingsModal } from '../components/settings/SettingsModal'
-import { Stack3, Loader2, Check, Settings, Home } from '@icons'
+import { Stack3, Loader2, Check, Settings, Home, Folder } from '@icons'
 import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
@@ -34,6 +34,54 @@ const getProjectThumbnailTimeSeconds = (duration: number) => {
   return Math.min(1, duration - 0.1)
 }
 
+// Asset editing replaces the working timeline only in memory. Project files always
+// serialize the main timeline plus the current asset draft.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const createCanonicalProjectSaveState = (storeState: any) => {
+  const editing = storeState.assetTimelineEditing
+  if (!editing) return { ...storeState }
+
+  const monitor = storeState.floatingMonitors[editing.monitorId]
+  const assetTimeline = {
+    duration: storeState.duration,
+    videoDimensions: storeState.videoDimensions,
+    frameStyles: storeState.frameStyles,
+    aspectRatio: storeState.aspectRatio,
+    timelineLanes: storeState.timelineLanes,
+    zoomRegions: storeState.zoomRegions,
+    cutRegions: storeState.cutRegions,
+    speedRegions: storeState.speedRegions,
+    blurRegions: storeState.blurRegions,
+    swapRegions: storeState.swapRegions,
+    floatingMonitorRegions: storeState.floatingMonitorRegions,
+    blurDefaults: editing.blurDefaults,
+    swapDefaults: editing.swapDefaults,
+    cursorStyles: storeState.cursorStyles,
+    selectedRegionId: storeState.selectedRegionId,
+  }
+
+  return {
+    ...storeState,
+    ...editing.mainProject,
+    floatingMonitors: {
+      ...storeState.floatingMonitors,
+      ...(monitor
+        ? {
+            [editing.monitorId]: {
+              ...monitor,
+              duration: Math.max(monitor.duration, storeState.duration),
+              timelineStart: 0,
+              timelineDuration: storeState.duration,
+              timeline: assetTimeline,
+            },
+          }
+        : {}),
+    },
+    assetTimelineEditing: null,
+    isPlaying: false,
+  }
+}
+
 export function EditorPage() {
   const {
     loadProject,
@@ -48,14 +96,25 @@ export function EditorPage() {
     seekForward,
     finishAssetTimelineEdit,
   } = useEditorStore.getState()
-  const { presetSaveStatus, duration, isPreviewFullScreen, assetTimelineEditing, editingAssetName, editingAssetIsImage } = useEditorStore(
+  const {
+    presetSaveStatus,
+    duration,
+    isPreviewFullScreen,
+    assetTimelineEditing,
+    editingAssetName,
+    editingAssetIsImage,
+  } = useEditorStore(
     useShallow((state) => ({
       presetSaveStatus: state.presetSaveStatus,
       duration: state.duration,
       isPreviewFullScreen: state.isPreviewFullScreen,
-        assetTimelineEditing: state.assetTimelineEditing,
-        editingAssetName: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name : null,
-        editingAssetIsImage: state.assetTimelineEditing ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.kind === 'image' : false,
+      assetTimelineEditing: state.assetTimelineEditing,
+      editingAssetName: state.assetTimelineEditing
+        ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name
+        : null,
+      editingAssetIsImage: state.assetTimelineEditing
+        ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.kind === 'image'
+        : false,
     })),
   )
   const { undo, redo } = useEditorStore.temporal.getState()
@@ -118,6 +177,7 @@ export function EditorPage() {
       try {
         setIsExportingProject(true)
         const storeState = useEditorStore.getState()
+        const canonicalState = createCanonicalProjectSaveState(storeState)
         const {
           videoPath,
           metadataPath,
@@ -128,7 +188,7 @@ export function EditorPage() {
           floatingMonitors,
           originalProjectPath,
           duration: projectDuration,
-        } = storeState
+        } = canonicalState
 
         const mediaFiles = [
           videoPath,
@@ -137,7 +197,7 @@ export function EditorPage() {
           systemAudioPath,
           webcamVideoPath,
           mediaAudioClip?.path,
-          ...Object.values(floatingMonitors).map((monitor) => monitor.path),
+          ...Object.values(floatingMonitors as Record<string, FloatingMonitor>).map((monitor) => monitor.path),
         ]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
@@ -158,8 +218,9 @@ export function EditorPage() {
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stateToSave = { ...storeState } as any
+        const stateToSave = { ...canonicalState } as any
         delete stateToSave.cursorBitmapsToRender
+        delete stateToSave.assetTimelineEditing
         stateToSave.events = storeState.metadata
         delete stateToSave.metadata
 
@@ -183,15 +244,15 @@ export function EditorPage() {
         stateToSave.floatingMonitors = Object.fromEntries(
           Object.entries((stateToSave.floatingMonitors as Record<string, FloatingMonitor> | undefined) || {}).map(
             ([monitorId, monitor]) => {
-            const serializedPath = getMediaPathBasename(monitor.path)
-            return [
-              monitorId,
-              {
-                ...monitor,
-                path: serializedPath,
-                url: `media://${serializedPath}`,
-              },
-            ]
+              const serializedPath = getMediaPathBasename(monitor.path)
+              return [
+                monitorId,
+                {
+                  ...monitor,
+                  path: serializedPath,
+                  url: `media://${serializedPath}`,
+                },
+              ]
             },
           ),
         )
@@ -208,6 +269,9 @@ export function EditorPage() {
           if (!originalProjectPath) {
             useEditorStore.getState().setOriginalProjectPath(targetFolder)
             window.electronAPI.showItemInFolder(targetFolder)
+          }
+          if (storeState.assetTimelineEditing) {
+            useEditorStore.getState().finishAssetTimelineEdit()
           }
           setProjectNamePopupOpen(false)
         } else if (saveResult.canceled) {
@@ -388,10 +452,30 @@ export function EditorPage() {
   const renderHeaderActions = () => {
     if (assetTimelineEditing) {
       return [
-        <div key="asset-editor-label" className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm font-semibold text-violet-600">
+        <div
+          key="asset-editor-label"
+          className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm font-semibold text-violet-600"
+        >
           Editando asset: {editingAssetName || 'Vídeo'}
         </div>,
-        <Button key="finish-asset-edit" onClick={finishAssetTimelineEdit} className="bg-violet-600 text-white hover:bg-violet-500">
+        <Button key="asset-presets" variant="outline" onClick={() => setPresetModalOpen(true)}>
+          <Stack3 className="mr-2 h-4 w-4" />
+          Presets
+        </Button>,
+        <Button
+          key="save-asset-edit"
+          variant="secondary"
+          disabled={isExportingProject || duration <= 0}
+          onClick={handleExportProjectButtonClick}
+        >
+          <Folder className="mr-2 h-4 w-4" />
+          Salvar edição
+        </Button>,
+        <Button
+          key="finish-asset-edit"
+          onClick={finishAssetTimelineEdit}
+          className="bg-violet-600 text-white hover:bg-violet-500"
+        >
           Concluir edição
         </Button>,
       ]

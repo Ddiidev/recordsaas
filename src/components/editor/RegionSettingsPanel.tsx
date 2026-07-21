@@ -11,6 +11,7 @@ import type {
   MediaAudioRegion,
   ChangeSoundRegion,
   FloatingMonitorRegion,
+  SwapParticipant,
 } from '../../types'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
@@ -292,10 +293,45 @@ function SpeedSettings({ region }: { region: SpeedRegion }) {
 
 function SwapSettings({ region }: { region: CameraSwapRegion }) {
   const { updateRegion, deleteRegion } = useEditorStore.getState()
-  const webcamLayoutMode = useEditorStore((state) => state.webcamLayout.mode)
-  const floatingMonitors = useEditorStore((state) => state.floatingMonitors)
+  const { floatingMonitors, floatingMonitorRegions, timelineLanes, webcamVideoUrl } = useEditorStore((state) => ({
+    floatingMonitors: state.floatingMonitors,
+    floatingMonitorRegions: state.floatingMonitorRegions,
+    timelineLanes: state.timelineLanes,
+    webcamVideoUrl: state.webcamVideoUrl,
+  }))
   const [durationText, setDurationText] = useState((region.transitionDuration ?? 0.3).toFixed(1))
-  const supportsDesktopOverlay = webcamLayoutMode === 'overlay'
+  const regionEnd = region.startTime + region.duration
+  const participantOptions = useMemo(() => {
+    const monitors = Object.values(floatingMonitorRegions)
+      .filter(
+        (monitorRegion) =>
+          monitorRegion.startTime < regionEnd && monitorRegion.startTime + monitorRegion.duration > region.startTime,
+      )
+      .map((monitorRegion) => {
+        const monitor = floatingMonitors[monitorRegion.monitorId]
+        const lane = timelineLanes.find((candidate) => candidate.id === monitorRegion.laneId)
+        return {
+          value: `monitor:${monitorRegion.id}`,
+          label: `${monitor?.name || 'Asset'} · ${lane?.name || 'Lane'} · ${monitorRegion.startTime.toFixed(1)}–${(
+            monitorRegion.startTime + monitorRegion.duration
+          ).toFixed(1)}s`,
+        }
+      })
+    return [
+      { value: 'main-screen', label: 'Tela principal' },
+      ...(webcamVideoUrl ? [{ value: 'webcam', label: 'Webcam' }] : []),
+      ...monitors,
+    ]
+  }, [floatingMonitorRegions, floatingMonitors, region.startTime, regionEnd, timelineLanes, webcamVideoUrl])
+
+  const participantValue = (participant: SwapParticipant) =>
+    participant.kind === 'floating-monitor-region' ? `monitor:${participant.regionId}` : participant.kind
+  const participantFromValue = (value: string): SwapParticipant =>
+    value.startsWith('monitor:')
+      ? { kind: 'floating-monitor-region', regionId: value.slice('monitor:'.length) }
+      : value === 'webcam'
+        ? { kind: 'webcam' }
+        : { kind: 'main-screen' }
 
   useEffect(() => {
     setDurationText((region.transitionDuration ?? 0.3).toFixed(1))
@@ -304,67 +340,45 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
   return (
     <div className="space-y-6">
       <div className="space-y-2.5">
-        <span className="text-sm font-medium text-sidebar-foreground">Swap target</span>
+        <span className="text-sm font-medium text-sidebar-foreground">Origin</span>
         <Select
-          value={region.target}
-          onValueChange={(value) =>
-            updateRegion(region.id, {
-              target: value as CameraSwapRegion['target'],
-              targetMonitorId: value === 'floating-monitor' ? region.targetMonitorId : undefined,
-            })
-          }
+          value={participantValue(region.origin)}
+          onValueChange={(value) => updateRegion(region.id, { origin: participantFromValue(value) })}
         >
           <SelectTrigger className="h-10 border-border bg-card text-sm shadow-sm">
-            <SelectValue />
+            <SelectValue placeholder="Escolha a origem" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="webcam">Webcam</SelectItem>
-            <SelectItem value="main-screen">Main screen</SelectItem>
-            <SelectItem value="floating-monitor">Asset monitor</SelectItem>
+            {participantOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
-      {region.target === 'floating-monitor' && (
-        <div className="space-y-2.5">
-          <span className="text-sm font-medium text-sidebar-foreground">Asset target</span>
-          <Select
-            value={region.targetMonitorId || ''}
-            onValueChange={(targetMonitorId) => updateRegion(region.id, { targetMonitorId })}
-          >
-            <SelectTrigger className="h-10 border-border bg-card text-sm shadow-sm">
-              <SelectValue placeholder="Choose asset" />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.values(floatingMonitors).map((monitor) => (
-                <SelectItem key={monitor.id} value={monitor.id}>
-                  {monitor.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {supportsDesktopOverlay ? (
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <span className="text-sm font-medium text-sidebar-foreground block">Show Desktop Overlay</span>
-            <p className="text-xs text-muted-foreground leading-relaxed">Keep the screen visible in a smaller window</p>
-          </div>
-          <Switch
-            checked={region.showDesktopOverlay}
-            onCheckedChange={(checked) => updateRegion(region.id, { showDesktopOverlay: checked })}
-          />
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
-          <span className="text-sm font-medium text-sidebar-foreground block">Desktop overlay locked off</span>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            In side-by-side, swap expands the webcam and hides the screen.
-          </p>
-        </div>
-      )}
+      <div className="space-y-2.5">
+        <span className="text-sm font-medium text-sidebar-foreground">Target</span>
+        <Select
+          value={participantValue(region.target)}
+          onValueChange={(value) => updateRegion(region.id, { target: participantFromValue(value) })}
+        >
+          <SelectTrigger className="h-10 border-border bg-card text-sm shadow-sm">
+            <SelectValue placeholder="Escolha o destino" />
+          </SelectTrigger>
+          <SelectContent>
+            {participantOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Monitor disponível apenas quando cruza este trecho. Origem e destino precisam ser diferentes.
+        </p>
+      </div>
 
       <div className="space-y-2.5">
         <span className="text-sm font-medium text-sidebar-foreground">Transition Animation</span>
@@ -692,7 +706,8 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
     updateRegion: state.updateRegion,
     deleteRegion: state.deleteRegion,
   }))
-  const sourceTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
+  const isStaticImage = monitor?.kind === 'image'
+  const sourceTime = isStaticImage ? 0 : Math.max(0, region.sourceStart + currentTime - region.startTime)
   const style = {
     borderRadius: Number.isFinite(region.borderRadius)
       ? region.borderRadius
@@ -752,15 +767,16 @@ function FloatingMonitorSettings({ region }: { region: FloatingMonitorRegion }) 
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Source offset</span>
           <span className="text-xs font-semibold text-violet-500 tabular-nums dark:text-violet-300">
-            {region.sourceStart.toFixed(2)}s
+            {isStaticImage ? 'Imagem estática' : `${region.sourceStart.toFixed(2)}s`}
           </span>
         </div>
         <Slider
           min={0}
-          max={Math.max(0, (monitor?.duration || 0) - region.duration)}
+          max={isStaticImage ? 1 : Math.max(0, (monitor?.duration || 0) - region.duration)}
           step={0.01}
-          value={region.sourceStart}
+          value={isStaticImage ? 0 : region.sourceStart}
           onChange={(value) => updateRegion(region.id, { sourceStart: value })}
+          disabled={isStaticImage}
         />
       </div>
       <Collapse title="Layout" description="Posição e tamanho do monitor" defaultOpen>

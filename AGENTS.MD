@@ -162,7 +162,7 @@ Canonical contract fields:
 - `MediaAudioClip`: `id`, `path` (runtime absolute), `url` (`media://...`), `name`, `duration`, `startTime`.
 - `MediaAudioRegion`: `id`, `type='media-audio'`, `laneId`, `startTime`, `duration`, `sourceStart`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
 - `ChangeSoundRegion`: `id`, `type='change-sound'`, `laneId`, `startTime`, `duration`, `sourceKey='recording-mic' | 'system-audio'`, `isMuted`, `volume`, `fadeInDuration`, `fadeOutDuration`, `zIndex`.
-- `FloatingMonitor`: imported visual asset with an independent temporary editing timeline (`timelineStart`, `timelineDuration`) and normalized overlay geometry. First edit of an original clones it as `<originalName> Edit`, preserving `originalName` for its monitor badge and `isEditedCopy=true` for its green `Edit` thumbnail badge; later edits of that clone reuse it. A new asset edit starts with `Show Cursor=false`; later edits of its clone preserve the cursor choice saved inside it. Image monitor regions start at five seconds and may be stretched anywhere on the owning timeline because the image is static. `FloatingMonitorRegion` places the source or its completed nested composition on the main timeline with `monitorId`, `sourceStart`, lane precedence, duration, crop, border/radius, flip, and shadow settings. Selecting a video monitor region must accent its matching Media Assets card. Asset editing isolates cursor styles and must not persist those changes to app appearance settings. Monitor regions never own swap behavior; the `Swap` timeline region owns a target (`webcam`, `main-screen`, or selected asset monitor). The temporary asset timeline persists its own `floatingMonitorRegions`; nested rendering must be isolated so it never replaces or paints over the main frame while the region is a monitor.
+- `FloatingMonitor`: imported visual asset with an independent temporary editing timeline (`timelineStart`, `timelineDuration`) and normalized overlay geometry. First edit of an original clones it as `<originalName> Edit`, preserving `originalName` for its monitor badge and `isEditedCopy=true` for its green `Edit` thumbnail badge; later edits of that clone reuse it. A new asset edit starts with `Show Cursor=false`; later edits of its clone preserve the cursor choice saved inside it. Image monitor regions start at five seconds and may be stretched anywhere on the owning timeline because the image is static. `FloatingMonitorRegion` places the source or its completed nested composition on the main timeline with `monitorId`, `sourceStart`, lane precedence, duration, crop, border/radius, flip, and shadow settings. Selecting a monitor region must accent its matching Media Assets card. Asset editing snapshots/restores the complete mutable main timeline, audio, webcam, cursor, playback and selection context; its local preset/template defaults never mutate the global preset library, camera, or audio. Monitor regions never own swap behavior. `CameraSwapRegion` swaps `origin` and `target` slots, each being `main-screen`, `webcam`, or a specific `floating-monitor-region` instance; equal/invalid participants do not render. Nested source maps are keyed by region-instance path, and renderer ancestry blocks cycles.
 
 Core business rules:
 1. Media audio playback follows `mediaAudioRegions` and is independent from recording-mic source.
@@ -248,11 +248,11 @@ IPC contract baseline (project library/import):
 Preset persistence baseline:
 - `Preset` stores `styles`, `aspectRatio`, `webcamLayout`, `webcamPosition`, `webcamStyles`, `isWebcamVisible`, `blurDefaults`, and `swapDefaults`.
 - `blurDefaults` control only the defaults for newly inserted blur regions: `duration`, `style`, `intensity`, `x`, `y`, `width`, `height`.
-- `swapDefaults` control only the defaults for newly inserted swap regions: `duration`, `showDesktopOverlay`, `transition`, `transitionDuration`.
+- `swapDefaults` control only the defaults for newly inserted swap regions: `duration`, `origin`, `target`, `transition`, `transitionDuration`.
 - Editing an existing blur or swap region updates the active preset defaults for that tool; it does not serialize timeline regions into the preset.
 - Backward compatibility defaults if preset fields are absent:
 - `blurDefaults = { duration: 3, style: 'blur', intensity: 10, x: 0.35, y: 0.35, width: 0.3, height: 0.2 }`
-- `swapDefaults = { duration: 15, showDesktopOverlay: true, transition: 'fade', transitionDuration: 0.3 }`
+- `swapDefaults = { duration: 15, origin: main-screen, target: webcam, transition: 'fade', transitionDuration: 0.3 }`
 
 Webcam layout contract baseline:
 - `webcamLayout.mode`: `overlay | side-by-side`
@@ -263,7 +263,7 @@ Webcam layout contract baseline:
 - `overlay` keeps current PiP camera behavior, honors position/size/zoom controls, and now supports the vertical `phone` shape.
 - `side-by-side` reserves a side column using the split control, keeps webcam shape/border/shadow/flip/crop styling active, and ignores overlay size/position/smart-position controls.
 - With frame padding set to `0`, `side-by-side` must not add an extra internal camera inset or gap; camera and desktop areas should be able to reach the frame edges.
-- `swap` keeps existing behavior only in `overlay`; in non-overlay layouts the screen is hidden and the webcam expands to the main frame.
+- `swap` exchanges complete slots in every layout. Destination geometry/crop/border/radius/flip/shadow belongs to the source arriving in that destination slot.
 - New recordings/projects without serialized webcam layout or visibility must inherit those values from the active preset before falling back to app defaults.
 - During editor preview playback, webcam sync currently uses the baseline hard-resync behavior from `Preview.tsx`; do not reintroduce playback-rate nudging or renderer border snapping without fresh visual proof because those changes were rolled back during swap/border flicker investigation.
 

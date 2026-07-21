@@ -6,9 +6,10 @@ export const initialAudioState: AudioState = {
   isMuted: DEFAULTS.AUDIO.MUTED.defaultValue,
 }
 
-export const createAudioSlice: Slice<AudioState, AudioActions> = (set) => ({
+export const createAudioSlice: Slice<AudioState, AudioActions> = (set, get) => ({
   ...initialAudioState,
   setVolume: (volume: number) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       // Clamp volume between 0 and 1
       state.volume = Math.max(0, Math.min(1, volume))
@@ -19,11 +20,13 @@ export const createAudioSlice: Slice<AudioState, AudioActions> = (set) => ({
     })
   },
   toggleMute: () => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       state.isMuted = !state.isMuted
     })
   },
   setIsMuted: (isMuted: boolean) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       state.isMuted = isMuted
     })

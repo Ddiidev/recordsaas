@@ -50,28 +50,37 @@ const BLUR_DEFAULT_UPDATE_KEYS: Array<keyof BlurPresetDefaults> = [
 ]
 const SWAP_DEFAULT_UPDATE_KEYS: Array<keyof SwapPresetDefaults> = [
   'duration',
-  'showDesktopOverlay',
+  'origin',
+  'target',
   'transition',
   'transitionDuration',
 ]
 
-const getBlurDefaults = (preset: Preset | null | undefined): BlurPresetDefaults => ({
-  duration: preset?.blurDefaults?.duration ?? BLUR_REGION.DEFAULT_DURATION,
-  style: preset?.blurDefaults?.style ?? BLUR_REGION.STYLE.DEFAULT,
-  intensity: preset?.blurDefaults?.intensity ?? BLUR_REGION.INTENSITY.defaultValue,
-  x: preset?.blurDefaults?.x ?? BLUR_REGION.X.defaultValue,
-  y: preset?.blurDefaults?.y ?? BLUR_REGION.Y.defaultValue,
-  width: preset?.blurDefaults?.width ?? BLUR_REGION.WIDTH.defaultValue,
-  height: preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
+const getBlurDefaults = (
+  preset: Preset | null | undefined,
+  localDefaults?: BlurPresetDefaults,
+): BlurPresetDefaults => ({
+  duration: localDefaults?.duration ?? preset?.blurDefaults?.duration ?? BLUR_REGION.DEFAULT_DURATION,
+  style: localDefaults?.style ?? preset?.blurDefaults?.style ?? BLUR_REGION.STYLE.DEFAULT,
+  intensity: localDefaults?.intensity ?? preset?.blurDefaults?.intensity ?? BLUR_REGION.INTENSITY.defaultValue,
+  x: localDefaults?.x ?? preset?.blurDefaults?.x ?? BLUR_REGION.X.defaultValue,
+  y: localDefaults?.y ?? preset?.blurDefaults?.y ?? BLUR_REGION.Y.defaultValue,
+  width: localDefaults?.width ?? preset?.blurDefaults?.width ?? BLUR_REGION.WIDTH.defaultValue,
+  height: localDefaults?.height ?? preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
 })
 
-const getSwapDefaults = (preset: Preset | null | undefined): SwapPresetDefaults => ({
-  duration: preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
-  showDesktopOverlay: preset?.swapDefaults?.showDesktopOverlay ?? SWAP_REGION.SHOW_DESKTOP_OVERLAY,
-  target: preset?.swapDefaults?.target ?? 'webcam',
-  targetMonitorId: preset?.swapDefaults?.targetMonitorId,
-  transition: preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
-  transitionDuration: preset?.swapDefaults?.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
+const getSwapDefaults = (
+  preset: Preset | null | undefined,
+  localDefaults?: SwapPresetDefaults,
+): SwapPresetDefaults => ({
+  duration: localDefaults?.duration ?? preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
+  origin: localDefaults?.origin ?? preset?.swapDefaults?.origin ?? { kind: 'main-screen' },
+  target: localDefaults?.target ?? preset?.swapDefaults?.target ?? { kind: 'webcam' },
+  transition: localDefaults?.transition ?? preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
+  transitionDuration:
+    localDefaults?.transitionDuration ??
+    preset?.swapDefaults?.transitionDuration ??
+    SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
 
 const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
@@ -86,9 +95,8 @@ const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
 
 const toSwapPresetDefaults = (region: CameraSwapRegion): SwapPresetDefaults => ({
   duration: region.duration,
-  showDesktopOverlay: region.showDesktopOverlay,
+  origin: region.origin,
   target: region.target,
-  targetMonitorId: region.targetMonitorId,
   transition: region.transition,
   transitionDuration: region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
@@ -135,6 +143,45 @@ const getRegionById = (
   state.changeSoundRegions[id] ||
   state.floatingMonitorRegions[id] ||
   null
+
+const monitorWouldCreateCycle = (
+  monitors: Record<string, { timeline?: { floatingMonitorRegions: Record<string, FloatingMonitorRegion> } }>,
+  ownerMonitorId: string,
+  candidateMonitorId: string,
+): boolean => {
+  const visited = new Set<string>()
+  const visit = (monitorId: string): boolean => {
+    if (monitorId === ownerMonitorId) return true
+    if (visited.has(monitorId)) return false
+    visited.add(monitorId)
+    return Object.values(monitors[monitorId]?.timeline?.floatingMonitorRegions || {}).some((region) =>
+      visit(region.monitorId),
+    )
+  }
+  return visit(candidateMonitorId)
+}
+
+const getSwapParticipantBounds = (
+  state: {
+    duration: number
+    webcamVideoUrl: string | null
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  },
+  participant: CameraSwapRegion['origin'],
+): { start: number; end: number } | null => {
+  if (participant.kind === 'main-screen') return { start: 0, end: state.duration }
+  if (participant.kind === 'webcam') return state.webcamVideoUrl ? { start: 0, end: state.duration } : null
+  const monitorRegion = state.floatingMonitorRegions[participant.regionId]
+  return monitorRegion
+    ? { start: monitorRegion.startTime, end: monitorRegion.startTime + monitorRegion.duration }
+    : null
+}
+
+const sameSwapParticipant = (left: CameraSwapRegion['origin'], right: CameraSwapRegion['target']): boolean =>
+  left.kind === right.kind &&
+  (left.kind !== 'floating-monitor-region' ||
+    right.kind !== 'floating-monitor-region' ||
+    left.regionId === right.regionId)
 
 const ensureRegionLaneIds = (state: {
   timelineLanes: TimelineLane[]
@@ -428,7 +475,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
     const activePresetId = get().activePresetId
     const activePreset = activePresetId ? get().presets[activePresetId] : null
-    const blurDefaults = getBlurDefaults(activePreset)
+    const blurDefaults = getBlurDefaults(activePreset, get().assetTimelineEditing?.blurDefaults)
 
     const id = `blur-${Date.now()}`
     const newRegion: BlurRegion = {
@@ -476,6 +523,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       newRegion.laneId = resolvedLaneId
 
       state.blurRegions[id] = newRegion
+      if (state.assetTimelineEditing) {
+        state.assetTimelineEditing.blurDefaults = toBlurPresetDefaults(newRegion)
+      }
       state.selectedRegionId = id
       recalculateZIndices(state)
     })
@@ -489,7 +539,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
     const activePresetId = get().activePresetId
     const activePreset = activePresetId ? get().presets[activePresetId] : null
-    const swapDefaults = getSwapDefaults(activePreset)
+    const swapDefaults = getSwapDefaults(activePreset, get().assetTimelineEditing?.swapDefaults)
 
     const id = `swap-${Date.now()}`
     const newRegion: CameraSwapRegion = {
@@ -498,9 +548,8 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       laneId: preferredLaneId,
       startTime: currentTime,
       duration: swapDefaults.duration,
-      showDesktopOverlay: swapDefaults.showDesktopOverlay,
+      origin: swapDefaults.origin,
       target: swapDefaults.target,
-      targetMonitorId: swapDefaults.targetMonitorId,
       transition: swapDefaults.transition,
       transitionDuration: swapDefaults.transitionDuration,
       zIndex: 0,
@@ -536,11 +585,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       newRegion.laneId = resolvedLaneId
 
       state.swapRegions[id] = newRegion
+      if (state.assetTimelineEditing) {
+        state.assetTimelineEditing.swapDefaults = toSwapPresetDefaults(newRegion)
+      }
       state.selectedRegionId = id
       recalculateZIndices(state)
     })
   },
   addMediaAudioRegion: (params) => {
+    if (get().assetTimelineEditing) return
     const { mediaAudioClip, duration } = get()
     if (!mediaAudioClip || duration <= 0) return
 
@@ -611,6 +664,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     })
   },
   addChangeSoundRegion: (params) => {
+    if (get().assetTimelineEditing) return
     const { duration } = get()
     if (duration <= 0) return
 
@@ -676,9 +730,12 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     })
   },
   addFloatingMonitorRegion: (monitorId, params) => {
-    const { duration, floatingMonitors } = get()
+    const { duration, floatingMonitors, assetTimelineEditing } = get()
     const monitor = floatingMonitors[monitorId]
     if (!monitor || duration <= 0 || monitor.timelineDuration <= 0) return
+    if (assetTimelineEditing && monitorWouldCreateCycle(floatingMonitors, assetTimelineEditing.monitorId, monitorId)) {
+      return
+    }
 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
@@ -844,11 +901,32 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
             Math.min(region.shadowOffsetY, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max),
           )
           const monitor = state.floatingMonitors[region.monitorId]
-          if (monitor?.kind !== 'image' && monitor?.duration) {
+          if (monitor?.kind === 'image') {
+            region.sourceStart = 0
+          } else if (monitor?.duration) {
             region.duration = Math.min(
               region.duration,
               Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart),
             )
+          }
+        } else if (region.type === 'swap') {
+          if (sameSwapParticipant(region.origin, region.target)) {
+            region.target = { kind: 'floating-monitor-region', regionId: '' }
+          }
+          const originBounds = getSwapParticipantBounds(state, region.origin)
+          const targetBounds = getSwapParticipantBounds(state, region.target)
+          if (originBounds && targetBounds) {
+            const validStart = Math.max(originBounds.start, targetBounds.start)
+            const validEnd = Math.min(originBounds.end, targetBounds.end)
+            if (validEnd - validStart >= TIMELINE.MINIMUM_REGION_DURATION) {
+              region.startTime = Math.max(
+                validStart,
+                Math.min(region.startTime, validEnd - TIMELINE.MINIMUM_REGION_DURATION),
+              )
+              region.duration = Math.min(region.duration, validEnd - region.startTime)
+            } else {
+              region.target = { kind: 'floating-monitor-region', regionId: '' }
+            }
           }
         }
         if (oldDuration !== region.duration || oldLaneId !== region.laneId) {
@@ -860,14 +938,30 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     if (shouldSyncBlurDefaults) {
       const updatedBlurRegion = get().blurRegions[id]
       if (updatedBlurRegion) {
-        get()._updateActivePresetToolDefaults({ blurDefaults: toBlurPresetDefaults(updatedBlurRegion) })
+        if (get().assetTimelineEditing) {
+          set((state) => {
+            if (state.assetTimelineEditing) {
+              state.assetTimelineEditing.blurDefaults = toBlurPresetDefaults(updatedBlurRegion)
+            }
+          })
+        } else {
+          get()._updateActivePresetToolDefaults({ blurDefaults: toBlurPresetDefaults(updatedBlurRegion) })
+        }
       }
     }
 
     if (shouldSyncSwapDefaults) {
       const updatedSwapRegion = get().swapRegions[id]
       if (updatedSwapRegion) {
-        get()._updateActivePresetToolDefaults({ swapDefaults: toSwapPresetDefaults(updatedSwapRegion) })
+        if (get().assetTimelineEditing) {
+          set((state) => {
+            if (state.assetTimelineEditing) {
+              state.assetTimelineEditing.swapDefaults = toSwapPresetDefaults(updatedSwapRegion)
+            }
+          })
+        } else {
+          get()._updateActivePresetToolDefaults({ swapDefaults: toSwapPresetDefaults(updatedSwapRegion) })
+        }
       }
     }
   },

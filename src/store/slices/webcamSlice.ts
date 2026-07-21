@@ -36,6 +36,7 @@ export const initialWebcamState: WebcamState = {
 export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) => ({
   ...initialWebcamState,
   updateWebcamLayout: (layout) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       state.webcamLayout = {
         ...state.webcamLayout,
@@ -46,6 +47,7 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
     get().updateActivePreset()
   },
   setWebcamPosition: (position: WebcamPosition) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       state.webcamPosition = position
     })
@@ -53,6 +55,7 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
     get().updateActivePreset()
   },
   setWebcamVisibility: (isVisible: boolean) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       state.isWebcamVisible = isVisible
     })
@@ -60,6 +63,7 @@ export const createWebcamSlice: Slice<WebcamState, WebcamActions> = (set, get) =
     get().updateActivePreset()
   },
   updateWebcamStyle: (style: Partial<WebcamStyles>) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       const nextStyle = { ...style }
       if (style.crop) {

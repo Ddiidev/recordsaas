@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, memo, useState, useCallback } from 'react'
+import React, { useEffect, useRef, memo, useState, useCallback, useMemo } from 'react'
 import { useEditorStore } from '../../store/editorStore'
 import {
   ExitFullscreenIcon,
@@ -21,7 +21,7 @@ import { toMediaUrl } from '../../lib/media-url'
 import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/timeline-lanes'
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 import { FloatingMonitorOverlayEditor } from './preview/FloatingMonitorOverlayEditor'
-import type { ChangeSoundSourceKey } from '../../types'
+import type { ChangeSoundSourceKey, FloatingMonitor, FloatingMonitorRegion } from '../../types'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
@@ -32,6 +32,47 @@ type ResolvedAudioPlayback = {
   sourceTime: number
   volumeMultiplier: number
 }
+
+type FloatingMonitorSourceInstance = {
+  sourceKey: string
+  monitor: FloatingMonitor
+  region: FloatingMonitorRegion
+  sourceTime: number
+}
+
+const collectFloatingMonitorSourceInstances = (
+  regions: Record<string, FloatingMonitorRegion>,
+  monitors: Record<string, FloatingMonitor>,
+  playbackTime: number | null,
+  ancestry = new Set<string>(),
+  sourcePath = 'main',
+): FloatingMonitorSourceInstance[] =>
+  Object.values(regions).flatMap((region) => {
+    const monitor = monitors[region.monitorId]
+    if (!monitor || ancestry.has(monitor.id)) return []
+    if (
+      playbackTime !== null &&
+      (playbackTime < region.startTime || playbackTime >= region.startTime + region.duration)
+    ) {
+      return []
+    }
+    const sourceKey = `${sourcePath}/${region.id}`
+    const sourceTime = playbackTime === null ? 0 : Math.max(0, region.sourceStart + playbackTime - region.startTime)
+    const nestedAncestry = new Set(ancestry)
+    nestedAncestry.add(monitor.id)
+    return [
+      { sourceKey, monitor, region, sourceTime },
+      ...(monitor.timeline
+        ? collectFloatingMonitorSourceInstances(
+            monitor.timeline.floatingMonitorRegions,
+            monitors,
+            playbackTime === null ? null : sourceTime,
+            nestedAncestry,
+            sourceKey,
+          )
+        : []),
+    ]
+  })
 
 const syncResolvedAudioElement = (
   element: HTMLAudioElement | null,
@@ -180,6 +221,10 @@ export const Preview = memo(
     const isEditingImageAsset = Boolean(
       assetTimelineEditing && floatingMonitors[assetTimelineEditing.monitorId]?.kind === 'image',
     )
+    const floatingMonitorSourceInstances = useMemo(
+      () => collectFloatingMonitorSourceInstances(floatingMonitorRegions, floatingMonitors, null),
+      [floatingMonitorRegions, floatingMonitors],
+    )
     const animationFrameId = useRef<number>()
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
@@ -305,20 +350,19 @@ export const Preview = memo(
           0.02,
         )
 
-        Object.values(floatingMonitors).forEach((monitor) => {
+        const activeInstances = collectFloatingMonitorSourceInstances(
+          floatingMonitorRegions,
+          floatingMonitors,
+          playbackTime,
+        )
+        const activeInstanceKeys = new Set(activeInstances.map((instance) => instance.sourceKey))
+        floatingMonitorVideoRefs.current.forEach((monitorVideo, sourceKey) => {
+          if (!activeInstanceKeys.has(sourceKey)) monitorVideo.pause()
+        })
+        activeInstances.forEach(({ sourceKey, monitor, sourceTime }) => {
           if (monitor.kind === 'image') return
-          const monitorVideo = floatingMonitorVideoRefs.current.get(monitor.id)
+          const monitorVideo = floatingMonitorVideoRefs.current.get(sourceKey)
           if (!monitorVideo) return
-          const activeRegion = getTopActiveRegionAtTime(
-            Object.values(floatingMonitorRegions).filter((region) => region.monitorId === monitor.id),
-            playbackTime,
-            timelineLanes,
-          )
-          if (!activeRegion) {
-            monitorVideo.pause()
-            return
-          }
-          const sourceTime = Math.max(0, activeRegion.sourceStart + playbackTime - activeRegion.startTime)
           if (monitorVideo.readyState > 0 && Math.abs(monitorVideo.currentTime - sourceTime) > 0.02) {
             monitorVideo.currentTime = sourceTime
           }
@@ -335,7 +379,6 @@ export const Preview = memo(
         systemAudioVolume,
         videoRef,
         volume,
-        timelineLanes,
         floatingMonitors,
         floatingMonitorRegions,
       ],
@@ -455,8 +498,35 @@ export const Preview = memo(
         return
       }
 
+      const floatingMonitorSources = Object.fromEntries([
+        ...Array.from(floatingMonitorVideoRefs.current.entries())
+          .filter(([, monitorVideo]) => monitorVideo.videoWidth > 0 && monitorVideo.videoHeight > 0)
+          .map(([sourceKey, monitorVideo]) => [
+            sourceKey,
+            { source: monitorVideo, width: monitorVideo.videoWidth, height: monitorVideo.videoHeight },
+          ]),
+        ...Array.from(floatingMonitorImageRefs.current.entries())
+          .filter(([, monitorImage]) => monitorImage.naturalWidth > 0 && monitorImage.naturalHeight > 0)
+          .map(([sourceKey, monitorImage]) => [
+            sourceKey,
+            { source: monitorImage, width: monitorImage.naturalWidth, height: monitorImage.naturalHeight },
+          ]),
+      ])
+
       if (isEditingImageAsset) {
-        drawScene(ctx, state, primarySource, null, currentTime, canvas.width, canvas.height, bgImage)
+        drawScene(
+          ctx,
+          state,
+          primarySource,
+          null,
+          currentTime,
+          canvas.width,
+          canvas.height,
+          bgImage,
+          undefined,
+          undefined,
+          floatingMonitorSources,
+        )
         return
       }
       if (!video) return
@@ -483,20 +553,6 @@ export const Preview = memo(
         }
       }
 
-      const floatingMonitorSources = Object.fromEntries([
-        ...Array.from(floatingMonitorVideoRefs.current.entries())
-          .filter(([, monitorVideo]) => monitorVideo.videoWidth > 0 && monitorVideo.videoHeight > 0)
-          .map(([monitorId, monitorVideo]) => [
-            monitorId,
-            { source: monitorVideo, width: monitorVideo.videoWidth, height: monitorVideo.videoHeight },
-          ]),
-        ...Array.from(floatingMonitorImageRefs.current.entries())
-          .filter(([, monitorImage]) => monitorImage.naturalWidth > 0 && monitorImage.naturalHeight > 0)
-          .map(([monitorId, monitorImage]) => [
-            monitorId,
-            { source: monitorImage, width: monitorImage.naturalWidth, height: monitorImage.naturalHeight },
-          ]),
-      ])
       drawScene(
         ctx,
         state,
@@ -1086,13 +1142,13 @@ export const Preview = memo(
             style={{ display: 'none' }}
           />
         )}
-        {Object.values(floatingMonitors).map((monitor) =>
+        {floatingMonitorSourceInstances.map(({ sourceKey, monitor }) =>
           monitor.kind === 'image' ? (
             <img
-              key={monitor.id}
+              key={sourceKey}
               ref={(element) => {
-                if (element) floatingMonitorImageRefs.current.set(monitor.id, element)
-                else floatingMonitorImageRefs.current.delete(monitor.id)
+                if (element) floatingMonitorImageRefs.current.set(sourceKey, element)
+                else floatingMonitorImageRefs.current.delete(sourceKey)
               }}
               src={monitor.url}
               alt=""
@@ -1100,10 +1156,10 @@ export const Preview = memo(
             />
           ) : (
             <video
-              key={monitor.id}
+              key={sourceKey}
               ref={(element) => {
-                if (element) floatingMonitorVideoRefs.current.set(monitor.id, element)
-                else floatingMonitorVideoRefs.current.delete(monitor.id)
+                if (element) floatingMonitorVideoRefs.current.set(sourceKey, element)
+                else floatingMonitorVideoRefs.current.delete(sourceKey)
               }}
               src={monitor.url}
               muted

@@ -110,6 +110,7 @@ export function SidePanel() {
     floatingMonitorRegions,
     webcamVideoUrl,
     hasAudioTrack,
+    assetTimelineEditing,
     setSelectedRegionId,
     activeSidePanelTab,
     setActiveSidePanelTab,
@@ -126,6 +127,7 @@ export function SidePanel() {
       floatingMonitorRegions: state.floatingMonitorRegions,
       webcamVideoUrl: state.webcamVideoUrl,
       hasAudioTrack: state.hasAudioTrack,
+      assetTimelineEditing: state.assetTimelineEditing,
       setSelectedRegionId: state.setSelectedRegionId,
       activeSidePanelTab: state.activeSidePanelTab,
       setActiveSidePanelTab: state.setActiveSidePanelTab,
@@ -142,8 +144,8 @@ export function SidePanel() {
       speedRegions[selectedRegionId] ||
       swapRegions[selectedRegionId] ||
       mediaAudioRegions[selectedRegionId] ||
-      changeSoundRegions[selectedRegionId]
-      || floatingMonitorRegions[selectedRegionId]
+      changeSoundRegions[selectedRegionId] ||
+      floatingMonitorRegions[selectedRegionId]
     )
   }, [
     selectedRegionId,
@@ -163,6 +165,12 @@ export function SidePanel() {
       setActiveSidePanelTab('general')
     }
   }, [selectedRegion, setActiveSidePanelTab])
+
+  useEffect(() => {
+    if (assetTimelineEditing && (activeSidePanelTab === 'camera' || activeSidePanelTab === 'audio')) {
+      setActiveSidePanelTab('general')
+    }
+  }, [activeSidePanelTab, assetTimelineEditing, setActiveSidePanelTab])
 
   // Handle Escape key to clear selection
   useEffect(() => {
@@ -204,7 +212,7 @@ export function SidePanel() {
             }
             isActive={activeSidePanelTab === 'camera'}
             onClick={() => setActiveSidePanelTab('camera')}
-            disabled={!webcamVideoUrl}
+            disabled={!webcamVideoUrl || !!assetTimelineEditing}
           />
           <TabButton
             label="Audio"
@@ -218,7 +226,7 @@ export function SidePanel() {
             }
             isActive={activeSidePanelTab === 'audio'}
             onClick={() => setActiveSidePanelTab('audio')}
-            disabled={!hasAudioTrack}
+            disabled={!hasAudioTrack || !!assetTimelineEditing}
           />
           <TabButton
             label="Media"

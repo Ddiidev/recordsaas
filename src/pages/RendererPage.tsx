@@ -1145,18 +1145,20 @@ export function RendererPage() {
               }
             }
 
-            const activeFloatingMonitorSources = new Map<string, number>()
+            const activeFloatingMonitorSources = new Map<string, { monitorId: string; time: number }>()
             const collectActiveFloatingMonitorSources = (
               regions: typeof projectStateWithCursorBitmaps.floatingMonitorRegions,
               playbackTime: number,
               ancestry = new Set<string>(),
+              sourcePath = 'main',
             ) => {
               Object.values(regions || {}).forEach((region) => {
                 if (playbackTime < region.startTime || playbackTime >= region.startTime + region.duration) return
                 const monitor = projectStateWithCursorBitmaps.floatingMonitors[region.monitorId]
                 if (!monitor || ancestry.has(monitor.id)) return
                 const monitorTime = Math.max(0, region.sourceStart + playbackTime - region.startTime)
-                activeFloatingMonitorSources.set(region.monitorId, monitorTime)
+                const sourceKey = `${sourcePath}/${region.id}`
+                activeFloatingMonitorSources.set(sourceKey, { monitorId: region.monitorId, time: monitorTime })
                 if (monitor.timeline?.floatingMonitorRegions) {
                   const nextAncestry = new Set(ancestry)
                   nextAncestry.add(monitor.id)
@@ -1164,29 +1166,29 @@ export function RendererPage() {
                     monitor.timeline.floatingMonitorRegions,
                     monitorTime,
                     nextAncestry,
+                    sourceKey,
                   )
                 }
               })
             }
             collectActiveFloatingMonitorSources(projectStateWithCursorBitmaps.floatingMonitorRegions, sourceTimestamp)
-            await Promise.all(
-              Array.from(activeFloatingMonitorSources.entries()).map(async ([monitorId, monitorTime]) => {
-                const image = floatingMonitorImages.get(monitorId)
-                if (image) {
-                  floatingMonitorFrames[monitorId] = { source: image, width: image.width, height: image.height }
-                  return
-                }
-                const provider = floatingMonitorFrameProviders.get(monitorId)
-                if (!provider || floatingMonitorFrames[monitorId]) return
-                const monitorFrame = await provider.getFrameForTime(monitorTime)
-                if (!monitorFrame) return
-                floatingMonitorFrames[monitorId] = {
-                  source: monitorFrame,
-                  width: monitorFrame.displayWidth || monitorFrame.codedWidth,
-                  height: monitorFrame.displayHeight || monitorFrame.codedHeight,
-                }
-              }),
-            )
+            for (const [regionId, sourceInstance] of activeFloatingMonitorSources.entries()) {
+              const { monitorId, time: monitorTime } = sourceInstance
+              const image = floatingMonitorImages.get(monitorId)
+              if (image) {
+                floatingMonitorFrames[regionId] = { source: image, width: image.width, height: image.height }
+                return
+              }
+              const provider = floatingMonitorFrameProviders.get(monitorId)
+              if (!provider || floatingMonitorFrames[regionId]) return
+              const monitorFrame = await provider.getFrameForTime(monitorTime)
+              if (!monitorFrame) return
+              floatingMonitorFrames[regionId] = {
+                source: monitorFrame,
+                width: monitorFrame.displayWidth || monitorFrame.codedWidth,
+                height: monitorFrame.displayHeight || monitorFrame.codedHeight,
+              }
+            }
 
             if (!mainFrame) {
               throw new Error('No decoded frame available for main video.')

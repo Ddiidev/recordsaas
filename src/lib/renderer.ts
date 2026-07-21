@@ -8,7 +8,14 @@ import {
   sortRegionsByLanePrecedence,
 } from './timeline-lanes'
 import { getWebcamAspectRatio, getWebcamRadius } from './webcam'
-import type { EditorState, RenderableState, WebcamLayout, WebcamPosition, WebcamStyles } from '../types'
+import type {
+  CameraSwapRegion,
+  EditorState,
+  RenderableState,
+  WebcamLayout,
+  WebcamPosition,
+  WebcamStyles,
+} from '../types'
 
 type Rect = { x: number; y: number; width: number; height: number }
 type MediaRectConfig = Rect & {
@@ -656,6 +663,8 @@ export const drawScene = (
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
   floatingMonitorSources: Record<string, FloatingMonitorRenderSource> = {},
+  monitorAncestry: ReadonlySet<string> = new Set(),
+  monitorSourcePath = 'main',
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
@@ -700,14 +709,11 @@ export const drawScene = (
 
   // --- 3. Determine Swap Region and Transitions ---
   const activeSwapRegion = getTopActiveRegionAtTime(swapRegions, currentTime, laneContext)
-  const activeSwapTarget = activeSwapRegion?.target ?? 'webcam'
-
-  let isSwapped = false
+  const isSwapped = false
   let swapProgress = 0
 
   if (activeSwapRegion) {
     const TRANSITION_DURATION = activeSwapRegion.transitionDuration ?? 0.3
-    isSwapped = activeSwapTarget === 'webcam'
     swapProgress = 1
     if (activeSwapRegion.transition !== 'none') {
       const timeIn = currentTime - activeSwapRegion.startTime
@@ -903,10 +909,7 @@ export const drawScene = (
         cameraFlip: false,
       }
 
-  const effectiveShowDesktopOverlay =
-    activeSwapTarget === 'webcam' && activeSwapRegion && resolvedLayout.mode === 'overlay'
-      ? activeSwapRegion.showDesktopOverlay
-      : false
+  const effectiveShowDesktopOverlay = false
 
   // --- 6. Draw Media Helper and Transitions ---
   const lerpConfig = (a: MediaRectConfig, b: MediaRectConfig, p: number): MediaRectConfig => ({
@@ -1079,7 +1082,7 @@ export const drawScene = (
   const cameraCrop = webcamIsRenderable ? state.webcamStyles.crop : null
   const normalDesktopConfig = resolvedLayout.desktopConfig
   const normalCameraConfig = resolvedLayout.cameraConfig
-  const canSwapCamera = activeSwapTarget === 'webcam' && Boolean(cameraSource && cameraDims && normalCameraConfig)
+  const canSwapCamera = false
   const transitionType = activeSwapRegion?.transition || 'none'
   const isAnimatedTransition = canSwapCamera && swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
   const progressAnim =
@@ -1314,15 +1317,28 @@ export const drawScene = (
     floatingMonitorRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
     laneContext,
   )
+  const monitorSlots = new Map<
+    string,
+    {
+      source: CanvasImageSource
+      width: number
+      height: number
+      config: MediaRectConfig
+      isFlipped: boolean
+      crop: RenderableState['webcamStyles']['crop'] | null
+    }
+  >()
   activeFloatingMonitorRegions.forEach((region) => {
     const monitor = state.floatingMonitors[region.monitorId]
-    const renderSource = floatingMonitorSources[region.monitorId]
+    const sourceKey = `${monitorSourcePath}/${region.id}`
+    const renderSource =
+      floatingMonitorSources[sourceKey] || floatingMonitorSources[region.id] || floatingMonitorSources[region.monitorId]
     if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
 
     let source: CanvasImageSource = renderSource.source
-    let sourceWidth = renderSource.width
-    let sourceHeight = renderSource.height
-    if (monitor.timeline && typeof document !== 'undefined') {
+    const sourceWidth = renderSource.width
+    const sourceHeight = renderSource.height
+    if (monitor.timeline && typeof document !== 'undefined' && !monitorAncestry.has(monitor.id)) {
       const nestedCanvas = document.createElement('canvas')
       nestedCanvas.width = sourceWidth
       nestedCanvas.height = sourceHeight
@@ -1353,6 +1369,8 @@ export const drawScene = (
           undefined,
           exportQuality,
           floatingMonitorSources,
+          new Set([...monitorAncestry, monitor.id]),
+          sourceKey,
         )
         source = nestedCanvas
       }
@@ -1391,27 +1409,118 @@ export const drawScene = (
       borderColor: region.borderColor || DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
       zIndex: 10_000 + region.zIndex,
     }
-    const isSwapTargetMonitor =
-      activeSwapRegion?.target === 'floating-monitor' && activeSwapRegion.targetMonitorId === region.monitorId
-    if (isSwapTargetMonitor) {
-      if (desktopSource && activeSwapRegion.showDesktopOverlay) {
-        draws.push({
-          zIndex: config.zIndex,
-          draw: () => drawMediaToConfig(config, desktopSource, desktopDims.width, desktopDims.height),
-        })
-      }
-      draws.push({
-        zIndex: config.zIndex + 0.1,
-        draw: () =>
-          drawMediaToConfig(mainRectConfig, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
-      })
-      return
-    }
+    monitorSlots.set(region.id, {
+      source,
+      width: sourceWidth,
+      height: sourceHeight,
+      config,
+      isFlipped: region.isFlipped,
+      crop: region.crop,
+    })
     draws.push({
       zIndex: config.zIndex,
       draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
     })
   })
+
+  if (activeSwapRegion) {
+    const screenSlot = desktopSource
+      ? {
+          source: desktopSource,
+          width: desktopDims.width,
+          height: desktopDims.height,
+          config: normalDesktopConfig,
+          isFlipped: false,
+          crop: null,
+        }
+      : null
+    const webcamSlot =
+      cameraSource && cameraDims && normalCameraConfig
+        ? {
+            source: cameraSource,
+            width: cameraDims.width,
+            height: cameraDims.height,
+            config: normalCameraConfig,
+            isFlipped: resolvedLayout.cameraFlip,
+            crop: cameraCrop,
+          }
+        : null
+    const getSwapSlot = (participant: CameraSwapRegion['origin']) => {
+      if (participant.kind === 'main-screen') return screenSlot
+      if (participant.kind === 'webcam') return webcamSlot
+      return monitorSlots.get(participant.regionId) || null
+    }
+    const isSameParticipant =
+      activeSwapRegion.origin.kind === activeSwapRegion.target.kind &&
+      (activeSwapRegion.origin.kind !== 'floating-monitor-region' ||
+        activeSwapRegion.target.kind !== 'floating-monitor-region' ||
+        activeSwapRegion.origin.regionId === activeSwapRegion.target.regionId)
+    const originSlot = getSwapSlot(activeSwapRegion.origin)
+    const targetSlot = getSwapSlot(activeSwapRegion.target)
+
+    if (!isSameParticipant && originSlot && targetSlot) {
+      const drawIntoDestination = (
+        sourceSlot: NonNullable<typeof originSlot>,
+        destinationSlot: NonNullable<typeof targetSlot>,
+        config: MediaRectConfig,
+        alpha = 1,
+        destinationStyle = destinationSlot,
+      ) =>
+        drawMediaToConfig(
+          config,
+          sourceSlot.source,
+          sourceSlot.width,
+          sourceSlot.height,
+          destinationStyle.isFlipped,
+          alpha,
+          destinationStyle.crop,
+        )
+
+      if (activeSwapRegion.transition === 'none' || swapProgress >= 0.999) {
+        draws.push({
+          zIndex: targetSlot.config.zIndex,
+          draw: () => drawIntoDestination(originSlot, targetSlot, targetSlot.config),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex,
+          draw: () => drawIntoDestination(targetSlot, originSlot, originSlot.config),
+        })
+      } else if (activeSwapRegion.transition === 'fade') {
+        draws.push({
+          zIndex: targetSlot.config.zIndex + 0.1,
+          draw: () => drawIntoDestination(originSlot, targetSlot, targetSlot.config, swapProgress),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex + 0.1,
+          draw: () => drawIntoDestination(targetSlot, originSlot, originSlot.config, swapProgress),
+        })
+      } else {
+        const progress = EASING_MAP.Balanced(swapProgress)
+        draws.push({
+          zIndex: targetSlot.config.zIndex + 0.1,
+          draw: () =>
+            drawIntoDestination(
+              originSlot,
+              targetSlot,
+              lerpConfig(originSlot.config, targetSlot.config, progress),
+              1,
+              progress < 0.5 ? originSlot : targetSlot,
+            ),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex + 0.1,
+          draw: () =>
+            drawIntoDestination(
+              targetSlot,
+              originSlot,
+              lerpConfig(targetSlot.config, originSlot.config, progress),
+              1,
+              progress < 0.5 ? targetSlot : originSlot,
+            ),
+        })
+      }
+    }
+  }
 
   // Draw layers sorted by zIndex
   draws.sort((a, b) => a.zIndex - b.zIndex).forEach((d) => d.draw())

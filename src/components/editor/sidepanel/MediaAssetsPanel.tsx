@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   FileImport,
@@ -54,6 +54,7 @@ export function MediaAssetsPanel() {
     removeFloatingMonitor,
     addFloatingMonitorRegion,
     beginAssetTimelineEdit,
+    assetTimelineEditing,
   } = useEditorStore(
     useShallow((state) => ({
       currentTime: state.currentTime,
@@ -71,6 +72,7 @@ export function MediaAssetsPanel() {
       removeFloatingMonitor: state.removeFloatingMonitor,
       addFloatingMonitorRegion: state.addFloatingMonitorRegion,
       beginAssetTimelineEdit: state.beginAssetTimelineEdit,
+      assetTimelineEditing: state.assetTimelineEditing,
     })),
   )
 
@@ -80,6 +82,10 @@ export function MediaAssetsPanel() {
     return formatTime(mediaAudioClip.duration, true)
   }, [mediaAudioClip])
   const selectedMonitorId = selectedRegionId ? floatingMonitorRegions[selectedRegionId]?.monitorId : null
+
+  useEffect(() => {
+    if (assetTimelineEditing && activeCategory === 'audio') setActiveCategory('video')
+  }, [activeCategory, assetTimelineEditing])
 
   const handleImportAudio = async () => {
     try {
@@ -177,7 +183,7 @@ export function MediaAssetsPanel() {
             </div>
           ) : (
             visualAssets.map((monitor) => {
-              const isTimelineSelected = isVideo && monitor.id === selectedMonitorId
+              const isTimelineSelected = monitor.id === selectedMonitorId
               return (
                 <div
                   key={monitor.id}
@@ -227,6 +233,9 @@ export function MediaAssetsPanel() {
                     ) : (
                       <img src={monitor.url} alt="" className="aspect-video w-full rounded-md bg-black object-cover" />
                     )}
+                    <span className="absolute left-1 top-1 max-w-[calc(100%_-_5rem)] truncate rounded-sm border border-border/70 bg-card/95 px-2 py-0.5 text-[10px] font-semibold text-foreground shadow-sm">
+                      {monitor.originalName || monitor.name}
+                    </span>
                     {monitor.isEditedCopy && (
                       <span className="absolute right-1 top-1 rounded-sm bg-emerald-500 px-2 py-0.5 font-mono text-sm font-bold leading-none text-white shadow-sm">
                         Edit
@@ -351,29 +360,31 @@ export function MediaAssetsPanel() {
 
       <div className="flex-1 overflow-y-auto stable-scrollbar p-6">
         <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg border border-border bg-muted/10 p-1">
-          {categoryConfig.map((category) => (
-            <button
-              key={category.id}
-              type="button"
-              onClick={() => setActiveCategory(category.id)}
-              className={cn(
-                'icon-hover flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-semibold transition-all duration-150',
-                activeCategory === category.id
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
-            >
-              <span className="flex h-7 w-7 items-center justify-center">
-                <IconSwitch
-                  regular={category.icon}
-                  solid={category.solid}
-                  active={activeCategory === category.id}
-                  className="h-4 w-4"
-                />
-              </span>
-              <span>{category.label}</span>
-            </button>
-          ))}
+          {categoryConfig
+            .filter((category) => !assetTimelineEditing || category.id !== 'audio')
+            .map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() => setActiveCategory(category.id)}
+                className={cn(
+                  'icon-hover flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-semibold transition-all duration-150',
+                  activeCategory === category.id
+                    ? 'bg-primary/10 text-primary'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                <span className="flex h-7 w-7 items-center justify-center">
+                  <IconSwitch
+                    regular={category.icon}
+                    solid={category.solid}
+                    active={activeCategory === category.id}
+                    className="h-4 w-4"
+                  />
+                </span>
+                <span>{category.label}</span>
+              </button>
+            ))}
         </div>
 
         {renderCategoryContent()}

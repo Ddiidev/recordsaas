@@ -16,6 +16,7 @@ import type {
   FloatingMonitor,
   FloatingMonitorRegion,
   AssetTimelineState,
+  SwapParticipant,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
@@ -88,6 +89,41 @@ const createAssetTimeline = (
   selectedRegionId: null,
 })
 
+const cloneSwapParticipant = (participant: SwapParticipant): SwapParticipant =>
+  participant.kind === 'floating-monitor-region'
+    ? { kind: participant.kind, regionId: participant.regionId }
+    : { kind: participant.kind }
+
+const sameSwapParticipant = (left: SwapParticipant, right: SwapParticipant): boolean =>
+  left.kind === right.kind &&
+  (left.kind !== 'floating-monitor-region' ||
+    right.kind !== 'floating-monitor-region' ||
+    left.regionId === right.regionId)
+
+const parseSwapParticipant = (value: unknown): SwapParticipant | null => {
+  if (!value || typeof value !== 'object') return null
+  const participant = value as Partial<SwapParticipant>
+  if (participant.kind === 'main-screen' || participant.kind === 'webcam') {
+    return { kind: participant.kind }
+  }
+  if (participant.kind === 'floating-monitor-region') {
+    return {
+      kind: 'floating-monitor-region',
+      regionId: typeof participant.regionId === 'string' ? participant.regionId : '',
+    }
+  }
+  return null
+}
+
+const findLegacyMonitorRegionId = (regions: unknown, monitorId: unknown): string => {
+  if (!regions || typeof regions !== 'object' || typeof monitorId !== 'string') return ''
+  const matches = Object.entries(regions as Record<string, unknown>).filter(([, rawRegion]) => {
+    if (!rawRegion || typeof rawRegion !== 'object') return false
+    return (rawRegion as Partial<FloatingMonitorRegion>).monitorId === monitorId
+  })
+  return matches.length === 1 ? matches[0][0] : ''
+}
+
 const parseAssetTimeline = (
   value: unknown,
   duration: number,
@@ -121,8 +157,11 @@ const parseAssetTimeline = (
     swapRegions: parseSwapRegions(
       timeline.swapRegions,
       fallback.timelineLanes[0]?.id || createDefaultTimelineLane().id,
+      timeline.floatingMonitorRegions,
     ),
     floatingMonitorRegions: timeline.floatingMonitorRegions || {},
+    blurDefaults: timeline.blurDefaults,
+    swapDefaults: timeline.swapDefaults,
     cursorStyles: timeline.cursorStyles,
     selectedRegionId: typeof timeline.selectedRegionId === 'string' ? timeline.selectedRegionId : null,
   }
@@ -152,7 +191,7 @@ const parseMediaAudioClip = (value: unknown): MediaAudioClip | null => {
 const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> => {
   if (!value || typeof value !== 'object') return {}
 
-  return Object.entries(value as Record<string, unknown>).reduce(
+  const monitors = Object.entries(value as Record<string, unknown>).reduce(
     (monitors, [monitorId, rawMonitor]) => {
       if (!rawMonitor || typeof rawMonitor !== 'object') return monitors
       const monitor = rawMonitor as Partial<FloatingMonitor>
@@ -168,11 +207,15 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
             : 0
       const timelineStart =
         typeof monitor.timelineStart === 'number' && Number.isFinite(monitor.timelineStart)
-          ? Math.min(Math.max(0, monitor.timelineStart), duration)
+          ? kind === 'image'
+            ? Math.max(0, monitor.timelineStart)
+            : Math.min(Math.max(0, monitor.timelineStart), duration)
           : 0
       const timelineDuration =
         typeof monitor.timelineDuration === 'number' && Number.isFinite(monitor.timelineDuration)
-          ? Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
+          ? kind === 'image'
+            ? Math.max(0, monitor.timelineDuration)
+            : Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
           : Math.max(0, duration - timelineStart)
       const id =
         typeof monitor.id === 'string' && monitor.id.length > 0
@@ -210,6 +253,24 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
     },
     {} as Record<string, FloatingMonitor>,
   )
+
+  Object.values(monitors).forEach((monitor) => {
+    if (!monitor.timeline) return
+    const fallbackLaneId = getFallbackLaneId(monitor.timeline.timelineLanes)
+    const rawFloatingMonitorRegions = monitor.timeline.floatingMonitorRegions
+    monitor.timeline.swapRegions = parseSwapRegions(
+      monitor.timeline.swapRegions,
+      fallbackLaneId,
+      rawFloatingMonitorRegions,
+    )
+    monitor.timeline.floatingMonitorRegions = parseFloatingMonitorRegions(
+      rawFloatingMonitorRegions,
+      monitors,
+      fallbackLaneId,
+    )
+  })
+
+  return monitors
 }
 
 const parseFloatingMonitorRegions = (
@@ -569,9 +630,16 @@ const parseWebcamStyles = (value: unknown): WebcamStyles => {
   return nextStyles
 }
 
-const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegion | null => {
+const parseSwapRegion = (
+  value: unknown,
+  fallbackLaneId: string,
+  floatingMonitorRegions?: unknown,
+): CameraSwapRegion | null => {
   if (!value || typeof value !== 'object') return null
-  const region = value as Partial<CameraSwapRegion>
+  const region = value as Omit<Partial<CameraSwapRegion>, 'target'> & {
+    target?: unknown
+    targetMonitorId?: unknown
+  }
 
   const startTime =
     typeof region.startTime === 'number' && Number.isFinite(region.startTime) ? clampToNonNegative(region.startTime) : 0
@@ -594,33 +662,43 @@ const parseSwapRegion = (value: unknown, fallbackLaneId: string): CameraSwapRegi
         )
       : SWAP_REGION.TRANSITION_DURATION.defaultValue
 
+  const parsedOrigin = parseSwapParticipant(region.origin) || { kind: 'main-screen' as const }
+  const parsedTarget = parseSwapParticipant(region.target)
+  const legacyTarget =
+    region.target === 'floating-monitor'
+      ? {
+          kind: 'floating-monitor-region' as const,
+          regionId: findLegacyMonitorRegionId(floatingMonitorRegions, region.targetMonitorId),
+        }
+      : { kind: 'webcam' as const }
+  const target = parsedTarget || legacyTarget
+
   return {
     id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `swap-${Date.now()}`,
     type: 'swap',
     laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
     startTime,
     duration,
-    showDesktopOverlay: region.showDesktopOverlay !== false,
-    target:
-      region.target === 'main-screen' || region.target === 'floating-monitor' || region.target === 'webcam'
-        ? region.target
-        : 'webcam',
-    targetMonitorId:
-      typeof region.targetMonitorId === 'string' && region.targetMonitorId.length > 0
-        ? region.targetMonitorId
-        : undefined,
+    origin: cloneSwapParticipant(parsedOrigin),
+    target: sameSwapParticipant(parsedOrigin, target)
+      ? { kind: 'floating-monitor-region', regionId: '' }
+      : cloneSwapParticipant(target),
     transition,
     transitionDuration,
     zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,
   }
 }
 
-const parseSwapRegions = (value: unknown, fallbackLaneId: string): Record<string, CameraSwapRegion> => {
+const parseSwapRegions = (
+  value: unknown,
+  fallbackLaneId: string,
+  floatingMonitorRegions?: unknown,
+): Record<string, CameraSwapRegion> => {
   if (!value || typeof value !== 'object') return {}
 
   return Object.entries(value as Record<string, unknown>).reduce(
     (acc, [regionId, rawValue]) => {
-      const parsedRegion = parseSwapRegion(rawValue, fallbackLaneId)
+      const parsedRegion = parseSwapRegion(rawValue, fallbackLaneId, floatingMonitorRegions)
       if (!parsedRegion) return acc
       parsedRegion.id = regionId || parsedRegion.id
       acc[parsedRegion.id] = parsedRegion
@@ -906,7 +984,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.blurRegions = (parsedData.blurRegions as typeof state.blurRegions) || {}
         state.timelineLanes = (parsedData.timelineLanes as typeof state.timelineLanes) || [createDefaultTimelineLane()]
         const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
-        state.swapRegions = parseSwapRegions(parsedData.swapRegions, fallbackTimelineLaneId)
+        state.swapRegions = parseSwapRegions(
+          parsedData.swapRegions,
+          fallbackTimelineLaneId,
+          parsedData.floatingMonitorRegions,
+        )
         state.mediaAudioClip = parsedMediaAudioClip
         state.floatingMonitors = parsedFloatingMonitors
         if (
@@ -993,7 +1075,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           const monitor = state.floatingMonitors[region.monitorId]
           if (!monitor) {
             delete state.floatingMonitorRegions[region.id]
-          } else {
+          } else if (monitor.kind !== 'image') {
             region.sourceStart = Math.max(0, Math.min(region.sourceStart, monitor.duration))
             region.duration = Math.min(region.duration, Math.max(0.1, monitor.duration - region.sourceStart))
           }
@@ -1136,7 +1218,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           region.duration = Math.max(0.1, duration - region.startTime)
         }
         const monitor = state.floatingMonitors[region.monitorId]
-        if (monitor?.duration) {
+        if (monitor?.kind !== 'image' && monitor?.duration) {
           region.sourceStart = Math.max(0, Math.min(region.sourceStart, monitor.duration))
           region.duration = Math.min(region.duration, Math.max(0.1, monitor.duration - region.sourceStart))
         }
@@ -1214,6 +1296,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   updateSystemAudioSettings: ({ volume, isMuted }) => {
     set((state) => {
+      if (state.assetTimelineEditing) return
       if (typeof volume === 'number' && Number.isFinite(volume)) {
         state.systemAudioVolume = Math.max(0, Math.min(volume, 1))
       }
@@ -1224,6 +1307,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {
     set((state) => {
+      if (state.assetTimelineEditing) return
       const normalizedPath = normalizeMediaPath(path)
       const resolvedStartTime = clampStartTime(startTime, state.duration)
       state.mediaAudioClip = {
@@ -1238,6 +1322,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioStartTime: (startTime) => {
     set((state) => {
+      if (state.assetTimelineEditing) return
       if (!state.mediaAudioClip) return
       const resolvedStart = clampStartTime(startTime, state.duration)
       state.mediaAudioClip.startTime = resolvedStart
@@ -1252,6 +1337,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioDuration: (duration) => {
     set((state) => {
+      if (state.assetTimelineEditing) return
       if (!state.mediaAudioClip) return
       const safeDuration = clampToNonNegative(duration)
       state.mediaAudioClip.duration = safeDuration
@@ -1270,6 +1356,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   clearMediaAudioClip: () => {
     set((state) => {
+      if (state.assetTimelineEditing) return
       const selectedRegionId = state.selectedRegionId
       const shouldClearSelection = selectedRegionId ? !!state.mediaAudioRegions[selectedRegionId] : false
       state.mediaAudioClip = null
@@ -1308,10 +1395,15 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       if (!monitor) return
       Object.assign(monitor, updates)
       monitor.duration = clampToNonNegative(monitor.duration)
-      monitor.timelineStart = Math.max(0, Math.min(monitor.timelineStart, monitor.duration))
+      monitor.timelineStart =
+        monitor.kind === 'image'
+          ? Math.max(0, monitor.timelineStart)
+          : Math.max(0, Math.min(monitor.timelineStart, monitor.duration))
       monitor.timelineDuration = Math.max(
         0,
-        Math.min(monitor.timelineDuration, monitor.duration - monitor.timelineStart),
+        monitor.kind === 'image'
+          ? monitor.timelineDuration
+          : Math.min(monitor.timelineDuration, monitor.duration - monitor.timelineStart),
       )
       monitor.x = Math.max(0, Math.min(monitor.x, 1))
       monitor.y = Math.max(0, Math.min(monitor.y, 1))
@@ -1321,12 +1413,34 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   removeFloatingMonitor: (id) => {
     set((state) => {
-      const shouldClearSelection =
-        !!state.selectedRegionId && state.floatingMonitorRegions[state.selectedRegionId]?.monitorId === id
-      delete state.floatingMonitors[id]
-      Object.values(state.floatingMonitorRegions).forEach((region) => {
-        if (region.monitorId === id) delete state.floatingMonitorRegions[region.id]
+      const removedRegionIds = new Set<string>()
+      const timelines = [
+        { floatingMonitorRegions: state.floatingMonitorRegions, swapRegions: state.swapRegions },
+        ...Object.values(state.floatingMonitors)
+          .filter((monitor) => monitor.id !== id && monitor.timeline)
+          .map((monitor) => monitor.timeline!),
+      ]
+
+      timelines.forEach(({ floatingMonitorRegions }) => {
+        Object.values(floatingMonitorRegions).forEach((region) => {
+          if (region.monitorId === id) {
+            removedRegionIds.add(region.id)
+            delete floatingMonitorRegions[region.id]
+          }
+        })
       })
+      timelines.forEach(({ swapRegions }) => {
+        Object.values(swapRegions).forEach((region) => {
+          const referencesRemovedRegion = [region.origin, region.target].some(
+            (participant) =>
+              participant.kind === 'floating-monitor-region' && removedRegionIds.has(participant.regionId),
+          )
+          if (referencesRemovedRegion) delete swapRegions[region.id]
+        })
+      })
+
+      const shouldClearSelection = !!state.selectedRegionId && removedRegionIds.has(state.selectedRegionId)
+      delete state.floatingMonitors[id]
       if (shouldClearSelection) {
         state.selectedRegionId = null
       }
@@ -1370,6 +1484,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       )
       state.assetTimelineEditing = {
         monitorId: monitor.id,
+        blurDefaults: cloneSerializable(assetTimeline.blurDefaults),
+        swapDefaults: cloneSerializable(assetTimeline.swapDefaults),
         mainProject: {
           videoPath: state.videoPath,
           videoUrl: state.videoUrl,
@@ -1377,6 +1493,19 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           audioUrl: state.audioUrl,
           systemAudioPath: state.systemAudioPath,
           systemAudioUrl: state.systemAudioUrl,
+          systemAudioVolume: state.systemAudioVolume,
+          systemAudioMuted: state.systemAudioMuted,
+          volume: state.volume,
+          isMuted: state.isMuted,
+          mediaAudioClip: cloneSerializable(state.mediaAudioClip),
+          mediaAudioRegions: cloneSerializable(state.mediaAudioRegions),
+          changeSoundRegions: cloneSerializable(state.changeSoundRegions),
+          webcamVideoPath: state.webcamVideoPath,
+          webcamVideoUrl: state.webcamVideoUrl,
+          webcamLayout: cloneSerializable(state.webcamLayout),
+          webcamPosition: cloneSerializable(state.webcamPosition),
+          webcamStyles: cloneSerializable(state.webcamStyles),
+          hasAudioTrack: state.hasAudioTrack,
           duration: state.duration,
           videoDimensions: cloneSerializable(state.videoDimensions),
           frameStyles: cloneSerializable(state.frameStyles),
@@ -1392,6 +1521,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           isWebcamVisible: state.isWebcamVisible,
           selectedRegionId: state.selectedRegionId,
           currentTime: state.currentTime,
+          isPlaying: state.isPlaying,
         },
       }
 
@@ -1401,6 +1531,13 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.audioUrl = null
       state.systemAudioPath = null
       state.systemAudioUrl = null
+      state.systemAudioVolume = 1
+      state.systemAudioMuted = false
+      state.volume = 1
+      state.isMuted = false
+      state.mediaAudioClip = null
+      state.webcamVideoPath = null
+      state.webcamVideoUrl = null
       state.duration = assetTimeline.duration || monitor.duration
       state.videoDimensions = assetTimeline.videoDimensions
       state.frameStyles = assetTimeline.frameStyles
@@ -1415,6 +1552,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.cursorStyles = assetCursorStyles
       state.mediaAudioRegions = {}
       state.changeSoundRegions = {}
+      state.hasAudioTrack = false
       state.isWebcamVisible = false
       state.selectedRegionId = assetTimeline.selectedRegionId
       state.currentTime = 0
@@ -1442,6 +1580,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           blurRegions: cloneSerializable(state.blurRegions),
           swapRegions: cloneSerializable(state.swapRegions),
           floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
+          blurDefaults: cloneSerializable(editing.blurDefaults),
+          swapDefaults: cloneSerializable(editing.swapDefaults),
           cursorStyles: cloneSerializable(state.cursorStyles),
           selectedRegionId: state.selectedRegionId,
         }
@@ -1454,6 +1594,19 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.audioUrl = main.audioUrl
       state.systemAudioPath = main.systemAudioPath
       state.systemAudioUrl = main.systemAudioUrl
+      state.systemAudioVolume = main.systemAudioVolume
+      state.systemAudioMuted = main.systemAudioMuted
+      state.volume = main.volume
+      state.isMuted = main.isMuted
+      state.mediaAudioClip = main.mediaAudioClip
+      state.mediaAudioRegions = main.mediaAudioRegions
+      state.changeSoundRegions = main.changeSoundRegions
+      state.webcamVideoPath = main.webcamVideoPath
+      state.webcamVideoUrl = main.webcamVideoUrl
+      state.webcamLayout = main.webcamLayout
+      state.webcamPosition = main.webcamPosition
+      state.webcamStyles = main.webcamStyles
+      state.hasAudioTrack = main.hasAudioTrack
       state.duration = main.duration
       state.videoDimensions = main.videoDimensions
       state.frameStyles = main.frameStyles
@@ -1469,7 +1622,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.isWebcamVisible = main.isWebcamVisible
       state.selectedRegionId = main.selectedRegionId
       state.currentTime = main.currentTime
-      state.isPlaying = false
+      state.isPlaying = main.isPlaying
       state.assetTimelineEditing = null
     })
   },

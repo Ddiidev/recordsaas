@@ -53,7 +53,10 @@ export interface CursorStyles {
 
 export type BlurRegionStyle = 'blur' | 'pixelated'
 export type CameraSwapTransition = 'none' | 'fade' | 'slide' | 'scale'
-export type CameraSwapTarget = 'webcam' | 'main-screen' | 'floating-monitor'
+export type SwapParticipant =
+  | { kind: 'main-screen' }
+  | { kind: 'webcam' }
+  | { kind: 'floating-monitor-region'; regionId: string }
 
 export interface BlurPresetDefaults {
   duration: number
@@ -67,9 +70,8 @@ export interface BlurPresetDefaults {
 
 export interface SwapPresetDefaults {
   duration: number
-  showDesktopOverlay: boolean
-  target: CameraSwapTarget
-  targetMonitorId?: string
+  origin: SwapParticipant
+  target: SwapParticipant
   transition: CameraSwapTransition
   transitionDuration: number
 }
@@ -182,9 +184,8 @@ export interface CameraSwapRegion {
   laneId: string
   startTime: number
   duration: number
-  showDesktopOverlay: boolean
-  target: CameraSwapTarget
-  targetMonitorId?: string
+  origin: SwapParticipant
+  target: SwapParticipant
   transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number
@@ -351,12 +352,16 @@ export interface AssetTimelineState {
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
   floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  blurDefaults?: BlurPresetDefaults
+  swapDefaults?: SwapPresetDefaults
   cursorStyles?: CursorStyles
   selectedRegionId: string | null
 }
 
 export interface AssetTimelineEditing {
   monitorId: string
+  blurDefaults?: BlurPresetDefaults
+  swapDefaults?: SwapPresetDefaults
   mainProject: {
     videoPath: string | null
     videoUrl: string | null
@@ -364,6 +369,19 @@ export interface AssetTimelineEditing {
     audioUrl: string | null
     systemAudioPath: string | null
     systemAudioUrl: string | null
+    systemAudioVolume: number
+    systemAudioMuted: boolean
+    volume: number
+    isMuted: boolean
+    mediaAudioClip: MediaAudioClip | null
+    mediaAudioRegions: Record<string, MediaAudioRegion>
+    changeSoundRegions: Record<string, ChangeSoundRegion>
+    webcamVideoPath: string | null
+    webcamVideoUrl: string | null
+    webcamLayout: WebcamLayout
+    webcamPosition: WebcamPosition
+    webcamStyles: WebcamStyles
+    hasAudioTrack: boolean
     duration: number
     videoDimensions: VideoDimensions
     frameStyles: FrameStyles
@@ -379,6 +397,7 @@ export interface AssetTimelineEditing {
     isWebcamVisible: boolean
     selectedRegionId: string | null
     currentTime: number
+    isPlaying: boolean
   }
 }
 

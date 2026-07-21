@@ -9,13 +9,9 @@ type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 const HANDLE_CONFIG: Array<{ handle: ResizeHandle; left: string; top: string; cursor: string }> = [
   { handle: 'nw', left: '0%', top: '0%', cursor: 'nwse-resize' },
-  { handle: 'n', left: '50%', top: '0%', cursor: 'ns-resize' },
   { handle: 'ne', left: '100%', top: '0%', cursor: 'nesw-resize' },
-  { handle: 'e', left: '100%', top: '50%', cursor: 'ew-resize' },
   { handle: 'se', left: '100%', top: '100%', cursor: 'nwse-resize' },
-  { handle: 's', left: '50%', top: '100%', cursor: 'ns-resize' },
   { handle: 'sw', left: '0%', top: '100%', cursor: 'nesw-resize' },
-  { handle: 'w', left: '0%', top: '50%', cursor: 'ew-resize' },
 ]
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max))
@@ -135,7 +131,7 @@ export function FloatingMonitorOverlayEditor({
             tabIndex={0}
             aria-label="Move floating monitor"
             onPointerDown={(event) => beginDrag(event, region, 'move')}
-            className={`fixed z-40 border-2 ${isSelected ? 'border-violet-400 shadow-lg shadow-violet-500/30' : 'cursor-move border-violet-300/70'}`}
+            className={`fixed z-40 border-2 ${isSelected ? 'border-violet-400 shadow-lg shadow-violet-500/30' : 'cursor-move border-border/80 bg-transparent hover:border-primary/60'}`}
             style={{
               left: box.left + box.width * region.x,
               top: box.top + box.height * region.y,
@@ -143,11 +139,11 @@ export function FloatingMonitorOverlayEditor({
               height: box.height * region.height,
             }}
           >
-            <span className="absolute -top-6 right-0 max-w-[calc(100%_-_8px)] truncate rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-              {badgeName}
-            </span>
             {isSelected && (
               <>
+                <span className="absolute -top-6 right-0 max-w-[calc(100%_-_8px)] truncate rounded bg-violet-600 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                  {badgeName}
+                </span>
                 {HANDLE_CONFIG.map((item) => (
                   <button
                     key={item.handle}
