@@ -12,7 +12,7 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 
 - Sintoma somente no preview/editor, com exportacao correta: investigar React/media elements/seek antes de captura, WASAPI ou FFmpeg.
 - Seek deve sincronizar video principal, canvas, webcam, audio de gravacao, audio do computador, audio de midia e instancias de monitor.
-- Durante scrub: pausar fontes, coalescer seeks por `requestAnimationFrame`, registrar listener `seeked` antes do ultimo seek e liberar scrub no proximo frame. Nao manter estado de scrub por timeout perceptivel; ele bloqueia Play clicado logo depois da regua.
+- Durante scrub: pausar fontes, coalescer seeks por `requestAnimationFrame`, registrar listener `seeked` antes do ultimo seek e liberar scrub no proximo frame. Preservar estado anterior: se estava tocando, retomar apos seek; se estava pausado, continuar pausado. Nao manter estado de scrub por timeout perceptivel; ele bloqueia Play clicado logo depois da regua.
 - Nunca chamar `HTMLMediaElement.play()` novamente enquanto promessa anterior ainda esta pendente. `AbortError` por pause/seek e esperado; nao registrar em loop. Manter intencao de playback para retentar uma vez apos interrupcao.
 - Monitor flutuante usa fonte por instancia de regiao, nao apenas por asset. Cada instancia pode ter offset proprio.
 

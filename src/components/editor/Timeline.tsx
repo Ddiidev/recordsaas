@@ -120,6 +120,7 @@ export function Timeline({
   const animationFrameRef = useRef<number>()
   const rulerAnimationFrameRef = useRef<number | null>(null)
   const pendingRulerClientXRef = useRef<number | null>(null)
+  const resumePlaybackAfterRulerScrubRef = useRef(false)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0)
@@ -210,8 +211,11 @@ export function Timeline({
 
   const releaseScrubAfterSeek = useCallback(() => {
     const video = videoRef.current
+    const shouldResumePlayback = resumePlaybackAfterRulerScrubRef.current
+    resumePlaybackAfterRulerScrubRef.current = false
     if (!video) {
       onScrubStateChange?.(false)
+      if (shouldResumePlayback) setPlaying(true)
       return
     }
 
@@ -228,6 +232,7 @@ export function Timeline({
       if (initialFallbackTimer !== null) window.clearTimeout(initialFallbackTimer)
       if (hardFallbackTimer !== null) window.clearTimeout(hardFallbackTimer)
       onScrubStateChange?.(false)
+      if (shouldResumePlayback) setPlaying(true)
     }
 
     const handleSeeked = () => {
@@ -240,7 +245,7 @@ export function Timeline({
       if (!video.seeking) handleSeeked()
     }, 32)
     hardFallbackTimer = window.setTimeout(release, 10000)
-  }, [onScrubStateChange, videoRef])
+  }, [onScrubStateChange, setPlaying, videoRef])
 
   useEffect(() => {
     return () => {
@@ -554,6 +559,7 @@ export function Timeline({
       event.stopPropagation()
       if (duration === 0 || !timelineRef.current) return
 
+      resumePlaybackAfterRulerScrubRef.current = useEditorStore.getState().isPlaying
       setPlaying(false)
       setIsDraggingRuler(true)
       onScrubStateChange?.(true)

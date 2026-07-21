@@ -372,7 +372,7 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
 - Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
 - Playhead interaction baseline: dragging can start from the full playhead control line (not only the triangle), with `ew-resize` cursor semantics.
-- Ruler scrubbing must update continuously from mouse down through window-level mouse move, pause playback while seeking, and clamp the target to the timeline duration.
+- Ruler scrubbing must update continuously from mouse down through window-level mouse move, preserve whether playback was active before seeking, and clamp the target to the timeline duration. Resume only after final seek when it was active; a paused preview remains paused.
 - Every main-video seek must redraw the canvas after `seeked` and resynchronize webcam, recording audio, computer audio, and media audio before playback resumes.
 - While timeline scrubbing is active, coalesce video seek requests with animation-frame scheduling and pause separated audio elements without changing their timestamps; attach the final `seeked` listener before issuing final seek and release scrub on its next frame so immediate Play is not cancelled.
 - Per-media `play()` calls must be serialized while a prior promise is pending. Treat `AbortError` from seek/pause as expected, retry once only when playback remains requested, and never emit an error loop.
