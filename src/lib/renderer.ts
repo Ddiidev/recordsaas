@@ -42,8 +42,7 @@ type ResolvedLayout = {
   cameraFlip: boolean
 }
 type WindowWithScreenCache = Window & {
-  __screenCacheCanvas?: HTMLCanvasElement
-  __screenCacheCtx?: CanvasRenderingContext2D | null
+  __instanceRenderCanvasCache?: Map<string, InstanceRenderCanvasCache>
   __backgroundCacheCanvas?: HTMLCanvasElement
   __backgroundCacheCtx?: CanvasRenderingContext2D | null
   __backgroundCacheKey?: string
@@ -52,12 +51,23 @@ type WindowWithScreenCache = Window & {
   __mediaLayerCacheKey?: string
 }
 
+type CachedRenderCanvas = {
+  canvas: HTMLCanvasElement
+  ctx: CanvasRenderingContext2D
+}
+
+type InstanceRenderCanvasCache = {
+  screen?: CachedRenderCanvas
+  composition?: CachedRenderCanvas
+}
+
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
 let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
 const roundedRectPathCache = new Map<string, Path2D>()
 const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+const INSTANCE_RENDER_CANVAS_CACHE_LIMIT = 16
 const objectValuesCache = new WeakMap<object, unknown[]>()
 
 const getObjectValuesCached = <T>(source: Record<string, T> | null | undefined): T[] => {
@@ -97,8 +107,46 @@ const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
   return path
 }
 
+const getOrCreateInstanceRenderCanvas = (
+  kind: keyof InstanceRenderCanvasCache,
+  instanceKey: string,
+  width: number,
+  height: number,
+): CachedRenderCanvas | null => {
+  const roundedWidth = Math.max(1, Math.round(width))
+  const roundedHeight = Math.max(1, Math.round(height))
+  const cacheWindow = window as WindowWithScreenCache
+  const cache = cacheWindow.__instanceRenderCanvasCache || new Map<string, InstanceRenderCanvasCache>()
+  cacheWindow.__instanceRenderCanvasCache = cache
+
+  let entry = cache.get(instanceKey)
+  if (!entry) {
+    if (cache.size >= INSTANCE_RENDER_CANVAS_CACHE_LIMIT) {
+      const oldestKey = cache.keys().next().value
+      if (oldestKey) cache.delete(oldestKey)
+    }
+    entry = {}
+  } else {
+    cache.delete(instanceKey)
+  }
+  cache.set(instanceKey, entry)
+
+  let cachedCanvas = entry[kind]
+  if (!cachedCanvas) {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    cachedCanvas = { canvas, ctx }
+    entry[kind] = cachedCanvas
+  }
+
+  if (cachedCanvas.canvas.width !== roundedWidth) cachedCanvas.canvas.width = roundedWidth
+  if (cachedCanvas.canvas.height !== roundedHeight) cachedCanvas.canvas.height = roundedHeight
+  return cachedCanvas
+}
+
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel' | 'screen' | 'background' | 'media-layer',
+  kind: 'sample' | 'pixel' | 'background' | 'media-layer',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -114,20 +162,6 @@ const getOrCreateCanvas = (
     if (blurSampleCanvas.width !== roundedWidth) blurSampleCanvas.width = roundedWidth
     if (blurSampleCanvas.height !== roundedHeight) blurSampleCanvas.height = roundedHeight
     return { canvas: blurSampleCanvas, ctx: blurSampleCtx }
-  }
-
-  if (kind === 'screen') {
-    const cacheWindow = window as WindowWithScreenCache
-    if (!cacheWindow.__screenCacheCanvas) {
-      cacheWindow.__screenCacheCanvas = document.createElement('canvas')
-      cacheWindow.__screenCacheCtx = cacheWindow.__screenCacheCanvas.getContext('2d')
-    }
-    const canvas = cacheWindow.__screenCacheCanvas
-    const ctx = cacheWindow.__screenCacheCtx
-    if (!canvas || !ctx) return null
-    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
-    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
-    return { canvas, ctx }
   }
 
   if (kind === 'background') {
@@ -727,7 +761,12 @@ export const drawScene = (
   }
 
   // --- 4. Prepare Screen Canvas (Video + Clicks + Cursor + Zoom) ---
-  const screenCache = getOrCreateCanvas('screen', frameContentWidth, frameContentHeight)
+  const screenCache = getOrCreateInstanceRenderCanvas(
+    'screen',
+    monitorSourcePath,
+    frameContentWidth,
+    frameContentHeight,
+  )
   if (screenCache) {
     const sCtx = screenCache.ctx
     sCtx.imageSmoothingEnabled = true
@@ -1061,19 +1100,7 @@ export const drawScene = (
   const draws: { zIndex: number; draw: () => void }[] = []
 
   // Base states
-  const hasNestedMonitorTimeline = floatingMonitorRegions.some(
-    (region) => isRegionActiveAtTime(region, currentTime) && state.floatingMonitors[region.monitorId]?.timeline,
-  )
-  const desktopSource =
-    hasNestedMonitorTimeline && screenCache && typeof document !== 'undefined'
-      ? (() => {
-          const snapshot = document.createElement('canvas')
-          snapshot.width = frameContentWidth
-          snapshot.height = frameContentHeight
-          snapshot.getContext('2d')?.drawImage(screenCache.canvas, 0, 0)
-          return snapshot
-        })()
-      : screenCache?.canvas
+  const desktopSource = screenCache?.canvas
   const desktopDims = { width: frameContentWidth, height: frameContentHeight }
   const desktopFlipped = false
 
@@ -1339,11 +1366,8 @@ export const drawScene = (
     const sourceWidth = renderSource.width
     const sourceHeight = renderSource.height
     if (monitor.timeline && typeof document !== 'undefined' && !monitorAncestry.has(monitor.id)) {
-      const nestedCanvas = document.createElement('canvas')
-      nestedCanvas.width = sourceWidth
-      nestedCanvas.height = sourceHeight
-      const nestedContext = nestedCanvas.getContext('2d')
-      if (nestedContext) {
+      const nestedComposition = getOrCreateInstanceRenderCanvas('composition', sourceKey, sourceWidth, sourceHeight)
+      if (nestedComposition) {
         const nestedState: RenderableState = {
           ...state,
           ...monitor.timeline,
@@ -1358,7 +1382,7 @@ export const drawScene = (
         }
         const assetTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
         drawScene(
-          nestedContext,
+          nestedComposition.ctx,
           nestedState,
           source,
           null,
@@ -1372,7 +1396,7 @@ export const drawScene = (
           new Set([...monitorAncestry, monitor.id]),
           sourceKey,
         )
-        source = nestedCanvas
+        source = nestedComposition.canvas
       }
     }
 

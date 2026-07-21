@@ -66,6 +66,66 @@ const Ruler = memo(
 )
 Ruler.displayName = 'Ruler'
 
+const TimelinePlayhead = memo(
+  ({
+    duration,
+    timeToTrackPx,
+    videoRef,
+    timelineRef,
+    isDragging,
+    onMouseDown,
+  }: {
+    duration: number
+    timeToTrackPx: (time: number) => number
+    videoRef: React.RefObject<HTMLVideoElement>
+    timelineRef: React.RefObject<HTMLDivElement>
+    isDragging: boolean
+    onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void
+  }) => {
+    const { currentTime, isPlaying } = useEditorStore(
+      useShallow((state) => ({ currentTime: state.currentTime, isPlaying: state.isPlaying })),
+    )
+    const playheadRef = useRef<HTMLDivElement>(null)
+    const animationFrameRef = useRef<number>()
+
+    useEffect(() => {
+      const animate = () => {
+        if (videoRef.current && playheadRef.current) {
+          playheadRef.current.style.transform = `translateX(${timeToTrackPx(videoRef.current.currentTime)}px)`
+        }
+        animationFrameRef.current = requestAnimationFrame(animate)
+      }
+      if (isPlaying) animationFrameRef.current = requestAnimationFrame(animate)
+      return () => {
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+      }
+    }, [isPlaying, timeToTrackPx, videoRef])
+
+    useEffect(() => {
+      if (!isPlaying && playheadRef.current) {
+        playheadRef.current.style.transform = `translateX(${timeToTrackPx(currentTime)}px)`
+      }
+    }, [currentTime, isPlaying, timeToTrackPx])
+
+    if (duration <= 0) return null
+    return (
+      <div
+        ref={playheadRef}
+        data-playhead
+        className="absolute top-0 bottom-0 pointer-events-auto cursor-ew-resize"
+        style={{ zIndex: 9999, transform: `translateX(${timeToTrackPx(currentTime)}px)` }}
+      >
+        <Playhead
+          height={Math.max(80, Math.floor((timelineRef.current?.clientHeight ?? 0) * 0.9))}
+          isDragging={isDragging}
+          onMouseDown={onMouseDown}
+        />
+      </div>
+    )
+  },
+)
+TimelinePlayhead.displayName = 'TimelinePlayhead'
+
 export function Timeline({
   videoRef,
   onScrubStateChange,
@@ -73,23 +133,12 @@ export function Timeline({
   videoRef: React.RefObject<HTMLVideoElement>
   onScrubStateChange?: (isScrubbing: boolean) => void
 }) {
-  const {
-    currentTime,
-    duration,
-    timelineZoom,
-    previewCutRegion,
-    selectedRegionId,
-    isPlaying,
-    timelineLanes,
-    mediaAudioClip,
-  } = useEditorStore(
+  const { duration, timelineZoom, previewCutRegion, selectedRegionId, timelineLanes, mediaAudioClip } = useEditorStore(
     useShallow((state) => ({
-      currentTime: state.currentTime,
       duration: state.duration,
       timelineZoom: state.timelineZoom,
       previewCutRegion: state.previewCutRegion,
       selectedRegionId: state.selectedRegionId,
-      isPlaying: state.isPlaying,
       timelineLanes: state.timelineLanes,
       mediaAudioClip: state.mediaAudioClip,
     })),
@@ -104,7 +153,18 @@ export function Timeline({
     removeTimelineLane,
     addMediaAudioRegion,
     addChangeSoundRegion,
-  } = useEditorStore()
+  } = useEditorStore(
+    useShallow((state) => ({
+      setCurrentTime: state.setCurrentTime,
+      setPlaying: state.setPlaying,
+      setSelectedRegionId: state.setSelectedRegionId,
+      addTimelineLane: state.addTimelineLane,
+      moveTimelineLane: state.moveTimelineLane,
+      removeTimelineLane: state.removeTimelineLane,
+      addMediaAudioRegion: state.addMediaAudioRegion,
+      addChangeSoundRegion: state.addChangeSoundRegion,
+    })),
+  )
 
   const sortedLanes = useMemo(() => sortTimelineLanes(timelineLanes), [timelineLanes])
   const fallbackLaneId = sortedLanes[0]?.id ?? 'lane-1'
@@ -113,13 +173,15 @@ export function Timeline({
 
   const containerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
-  const playheadRef = useRef<HTMLDivElement>(null)
   const lanesContainerRef = useRef<HTMLDivElement>(null)
   const laneRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const regionRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
-  const animationFrameRef = useRef<number>()
   const rulerAnimationFrameRef = useRef<number | null>(null)
   const pendingRulerClientXRef = useRef<number | null>(null)
+  const pendingVideoSeekTimeRef = useRef<number | null>(null)
+  const isVideoSeekInFlightRef = useRef(false)
+  const cleanupVideoSeekRef = useRef<(() => void) | null>(null)
+  const videoSeekFallbackTimerRef = useRef<number | null>(null)
   const resumePlaybackAfterRulerScrubRef = useRef(false)
 
   const [containerWidth, setContainerWidth] = useState(0)
@@ -168,7 +230,67 @@ export function Timeline({
     (time: number) => {
       const clampedTime = Math.max(0, Math.min(time, duration))
       setCurrentTime(clampedTime)
-      if (videoRef.current) videoRef.current.currentTime = clampedTime
+      const video = videoRef.current
+      if (!video) {
+        pendingVideoSeekTimeRef.current = null
+        return
+      }
+
+      pendingVideoSeekTimeRef.current = clampedTime
+      if (isVideoSeekInFlightRef.current) return
+
+      const drainPendingSeek = () => {
+        const nextTime = pendingVideoSeekTimeRef.current
+        pendingVideoSeekTimeRef.current = null
+        if (nextTime === null) return
+        if (useEditorStore.getState().currentTime !== nextTime) {
+          setCurrentTime(nextTime)
+        }
+
+        if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+          video.currentTime = nextTime
+          return
+        }
+
+        if (!video.seeking && Math.abs(video.currentTime - nextTime) < 0.001) {
+          drainPendingSeek()
+          return
+        }
+
+        isVideoSeekInFlightRef.current = true
+        const clearInFlightSeek = () => {
+          video.removeEventListener('seeked', handleSeeked)
+          video.removeEventListener('error', handleSeekFailure)
+          if (videoSeekFallbackTimerRef.current !== null) {
+            window.clearTimeout(videoSeekFallbackTimerRef.current)
+            videoSeekFallbackTimerRef.current = null
+          }
+          cleanupVideoSeekRef.current = null
+          isVideoSeekInFlightRef.current = false
+        }
+        const handleSeeked = () => {
+          clearInFlightSeek()
+          drainPendingSeek()
+        }
+        const handleSeekFailure = () => {
+          const nextPendingTime = pendingVideoSeekTimeRef.current
+          clearInFlightSeek()
+          if (nextPendingTime !== null && Math.abs(nextPendingTime - nextTime) >= 0.001) {
+            requestAnimationFrame(drainPendingSeek)
+          }
+        }
+        cleanupVideoSeekRef.current = clearInFlightSeek
+        video.addEventListener('seeked', handleSeeked)
+        video.addEventListener('error', handleSeekFailure, { once: true })
+        videoSeekFallbackTimerRef.current = window.setTimeout(handleSeekFailure, 1500)
+        try {
+          video.currentTime = nextTime
+        } catch {
+          handleSeekFailure()
+        }
+      }
+
+      drainPendingSeek()
     },
     [duration, setCurrentTime, videoRef],
   )
@@ -236,13 +358,16 @@ export function Timeline({
     }
 
     const handleSeeked = () => {
+      if (isVideoSeekInFlightRef.current || pendingVideoSeekTimeRef.current !== null || video.seeking) return
       if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame)
       releaseFrame = window.requestAnimationFrame(release)
     }
 
     video.addEventListener('seeked', handleSeeked)
     initialFallbackTimer = window.setTimeout(() => {
-      if (!video.seeking) handleSeeked()
+      if (!video.seeking && !isVideoSeekInFlightRef.current && pendingVideoSeekTimeRef.current === null) {
+        handleSeeked()
+      }
     }, 32)
     hardFallbackTimer = window.setTimeout(release, 10000)
   }, [onScrubStateChange, setPlaying, videoRef])
@@ -252,6 +377,12 @@ export function Timeline({
       if (rulerAnimationFrameRef.current !== null) {
         cancelAnimationFrame(rulerAnimationFrameRef.current)
       }
+      cleanupVideoSeekRef.current?.()
+      if (videoSeekFallbackTimerRef.current !== null) {
+        window.clearTimeout(videoSeekFallbackTimerRef.current)
+      }
+      pendingVideoSeekTimeRef.current = null
+      isVideoSeekInFlightRef.current = false
     }
   }, [])
 
@@ -341,27 +472,6 @@ export function Timeline({
     }
     return ticks
   }, [duration, pixelsPerSecond])
-
-  useEffect(() => {
-    const animate = () => {
-      if (videoRef.current && playheadRef.current) {
-        playheadRef.current.style.transform = `translateX(${timeToTrackPx(videoRef.current.currentTime)}px)`
-      }
-      animationFrameRef.current = requestAnimationFrame(animate)
-    }
-    if (isPlaying) {
-      animationFrameRef.current = requestAnimationFrame(animate)
-    }
-    return () => {
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
-    }
-  }, [isPlaying, timeToTrackPx, videoRef])
-
-  useEffect(() => {
-    if (!isPlaying && playheadRef.current) {
-      playheadRef.current.style.transform = `translateX(${timeToTrackPx(currentTime)}px)`
-    }
-  }, [currentTime, isPlaying, timeToTrackPx])
 
   useEffect(() => {
     if (!laneActionMenu) return
@@ -956,20 +1066,14 @@ export function Timeline({
               })}
             </div>
 
-            {duration > 0 && (
-              <div
-                ref={playheadRef}
-                data-playhead
-                className="absolute top-0 bottom-0 pointer-events-auto cursor-ew-resize"
-                style={{ zIndex: 9999, transform: `translateX(${timeToTrackPx(currentTime)}px)` }}
-              >
-                <Playhead
-                  height={Math.max(80, Math.floor((timelineRef.current?.clientHeight ?? 0) * 0.9))}
-                  isDragging={isDraggingPlayhead}
-                  onMouseDown={handlePlayheadMouseDown}
-                />
-              </div>
-            )}
+            <TimelinePlayhead
+              duration={duration}
+              timeToTrackPx={timeToTrackPx}
+              videoRef={videoRef}
+              timelineRef={timelineRef}
+              isDragging={isDraggingPlayhead}
+              onMouseDown={handlePlayheadMouseDown}
+            />
           </div>
 
           <ContextMenu

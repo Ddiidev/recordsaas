@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, RefObject, MouseEvent as ReactMouseEvent } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../store/editorStore'
 import { TimelineRegion, CutRegion } from '../types'
 import { TIMELINE } from '../lib/constants'
@@ -64,8 +65,20 @@ export const useTimelineInteraction = ({
     setCurrentTime,
     setPlaying,
     setSelectedRegionId,
-  } = useEditorStore()
+  } = useEditorStore(
+    useShallow((state) => ({
+      addCutRegion: state.addCutRegion,
+      deleteRegion: state.deleteRegion,
+      setPreviewCutRegion: state.setPreviewCutRegion,
+      updateRegion: state.updateRegion,
+      setCurrentTime: state.setCurrentTime,
+      setPlaying: state.setPlaying,
+      setSelectedRegionId: state.setSelectedRegionId,
+    })),
+  )
   const draggedLaneIdRef = useRef<string | null>(null)
+  const playheadAnimationFrameRef = useRef<number | null>(null)
+  const pendingPlayheadTimeRef = useRef<number | null>(null)
 
   const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
   const [activeDropLaneId, setActiveDropLaneId] = useState<string | null>(null)
@@ -117,11 +130,46 @@ export const useTimelineInteraction = ({
     [setSelectedRegionId, updateVideoTime, defaultLaneId],
   )
 
+  const queuePlayheadTime = useCallback(
+    (time: number) => {
+      pendingPlayheadTimeRef.current = time
+      if (playheadAnimationFrameRef.current !== null) return
+
+      playheadAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        playheadAnimationFrameRef.current = null
+        const pendingTime = pendingPlayheadTimeRef.current
+        pendingPlayheadTimeRef.current = null
+        if (pendingTime !== null) updateVideoTime(pendingTime)
+      })
+    },
+    [updateVideoTime],
+  )
+
+  const flushPlayheadTime = useCallback(
+    (time: number) => {
+      if (playheadAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(playheadAnimationFrameRef.current)
+        playheadAnimationFrameRef.current = null
+      }
+      pendingPlayheadTimeRef.current = null
+      updateVideoTime(time)
+    },
+    [updateVideoTime],
+  )
+
+  useEffect(() => {
+    return () => {
+      if (playheadAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(playheadAnimationFrameRef.current)
+      }
+    }
+  }, [])
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingPlayhead && timelineRef.current) {
         const rect = timelineRef.current.getBoundingClientRect()
-        updateVideoTime(pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)))
+        queuePlayheadTime(pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)))
         return
       }
 
@@ -362,7 +410,12 @@ export const useTimelineInteraction = ({
 
     const handleMouseUp = (e: MouseEvent) => {
       document.body.style.cursor = 'default'
-      if (isDraggingPlayhead) onScrubEnd?.()
+      if (isDraggingPlayhead) {
+        const rect = timelineRef.current?.getBoundingClientRect()
+        const finalTime = rect ? pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)) : null
+        onScrubEnd?.()
+        if (finalTime !== null) flushPlayheadTime(finalTime)
+      }
       setIsDraggingPlayhead(false)
 
       if (draggingRegion) {
@@ -601,6 +654,8 @@ export const useTimelineInteraction = ({
     pxToTime,
     timeToPx,
     updateVideoTime,
+    queuePlayheadTime,
+    flushPlayheadTime,
     updateRegion,
     addCutRegion,
     setPreviewCutRegion,

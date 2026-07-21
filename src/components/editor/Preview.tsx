@@ -26,6 +26,7 @@ import type { ChangeSoundSourceKey, FloatingMonitor, FloatingMonitorRegion } fro
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
 const WEBCAM_SCRUB_RESYNC_DRIFT_SECS = 0.02
+const AUDIO_PLAYBACK_RESYNC_DRIFT_SECS = 0.1
 
 type ResolvedAudioPlayback = {
   isActive: boolean
@@ -38,6 +39,47 @@ type FloatingMonitorSourceInstance = {
   monitor: FloatingMonitor
   region: FloatingMonitorRegion
   sourceTime: number
+}
+
+const pendingMonitorSeekTargets = new WeakMap<HTMLVideoElement, number>()
+const monitorSeekListenerAttached = new WeakSet<HTMLVideoElement>()
+
+const queueMonitorVideoSeek = (monitorVideo: HTMLVideoElement, targetTime: number, maxDrift: number) => {
+  if (monitorVideo.readyState === 0) return
+  if (!pendingMonitorSeekTargets.has(monitorVideo) && Math.abs(monitorVideo.currentTime - targetTime) <= maxDrift) {
+    return
+  }
+
+  pendingMonitorSeekTargets.set(monitorVideo, targetTime)
+  if (monitorSeekListenerAttached.has(monitorVideo)) return
+
+  const drainMonitorSeek = () => {
+    const nextTime = pendingMonitorSeekTargets.get(monitorVideo)
+    if (nextTime === undefined) return
+    if (!monitorVideo.seeking && Math.abs(monitorVideo.currentTime - nextTime) <= maxDrift) {
+      pendingMonitorSeekTargets.delete(monitorVideo)
+      return
+    }
+
+    const handleSeeked = () => {
+      monitorVideo.removeEventListener('seeked', handleSeeked)
+      monitorSeekListenerAttached.delete(monitorVideo)
+      drainMonitorSeek()
+    }
+    monitorSeekListenerAttached.add(monitorVideo)
+    monitorVideo.addEventListener('seeked', handleSeeked)
+    if (monitorVideo.seeking) return
+
+    try {
+      monitorVideo.currentTime = nextTime
+    } catch {
+      monitorVideo.removeEventListener('seeked', handleSeeked)
+      monitorSeekListenerAttached.delete(monitorVideo)
+      pendingMonitorSeekTargets.delete(monitorVideo)
+    }
+  }
+
+  drainMonitorSeek()
 }
 
 const collectFloatingMonitorSourceInstances = (
@@ -351,12 +393,15 @@ export const Preview = memo(
         const systemAudio = systemAudioRef.current
         const mediaAudio = mediaAudioRef.current
 
+        const webcamMaxDrift = resumePlayback ? WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS : WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+        const audioMaxDrift = resumePlayback ? AUDIO_PLAYBACK_RESYNC_DRIFT_SECS : WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+
         if (
           !isTimelineScrubbing &&
           webcamVideo &&
           webcamVideo.readyState >= 2 &&
           !webcamVideo.seeking &&
-          Math.abs(webcamVideo.currentTime - playbackTime) > WEBCAM_SCRUB_RESYNC_DRIFT_SECS
+          Math.abs(webcamVideo.currentTime - playbackTime) > webcamMaxDrift
         ) {
           webcamVideo.currentTime = playbackTime
         }
@@ -368,7 +413,7 @@ export const Preview = memo(
           volume * resolvedRecording.volumeMultiplier,
           video?.playbackRate ?? 1,
           resumePlayback,
-          0.02,
+          audioMaxDrift,
         )
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
         syncResolvedAudioElement(
@@ -377,7 +422,7 @@ export const Preview = memo(
           systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
           video?.playbackRate ?? 1,
           resumePlayback,
-          0.02,
+          audioMaxDrift,
         )
 
         const resolvedMedia = resolveMediaForTime(playbackTime)
@@ -387,7 +432,7 @@ export const Preview = memo(
           resolvedMedia.volumeMultiplier,
           video?.playbackRate ?? 1,
           resumePlayback,
-          0.02,
+          audioMaxDrift,
         )
 
         const activeInstances = collectFloatingMonitorSourceInstances(
@@ -403,9 +448,7 @@ export const Preview = memo(
           if (monitor.kind === 'image') return
           const monitorVideo = floatingMonitorVideoRefs.current.get(sourceKey)
           if (!monitorVideo) return
-          if (monitorVideo.readyState > 0 && Math.abs(monitorVideo.currentTime - sourceTime) > 0.02) {
-            monitorVideo.currentTime = sourceTime
-          }
+          queueMonitorVideoSeek(monitorVideo, sourceTime, webcamMaxDrift)
           monitorVideo.playbackRate = video?.playbackRate ?? 1
           requestMediaPlayback(monitorVideo, resumePlayback)
         })
@@ -558,7 +601,7 @@ export const Preview = memo(
           state,
           primarySource,
           null,
-          currentTime,
+          state.currentTime,
           canvas.width,
           canvas.height,
           bgImage,
@@ -608,7 +651,7 @@ export const Preview = memo(
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
-    }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset, currentTime])
+    }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset])
 
     useEffect(() => {
       if (isPlaying) {
