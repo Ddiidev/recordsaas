@@ -182,7 +182,11 @@ export function Timeline({
   const isVideoSeekInFlightRef = useRef(false)
   const cleanupVideoSeekRef = useRef<(() => void) | null>(null)
   const videoSeekFallbackTimerRef = useRef<number | null>(null)
-  const resumePlaybackAfterRulerScrubRef = useRef(false)
+  const resumePlaybackAfterScrubRef = useRef(false)
+  const scrubGenerationRef = useRef(0)
+  const cancelPendingScrubReleaseRef = useRef<(() => void) | null>(null)
+  const isRulerScrubbingRef = useRef(false)
+  const cleanupRulerScrubListenersRef = useRef<(() => void) | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0)
@@ -191,7 +195,6 @@ export function Timeline({
     position: { x: number; y: number }
   } | null>(null)
   const [mediaAssetDropLaneId, setMediaAssetDropLaneId] = useState<string | null>(null)
-  const [isDraggingRuler, setIsDraggingRuler] = useState(false)
 
   useEffect(() => {
     const containerEl = containerRef.current
@@ -333,9 +336,10 @@ export function Timeline({
 
   const releaseScrubAfterSeek = useCallback(() => {
     const video = videoRef.current
-    const shouldResumePlayback = resumePlaybackAfterRulerScrubRef.current
-    resumePlaybackAfterRulerScrubRef.current = false
+    const scrubGeneration = scrubGenerationRef.current
     if (!video) {
+      const shouldResumePlayback = resumePlaybackAfterScrubRef.current
+      resumePlaybackAfterScrubRef.current = false
       onScrubStateChange?.(false)
       if (shouldResumePlayback) setPlaying(true)
       return
@@ -346,37 +350,103 @@ export function Timeline({
     let initialFallbackTimer: number | null = null
     let hardFallbackTimer: number | null = null
 
-    const release = () => {
-      if (released) return
-      released = true
+    const cleanup = () => {
       video.removeEventListener('seeked', handleSeeked)
       if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame)
       if (initialFallbackTimer !== null) window.clearTimeout(initialFallbackTimer)
       if (hardFallbackTimer !== null) window.clearTimeout(hardFallbackTimer)
+      if (cancelPendingScrubReleaseRef.current === cancel) {
+        cancelPendingScrubReleaseRef.current = null
+      }
+    }
+
+    const release = () => {
+      if (released) return
+      released = true
+      cleanup()
+      if (scrubGeneration !== scrubGenerationRef.current) return
+
+      const shouldResumePlayback = resumePlaybackAfterScrubRef.current
+      resumePlaybackAfterScrubRef.current = false
       onScrubStateChange?.(false)
       if (shouldResumePlayback) setPlaying(true)
     }
 
-    const handleSeeked = () => {
-      if (isVideoSeekInFlightRef.current || pendingVideoSeekTimeRef.current !== null || video.seeking) return
-      if (releaseFrame !== null) window.cancelAnimationFrame(releaseFrame)
-      releaseFrame = window.requestAnimationFrame(release)
+    const cancel = () => {
+      if (released) return
+      released = true
+      cleanup()
     }
 
+    const waitForSeekQueueToSettle = () => {
+      if (released || releaseFrame !== null) return
+      releaseFrame = window.requestAnimationFrame(() => {
+        releaseFrame = null
+        if (isVideoSeekInFlightRef.current || pendingVideoSeekTimeRef.current !== null || video.seeking) {
+          waitForSeekQueueToSettle()
+          return
+        }
+        release()
+      })
+    }
+
+    const handleSeeked = () => waitForSeekQueueToSettle()
+
     video.addEventListener('seeked', handleSeeked)
-    initialFallbackTimer = window.setTimeout(() => {
-      if (!video.seeking && !isVideoSeekInFlightRef.current && pendingVideoSeekTimeRef.current === null) {
-        handleSeeked()
-      }
-    }, 32)
+    initialFallbackTimer = window.setTimeout(waitForSeekQueueToSettle, 32)
     hardFallbackTimer = window.setTimeout(release, 10000)
+    cancelPendingScrubReleaseRef.current = cancel
   }, [onScrubStateChange, setPlaying, videoRef])
+
+  const finishRulerScrub = useCallback(
+    (clientX: number) => {
+      if (!isRulerScrubbingRef.current) return
+      isRulerScrubbingRef.current = false
+      cleanupRulerScrubListenersRef.current?.()
+      cleanupRulerScrubListenersRef.current = null
+      releaseScrubAfterSeek()
+      flushRulerTime(clientX)
+    },
+    [flushRulerTime, releaseScrubAfterSeek],
+  )
+
+  const startRulerScrubListeners = useCallback(() => {
+    cleanupRulerScrubListenersRef.current?.()
+    isRulerScrubbingRef.current = true
+
+    const handleMouseMove = (event: MouseEvent) => {
+      updateRulerTime(event.clientX)
+    }
+    const handleMouseUp = (event: MouseEvent) => {
+      finishRulerScrub(event.clientX)
+    }
+    const cleanup = () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      if (cleanupRulerScrubListenersRef.current === cleanup) {
+        cleanupRulerScrubListenersRef.current = null
+      }
+    }
+
+    cleanupRulerScrubListenersRef.current = cleanup
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [finishRulerScrub, updateRulerTime])
+
+  const capturePlaybackForScrub = useCallback(() => {
+    cancelPendingScrubReleaseRef.current?.()
+    cancelPendingScrubReleaseRef.current = null
+    resumePlaybackAfterScrubRef.current ||= useEditorStore.getState().isPlaying
+    scrubGenerationRef.current += 1
+  }, [])
 
   useEffect(() => {
     return () => {
       if (rulerAnimationFrameRef.current !== null) {
         cancelAnimationFrame(rulerAnimationFrameRef.current)
       }
+      cleanupRulerScrubListenersRef.current?.()
+      cancelPendingScrubReleaseRef.current?.()
       cleanupVideoSeekRef.current?.()
       if (videoSeekFallbackTimerRef.current !== null) {
         window.clearTimeout(videoSeekFallbackTimerRef.current)
@@ -385,26 +455,6 @@ export function Timeline({
       isVideoSeekInFlightRef.current = false
     }
   }, [])
-
-  useEffect(() => {
-    if (!isDraggingRuler) return
-
-    const handleMouseMove = (event: MouseEvent) => {
-      updateRulerTime(event.clientX)
-    }
-    const handleMouseUp = (event: MouseEvent) => {
-      releaseScrubAfterSeek()
-      flushRulerTime(event.clientX)
-      setIsDraggingRuler(false)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [flushRulerTime, isDraggingRuler, releaseScrubAfterSeek, updateRulerTime])
 
   const resolveLaneIdFromClientY = useCallback(
     (clientY: number): string | null => {
@@ -454,6 +504,7 @@ export function Timeline({
     resolveLaneIdFromClientY,
     timelineStartOffsetPx,
     onScrubStateChange,
+    onScrubStart: capturePlaybackForScrub,
     onScrubEnd: releaseScrubAfterSeek,
   })
 
@@ -669,14 +720,22 @@ export function Timeline({
       event.stopPropagation()
       if (duration === 0 || !timelineRef.current) return
 
-      resumePlaybackAfterRulerScrubRef.current = useEditorStore.getState().isPlaying
+      capturePlaybackForScrub()
       setPlaying(false)
-      setIsDraggingRuler(true)
       onScrubStateChange?.(true)
+      startRulerScrubListeners()
       updateRulerTime(event.clientX)
       setSelectedRegionId(null)
     },
-    [duration, onScrubStateChange, setPlaying, setSelectedRegionId, updateRulerTime],
+    [
+      capturePlaybackForScrub,
+      duration,
+      onScrubStateChange,
+      setPlaying,
+      setSelectedRegionId,
+      startRulerScrubListeners,
+      updateRulerTime,
+    ],
   )
 
   return (

@@ -375,7 +375,11 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Ruler scrubbing must update continuously from mouse down through window-level mouse move, preserve whether playback was active before seeking, and clamp the target to the timeline duration. Resume only after final seek when it was active; a paused preview remains paused.
 - Every main-video seek must redraw the canvas after `seeked` and resynchronize webcam, recording audio, computer audio, and media audio before playback resumes.
 - While timeline scrubbing is active, coalesce pointer input with animation-frame scheduling, allow only one main-video decoder seek in flight, and retain only the latest pending target until `seeked`; pause separated audio elements without changing their timestamps. Attach the final `seeked` listener before issuing final seek and release scrub on its next frame so immediate Play is not cancelled. `currentTime` is operational state, never undo/redo history, and its playhead subscription must not re-render the full timeline.
+- Audio and monitor seek synchronization must use a single-flight queue per `HTMLMediaElement`, retaining only the last target. Never assign their `currentTime` directly from every `timeupdate`; synchronous and asynchronous `play()` failures must be caught, while `AbortError` from seek/pause remains expected.
+- A monitor `seeked` that settles after the main-video seek must schedule one preview redraw on the next frame; scrub may suppress store-time redraws but must not leave a stale monitor frame.
 - Per-media `play()` calls must be serialized while a prior promise is pending. Treat `AbortError` from seek/pause as expected, retry once only when playback remains requested, and never emit an error loop.
+- Ruler and playhead scrub listeners must be installed synchronously at `mousedown`, not only in a post-render effect; a fast click must not lose `mouseup`, leave scrub active, or strand playback paused.
+- `canvasDimensions` is canonical export geometry. Editor preview and nested monitor compositions may use a capped backing raster fitted to the visible stage/DPR, while preserving the canonical CSS aspect ratio and normalized blur/monitor overlay geometry; export keeps its explicit output resolution.
 
 Toolbar and preview control sizing:
 - `ToolbarButton` default: `h-10 px-4 rounded-lg`.

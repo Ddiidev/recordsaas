@@ -699,6 +699,7 @@ export const drawScene = (
   floatingMonitorSources: Record<string, FloatingMonitorRenderSource> = {},
   monitorAncestry: ReadonlySet<string> = new Set(),
   monitorSourcePath = 'main',
+  previewRenderScale = 1,
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
@@ -1366,7 +1367,14 @@ export const drawScene = (
     const sourceWidth = renderSource.width
     const sourceHeight = renderSource.height
     if (monitor.timeline && typeof document !== 'undefined' && !monitorAncestry.has(monitor.id)) {
-      const nestedComposition = getOrCreateInstanceRenderCanvas('composition', sourceKey, sourceWidth, sourceHeight)
+      const nestedOutputWidth = Math.max(1, Math.round(sourceWidth * previewRenderScale))
+      const nestedOutputHeight = Math.max(1, Math.round(sourceHeight * previewRenderScale))
+      const nestedComposition = getOrCreateInstanceRenderCanvas(
+        'composition',
+        sourceKey,
+        nestedOutputWidth,
+        nestedOutputHeight,
+      )
       if (nestedComposition) {
         const nestedState: RenderableState = {
           ...state,
@@ -1387,14 +1395,15 @@ export const drawScene = (
           source,
           null,
           assetTime,
-          sourceWidth,
-          sourceHeight,
+          nestedOutputWidth,
+          nestedOutputHeight,
           null,
           undefined,
           exportQuality,
           floatingMonitorSources,
           new Set([...monitorAncestry, monitor.id]),
           sourceKey,
+          previewRenderScale,
         )
         source = nestedComposition.canvas
       }

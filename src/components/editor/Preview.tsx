@@ -41,45 +41,60 @@ type FloatingMonitorSourceInstance = {
   sourceTime: number
 }
 
-const pendingMonitorSeekTargets = new WeakMap<HTMLVideoElement, number>()
-const monitorSeekListenerAttached = new WeakSet<HTMLVideoElement>()
+type PendingMediaSeek = {
+  targetTime: number
+  maxDrift: number
+}
 
-const queueMonitorVideoSeek = (monitorVideo: HTMLVideoElement, targetTime: number, maxDrift: number) => {
-  if (monitorVideo.readyState === 0) return
-  if (!pendingMonitorSeekTargets.has(monitorVideo) && Math.abs(monitorVideo.currentTime - targetTime) <= maxDrift) {
+const pendingMediaSeekTargets = new WeakMap<HTMLMediaElement, PendingMediaSeek>()
+const mediaSeekListenerAttached = new WeakSet<HTMLMediaElement>()
+
+const queueMediaSeek = (element: HTMLMediaElement, targetTime: number, maxDrift: number) => {
+  if (element.readyState === HTMLMediaElement.HAVE_NOTHING) return
+  if (!pendingMediaSeekTargets.has(element) && Math.abs(element.currentTime - targetTime) <= maxDrift) {
     return
   }
 
-  pendingMonitorSeekTargets.set(monitorVideo, targetTime)
-  if (monitorSeekListenerAttached.has(monitorVideo)) return
+  pendingMediaSeekTargets.set(element, { targetTime, maxDrift })
+  if (mediaSeekListenerAttached.has(element)) return
 
-  const drainMonitorSeek = () => {
-    const nextTime = pendingMonitorSeekTargets.get(monitorVideo)
-    if (nextTime === undefined) return
-    if (!monitorVideo.seeking && Math.abs(monitorVideo.currentTime - nextTime) <= maxDrift) {
-      pendingMonitorSeekTargets.delete(monitorVideo)
+  const drainMediaSeek = () => {
+    const pendingSeek = pendingMediaSeekTargets.get(element)
+    if (!pendingSeek) return
+    if (!element.seeking && Math.abs(element.currentTime - pendingSeek.targetTime) <= pendingSeek.maxDrift) {
+      pendingMediaSeekTargets.delete(element)
       return
     }
 
-    const handleSeeked = () => {
-      monitorVideo.removeEventListener('seeked', handleSeeked)
-      monitorSeekListenerAttached.delete(monitorVideo)
-      drainMonitorSeek()
+    let fallbackTimer: number | null = null
+    const clearSeekListener = () => {
+      element.removeEventListener('seeked', handleSeeked)
+      element.removeEventListener('error', handleSeekFailure)
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
+      mediaSeekListenerAttached.delete(element)
     }
-    monitorSeekListenerAttached.add(monitorVideo)
-    monitorVideo.addEventListener('seeked', handleSeeked)
-    if (monitorVideo.seeking) return
+    const handleSeeked = () => {
+      clearSeekListener()
+      drainMediaSeek()
+    }
+    const handleSeekFailure = () => {
+      clearSeekListener()
+      pendingMediaSeekTargets.delete(element)
+    }
+    mediaSeekListenerAttached.add(element)
+    element.addEventListener('seeked', handleSeeked)
+    element.addEventListener('error', handleSeekFailure, { once: true })
+    fallbackTimer = window.setTimeout(handleSeekFailure, 1500)
+    if (element.seeking) return
 
     try {
-      monitorVideo.currentTime = nextTime
+      element.currentTime = pendingSeek.targetTime
     } catch {
-      monitorVideo.removeEventListener('seeked', handleSeeked)
-      monitorSeekListenerAttached.delete(monitorVideo)
-      pendingMonitorSeekTargets.delete(monitorVideo)
+      handleSeekFailure()
     }
   }
 
-  drainMonitorSeek()
+  drainMediaSeek()
 }
 
 const collectFloatingMonitorSourceInstances = (
@@ -128,12 +143,12 @@ const syncResolvedAudioElement = (
 
   if (!resolved.isActive) {
     requestMediaPlayback(element, false)
-    if (element.readyState > 0) element.currentTime = 0
+    if (element.readyState > 0) queueMediaSeek(element, 0, 0.001)
     return
   }
 
   if (element.readyState > 0 && Math.abs(element.currentTime - resolved.sourceTime) > maxDrift) {
-    element.currentTime = resolved.sourceTime
+    queueMediaSeek(element, resolved.sourceTime, maxDrift)
   }
   element.volume = Math.max(0, Math.min(1, nextVolume))
   element.playbackRate = playbackRate
@@ -144,9 +159,19 @@ const syncResolvedAudioElement = (
 const pendingMediaPlayRequests = new WeakSet<HTMLMediaElement>()
 const requestedMediaPlayback = new WeakMap<HTMLMediaElement, boolean>()
 const interruptedMediaPlayRetries = new WeakMap<HTMLMediaElement, number>()
+const reportedMediaPlaybackFailures = new WeakMap<HTMLMediaElement, string>()
 
 const isExpectedPlayInterruption = (error: unknown): boolean =>
   error instanceof DOMException && error.name === 'AbortError'
+
+const reportMediaPlaybackFailure = (element: HTMLMediaElement, error: unknown) => {
+  if (isExpectedPlayInterruption(error)) return
+
+  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  if (reportedMediaPlaybackFailures.get(element) === detail) return
+  reportedMediaPlaybackFailures.set(element, detail)
+  console.error(`[Preview] Media playback failed: ${detail}`)
+}
 
 const requestMediaPlayback = (element: HTMLMediaElement | null, shouldPlay: boolean) => {
   if (!element) return
@@ -161,19 +186,26 @@ const requestMediaPlayback = (element: HTMLMediaElement | null, shouldPlay: bool
 
   pendingMediaPlayRequests.add(element)
   let wasInterrupted = false
-  const playRequest = element.play()
+  let didFailToPlay = false
+  let playRequest: Promise<void>
+  try {
+    playRequest = element.play()
+  } catch (error) {
+    pendingMediaPlayRequests.delete(element)
+    reportMediaPlaybackFailure(element, error)
+    return
+  }
   void playRequest
     .catch((error: unknown) => {
       wasInterrupted = isExpectedPlayInterruption(error)
-      if (!wasInterrupted) {
-        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-        console.error(`[Preview] Media playback failed: ${detail}`)
-      }
+      didFailToPlay = !wasInterrupted
+      reportMediaPlaybackFailure(element, error)
     })
     .finally(() => {
       pendingMediaPlayRequests.delete(element)
       if (!wasInterrupted) {
         interruptedMediaPlayRetries.delete(element)
+        if (!didFailToPlay) reportedMediaPlaybackFailures.delete(element)
         return
       }
 
@@ -293,6 +325,7 @@ export const Preview = memo(
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
+    const previewStageRef = useRef<HTMLDivElement>(null)
     const webcamVideoRef = useRef<HTMLVideoElement>(null)
     const recordingAudioRef = useRef<HTMLAudioElement>(null)
     const systemAudioRef = useRef<HTMLAudioElement>(null)
@@ -308,11 +341,30 @@ export const Preview = memo(
       [floatingMonitorRegions, floatingMonitors],
     )
     const animationFrameId = useRef<number>()
+    const monitorRenderFrameRef = useRef<number | null>(null)
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
+    const [previewStageSize, setPreviewStageSize] = useState({ width: 0, height: 0 })
     const hasSeparateAudioTracks = !!audioUrl || !!systemAudioUrl || !!mediaAudioClip?.url
+    const previewRaster = useMemo(() => {
+      const canonicalWidth = Math.max(1, canvasDimensions.width)
+      const canonicalHeight = Math.max(1, canvasDimensions.height)
+      const stageWidth = previewStageSize.width || canonicalWidth
+      const stageHeight = previewStageSize.height || canonicalHeight
+      const fitScale = Math.min(1, stageWidth / canonicalWidth, stageHeight / canonicalHeight)
+      const cssWidth = Math.max(1, Math.floor(canonicalWidth * fitScale))
+      const cssHeight = Math.max(1, Math.round((cssWidth * canonicalHeight) / canonicalWidth))
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5)
+
+      return {
+        cssWidth,
+        cssHeight,
+        width: Math.max(1, Math.min(canonicalWidth, Math.round(cssWidth * pixelRatio))),
+        height: Math.max(1, Math.min(canonicalHeight, Math.round(cssHeight * pixelRatio))),
+      }
+    }, [canvasDimensions.height, canvasDimensions.width, previewStageSize.height, previewStageSize.width])
 
     const resolveChangeSoundForTime = useCallback(
       (sourceKey: ChangeSoundSourceKey, sourceAvailable: boolean, playbackTime: number) => {
@@ -448,7 +500,7 @@ export const Preview = memo(
           if (monitor.kind === 'image') return
           const monitorVideo = floatingMonitorVideoRefs.current.get(sourceKey)
           if (!monitorVideo) return
-          queueMonitorVideoSeek(monitorVideo, sourceTime, webcamMaxDrift)
+          queueMediaSeek(monitorVideo, sourceTime, webcamMaxDrift)
           monitorVideo.playbackRate = video?.playbackRate ?? 1
           requestMediaPlayback(monitorVideo, resumePlayback)
         })
@@ -522,6 +574,27 @@ export const Preview = memo(
     // --- End of Changes for Fullscreen Controls ---
 
     useEffect(() => {
+      const stage = previewStageRef.current
+      if (!stage) return
+
+      const updatePreviewStageSize = (width: number, height: number) => {
+        if (width <= 0 || height <= 0) return
+        setPreviewStageSize((previous) => {
+          if (Math.abs(previous.width - width) < 1 && Math.abs(previous.height - height) < 1) return previous
+          return { width, height }
+        })
+      }
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0]
+        if (entry) updatePreviewStageSize(entry.contentRect.width, entry.contentRect.height)
+      })
+
+      updatePreviewStageSize(stage.clientWidth, stage.clientHeight)
+      resizeObserver.observe(stage)
+      return () => resizeObserver.disconnect()
+    }, [])
+
+    useEffect(() => {
       const canvas = canvasRef.current
       if (!canvas) return
       const resizeObserver = new ResizeObserver((entries) => {
@@ -536,7 +609,7 @@ export const Preview = memo(
       return () => {
         resizeObserver.disconnect()
       }
-    }, [canvasDimensions])
+    }, [previewRaster.cssWidth, previewRaster.cssHeight])
 
     useEffect(() => {
       const background = frameStyles.background
@@ -595,6 +668,12 @@ export const Preview = memo(
           ]),
       ])
 
+      const previewRenderScale = Math.min(
+        1,
+        canvas.width / Math.max(1, state.canvasDimensions.width),
+        canvas.height / Math.max(1, state.canvasDimensions.height),
+      )
+
       if (isEditingImageAsset) {
         drawScene(
           ctx,
@@ -608,6 +687,9 @@ export const Preview = memo(
           undefined,
           undefined,
           floatingMonitorSources,
+          undefined,
+          'main',
+          previewRenderScale,
         )
         return
       }
@@ -647,11 +729,22 @@ export const Preview = memo(
         undefined,
         undefined,
         floatingMonitorSources,
+        undefined,
+        'main',
+        previewRenderScale,
       )
       if (state.isPlaying) {
         animationFrameId.current = requestAnimationFrame(renderCanvas)
       }
     }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset])
+
+    const queueMonitorCanvasRender = useCallback(() => {
+      if (useEditorStore.getState().isPlaying || monitorRenderFrameRef.current !== null) return
+      monitorRenderFrameRef.current = window.requestAnimationFrame(() => {
+        monitorRenderFrameRef.current = null
+        renderCanvas()
+      })
+    }, [renderCanvas])
 
     useEffect(() => {
       if (isPlaying) {
@@ -663,17 +756,24 @@ export const Preview = memo(
         if (animationFrameId.current) {
           cancelAnimationFrame(animationFrameId.current)
         }
+        if (monitorRenderFrameRef.current !== null) {
+          cancelAnimationFrame(monitorRenderFrameRef.current)
+          monitorRenderFrameRef.current = null
+        }
       }
     }, [isPlaying, renderCanvas])
 
     useEffect(() => {
-      if (isPlaying) return
+      if (isPlaying || (isTimelineScrubbing && !isEditingImageAsset)) return
       renderCanvas()
     }, [
       isPlaying,
+      isTimelineScrubbing,
+      isEditingImageAsset,
       currentTime,
       renderCanvas,
-      canvasDimensions,
+      previewRaster.height,
+      previewRaster.width,
       frameStyles,
       zoomRegions,
       cutRegions,
@@ -760,19 +860,19 @@ export const Preview = memo(
         }
       }
       if (recordingAudio) {
-        const playbackTime = video?.currentTime ?? currentTime
+        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
         const resolvedRecording = resolveRecordingForTime(playbackTime)
         recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
-        const playbackTime = video?.currentTime ?? currentTime
+        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
         systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume * resolvedSystemAudio.volumeMultiplier))
         systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
-        const playbackTime = video?.currentTime ?? currentTime
+        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
         const resolvedMedia = resolveMediaForTime(playbackTime)
         mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
         mediaAudio.muted = false
@@ -782,7 +882,6 @@ export const Preview = memo(
       isMuted,
       videoRef,
       hasSeparateAudioTracks,
-      currentTime,
       resolveRecordingForTime,
       resolveSystemAudioForTime,
       resolveMediaForTime,
@@ -1113,14 +1212,20 @@ export const Preview = memo(
       >
         <div
           id="preview-container"
+          ref={previewStageRef}
           className="transition-all duration-300 ease-out flex items-center justify-center w-full flex-1 min-h-0 relative"
         >
           {videoUrl ? (
             <canvas
               ref={canvasRef}
-              width={canvasDimensions.width}
-              height={canvasDimensions.height}
-              style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' }}
+              width={previewRaster.width}
+              height={previewRaster.height}
+              style={{
+                maxWidth: '100%',
+                maxHeight: '100%',
+                width: previewRaster.cssWidth,
+                height: previewRaster.cssHeight,
+              }}
               className="rounded-lg shadow-2xl"
             />
           ) : (
@@ -1246,7 +1351,8 @@ export const Preview = memo(
               src={monitor.url}
               muted
               playsInline
-              preload="auto"
+              preload="metadata"
+              onSeeked={queueMonitorCanvasRender}
               onLoadedMetadata={(event) => {
                 const duration = event.currentTarget.duration
                 if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {

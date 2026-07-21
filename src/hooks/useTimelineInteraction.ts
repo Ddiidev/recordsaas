@@ -16,6 +16,7 @@ interface UseTimelineInteractionProps {
   resolveLaneIdFromClientY: (clientY: number) => string | null
   timelineStartOffsetPx: number
   onScrubStateChange?: (isScrubbing: boolean) => void
+  onScrubStart?: () => void
   onScrubEnd?: () => void
 }
 
@@ -55,6 +56,7 @@ export const useTimelineInteraction = ({
   resolveLaneIdFromClientY,
   timelineStartOffsetPx,
   onScrubStateChange,
+  onScrubStart,
   onScrubEnd,
 }: UseTimelineInteractionProps) => {
   const {
@@ -79,6 +81,8 @@ export const useTimelineInteraction = ({
   const draggedLaneIdRef = useRef<string | null>(null)
   const playheadAnimationFrameRef = useRef<number | null>(null)
   const pendingPlayheadTimeRef = useRef<number | null>(null)
+  const isPlayheadScrubbingRef = useRef(false)
+  const cleanupPlayheadScrubListenersRef = useRef<(() => void) | null>(null)
 
   const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
   const [activeDropLaneId, setActiveDropLaneId] = useState<string | null>(null)
@@ -157,22 +161,74 @@ export const useTimelineInteraction = ({
     [updateVideoTime],
   )
 
+  const finishPlayheadScrub = useCallback(
+    (clientX: number) => {
+      if (!isPlayheadScrubbingRef.current) return
+
+      isPlayheadScrubbingRef.current = false
+      cleanupPlayheadScrubListenersRef.current?.()
+      cleanupPlayheadScrubListenersRef.current = null
+      document.body.style.cursor = 'default'
+
+      const rect = timelineRef.current?.getBoundingClientRect()
+      const finalTime = rect ? pxToTime(Math.max(0, clientX - rect.left - timelineStartOffsetPx)) : null
+      onScrubEnd?.()
+      if (finalTime !== null) flushPlayheadTime(finalTime)
+      setIsDraggingPlayhead(false)
+    },
+    [flushPlayheadTime, onScrubEnd, pxToTime, timelineRef, timelineStartOffsetPx],
+  )
+
+  const startPlayheadScrubListeners = useCallback(() => {
+    cleanupPlayheadScrubListenersRef.current?.()
+    isPlayheadScrubbingRef.current = true
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect) return
+      queuePlayheadTime(pxToTime(Math.max(0, event.clientX - rect.left - timelineStartOffsetPx)))
+    }
+    const handleMouseUp = (event: MouseEvent) => {
+      finishPlayheadScrub(event.clientX)
+    }
+    const cleanup = () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      if (cleanupPlayheadScrubListenersRef.current === cleanup) {
+        cleanupPlayheadScrubListenersRef.current = null
+      }
+    }
+
+    cleanupPlayheadScrubListenersRef.current = cleanup
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [finishPlayheadScrub, pxToTime, queuePlayheadTime, timelineRef, timelineStartOffsetPx])
+
+  const handlePlayheadMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.stopPropagation()
+      onScrubStart?.()
+      setPlaying(false)
+      onScrubStateChange?.(true)
+      startPlayheadScrubListeners()
+      setIsDraggingPlayhead(true)
+      document.body.style.cursor = 'ew-resize'
+    },
+    [onScrubStart, onScrubStateChange, setPlaying, startPlayheadScrubListeners],
+  )
+
   useEffect(() => {
     return () => {
       if (playheadAnimationFrameRef.current !== null) {
         window.cancelAnimationFrame(playheadAnimationFrameRef.current)
       }
+      cleanupPlayheadScrubListenersRef.current?.()
+      isPlayheadScrubbingRef.current = false
     }
   }, [])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingPlayhead && timelineRef.current) {
-        const rect = timelineRef.current.getBoundingClientRect()
-        queuePlayheadTime(pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)))
-        return
-      }
-
       if (draggingRegion) {
         const element = regionRefs.current?.get(draggingRegion.id)
         if (!element) return
@@ -410,13 +466,11 @@ export const useTimelineInteraction = ({
 
     const handleMouseUp = (e: MouseEvent) => {
       document.body.style.cursor = 'default'
-      if (isDraggingPlayhead) {
-        const rect = timelineRef.current?.getBoundingClientRect()
-        const finalTime = rect ? pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)) : null
-        onScrubEnd?.()
-        if (finalTime !== null) flushPlayheadTime(finalTime)
+      if (isPlayheadScrubbingRef.current) {
+        finishPlayheadScrub(e.clientX)
+      } else if (isDraggingPlayhead) {
+        setIsDraggingPlayhead(false)
       }
-      setIsDraggingPlayhead(false)
 
       if (draggingRegion) {
         const element = regionRefs.current?.get(draggingRegion.id)
@@ -654,8 +708,8 @@ export const useTimelineInteraction = ({
     pxToTime,
     timeToPx,
     updateVideoTime,
-    queuePlayheadTime,
     flushPlayheadTime,
+    finishPlayheadScrub,
     updateRegion,
     addCutRegion,
     setPreviewCutRegion,
@@ -668,8 +722,6 @@ export const useTimelineInteraction = ({
     defaultLaneId,
     resolveLaneIdFromClientY,
     timelineStartOffsetPx,
-    onScrubStateChange,
-    onScrubEnd,
   ])
 
   return {
@@ -678,13 +730,7 @@ export const useTimelineInteraction = ({
     activeDropLaneId,
     isDraggingPlayhead,
     handleRegionMouseDown,
-    handlePlayheadMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
-      e.stopPropagation()
-      setPlaying(false)
-      onScrubStateChange?.(true)
-      setIsDraggingPlayhead(true)
-      document.body.style.cursor = 'ew-resize'
-    },
+    handlePlayheadMouseDown,
     handleLeftStripMouseDown: () => {
       const state = useEditorStore.getState()
       const existingTrim = getTopRegionByPredicate(
