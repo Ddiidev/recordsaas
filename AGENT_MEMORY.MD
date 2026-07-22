@@ -23,6 +23,7 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - O loop de canvas do Preview deve manter no maximo um `requestAnimationFrame` pendente e, em playback, pular composicao quando `getVideoPlaybackQuality().totalVideoFrames` nao mudou. Seek e preview pausado continuam redesenhando diretamente.
 - Monitor flutuante usa fonte por instancia de regiao, nao apenas por asset. Cada instancia pode ter offset proprio; sincronizacao de video guarda somente o ultimo alvo e nunca sobrescreve seek em voo.
 - Render de monitor aninhado deve reutilizar canvas `screen`/`composition` por caminho da instancia; nunca criar ou copiar canvas por frame no hot path de `drawScene`.
+- Ao substituir fonte de monitor por canvas de composicao aninhada, passar `canvas.width`/`canvas.height` ao desenho. Dimensoes do video original em canvas reduzido de preview recortam conteudo no topo/esquerda.
 
 ## Persistencia de assets
 

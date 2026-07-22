@@ -1364,8 +1364,8 @@ export const drawScene = (
     if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
 
     let source: CanvasImageSource = renderSource.source
-    const sourceWidth = renderSource.width
-    const sourceHeight = renderSource.height
+    let sourceWidth = renderSource.width
+    let sourceHeight = renderSource.height
     if (monitor.timeline && typeof document !== 'undefined' && !monitorAncestry.has(monitor.id)) {
       const nestedOutputWidth = Math.max(1, Math.round(sourceWidth * previewRenderScale))
       const nestedOutputHeight = Math.max(1, Math.round(sourceHeight * previewRenderScale))
@@ -1406,6 +1406,8 @@ export const drawScene = (
           previewRenderScale,
         )
         source = nestedComposition.canvas
+        sourceWidth = nestedComposition.canvas.width
+        sourceHeight = nestedComposition.canvas.height
       }
     }
 
