@@ -1099,7 +1099,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
             region.laneId = fallbackMediaLaneId
           }
           region.startTime = clampStartTime(region.startTime, state.duration)
-          if (region.startTime + region.duration > state.duration) {
+          // Main-video metadata arrives after project regions. Do not collapse a
+          // persisted region against the temporary zero duration during import.
+          if (state.duration > 0 && region.startTime + region.duration > state.duration) {
             region.duration = Math.max(0.1, state.duration - region.startTime)
           }
           const monitor = state.floatingMonitors[region.monitorId]

@@ -25,7 +25,7 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - Render de monitor aninhado deve reutilizar canvas `screen`/`composition` por caminho da instancia; nunca criar ou copiar canvas por frame no hot path de `drawScene`.
 - Ao substituir fonte de monitor por canvas de composicao aninhada, passar `canvas.width`/`canvas.height` ao desenho. Dimensoes do video original em canvas reduzido de preview recortam conteudo no topo/esquerda.
 - Projetos legados podem ter `AssetTimelineState.cursorStyles` ausente. Ao compor timeline aninhada, nunca deixar spread sobrescrever `state.cursorStyles` por `undefined`; usar cursor do contexto pai.
-- Ao importar monitor de video, preservar `timelineDuration` quando metadado bruto ainda e `0`. Regiao representa composicao editada e deve limitar por `timelineDuration`, nao por `monitor.duration` transitorio.
+- Ao importar monitor de video, preservar `timelineDuration` quando metadado bruto ainda e `0`. Regiao representa composicao editada e deve limitar por `timelineDuration`, nao por `monitor.duration` transitorio. `loadProject` ocorre antes do metadado principal: nao limitar regiao pela `state.duration` enquanto for `0`.
 
 ## Persistencia de assets
 
