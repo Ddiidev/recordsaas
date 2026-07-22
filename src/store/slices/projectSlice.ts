@@ -1493,6 +1493,14 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           timeline: cloneSerializable(sourceMonitor.timeline),
         }
         state.floatingMonitors[cloneId] = monitor
+        // The current timeline owns instances, not the original asset definition.
+        // First editing an asset must move those instances to its Edit clone so the
+        // active card, nested composition, and saved project stay aligned.
+        Object.values(state.floatingMonitorRegions).forEach((region) => {
+          if (region.monitorId === sourceMonitor.id) {
+            region.monitorId = cloneId
+          }
+        })
       }
 
       const inheritedDuration = monitor.path === state.videoPath ? state.duration : 0

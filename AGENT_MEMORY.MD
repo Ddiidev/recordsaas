@@ -31,4 +31,5 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 
 - Edicao temporaria de asset isola timeline, camera, audio, cursor, playback e selecao; ao concluir restaura contexto anterior, que pode ser outra edicao temporaria. Media Audio pertence a timeline local do asset; audio principal permanece isolado. Save durante edicao resolve recursivamente rascunhos aninhados antes de serializar.
 - Primeiro editar cria clone `Edit`; re-editar clone reutiliza-o. Preset dentro da edicao e template local; nunca muda preset global.
+- Ao criar clone `Edit`, mover instancias da timeline atual que apontavam ao original para o clone antes do snapshot. Assim composicao aninhada, selecao e card ativo usam mesmo asset.
 - Swap troca slots `origin` e `target`; participantes validos sao tela, webcam ou instancia de monitor. Participante igual/invalido nao renderiza.
