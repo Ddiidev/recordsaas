@@ -730,9 +730,18 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   },
   addFloatingMonitorRegion: (monitorId, params) => {
     const { duration, floatingMonitors, assetTimelineEditing } = get()
-    const monitor = floatingMonitors[monitorId]
+    const sourceMonitor = floatingMonitors[monitorId]
+    const monitor =
+      sourceMonitor && assetTimelineEditing && !sourceMonitor.isEditedCopy
+        ? Object.values(floatingMonitors).find(
+            (candidate) =>
+              candidate.isEditedCopy &&
+              candidate.originalName === sourceMonitor.originalName &&
+              candidate.path === sourceMonitor.path,
+          ) || sourceMonitor
+        : sourceMonitor
     if (!monitor || duration <= 0 || monitor.timelineDuration <= 0) return
-    if (assetTimelineEditing && monitorWouldCreateCycle(floatingMonitors, assetTimelineEditing.monitorId, monitorId)) {
+    if (assetTimelineEditing && monitorWouldCreateCycle(floatingMonitors, assetTimelineEditing.monitorId, monitor.id)) {
       return
     }
 
@@ -749,7 +758,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       state.floatingMonitorRegions[id] = {
         id,
         type: 'floating-monitor',
-        monitorId,
+        monitorId: monitor.id,
         laneId: params?.laneId || selectedRegion?.laneId || fallbackLaneId,
         startTime,
         duration: regionDuration,
