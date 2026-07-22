@@ -1384,6 +1384,8 @@ export const Preview = memo(
                     timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
                   })
                 }
+                syncMediaToVideoTime(videoRef.current?.currentTime ?? currentTime, isPlaying)
+                queueMonitorCanvasRender()
               }}
               style={{ display: 'none' }}
             />

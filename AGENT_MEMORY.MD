@@ -22,6 +22,7 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - Durante scrub de video, `Preview` nao pode assinar `currentTime` junto com toda sua arvore React; ignore os updates transitorios e reconcilie no fim do scrub. Edicao de imagem continua assinando cada tempo, pois nao existe `seeked` de video para redesenhar.
 - O loop de canvas do Preview deve manter no maximo um `requestAnimationFrame` pendente e, em playback, pular composicao quando `getVideoPlaybackQuality().totalVideoFrames` nao mudou. Seek e preview pausado continuam redesenhando diretamente.
 - Monitor flutuante usa fonte por instancia de regiao, nao apenas por asset. Cada instancia pode ter offset proprio; sincronizacao de video guarda somente o ultimo alvo e nunca sobrescreve seek em voo.
+- Metadado de video de monitor pode chegar apos primeiro canvas draw. Ao carregar, sincronizar instancia ao tempo atual e enfileirar redraw; nao depender de reposicionamento para revelar primeiro frame.
 - Render de monitor aninhado deve reutilizar canvas `screen`/`composition` por caminho da instancia; nunca criar ou copiar canvas por frame no hot path de `drawScene`.
 - Ao substituir fonte de monitor por canvas de composicao aninhada, passar `canvas.width`/`canvas.height` ao desenho. Dimensoes do video original em canvas reduzido de preview recortam conteudo no topo/esquerda.
 - Projetos legados podem ter `AssetTimelineState.cursorStyles` ausente. Ao compor timeline aninhada, nunca deixar spread sobrescrever `state.cursorStyles` por `undefined`; usar cursor do contexto pai.
