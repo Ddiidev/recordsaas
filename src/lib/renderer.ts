@@ -1383,6 +1383,7 @@ export const drawScene = (
             monitor.timeline.videoDimensions.width > 0 && monitor.timeline.videoDimensions.height > 0
               ? monitor.timeline.videoDimensions
               : { width: sourceWidth, height: sourceHeight },
+          cursorStyles: monitor.timeline.cursorStyles || state.cursorStyles,
           isWebcamVisible: false,
           metadata: [],
           cursorImages: {},
