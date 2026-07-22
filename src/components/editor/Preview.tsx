@@ -342,10 +342,11 @@ export const Preview = memo(
       () => collectFloatingMonitorSourceInstances(floatingMonitorRegions, floatingMonitors, null),
       [floatingMonitorRegions, floatingMonitors],
     )
-    const animationFrameId = useRef<number>()
+    const animationFrameId = useRef<number | null>(null)
     const monitorRenderFrameRef = useRef<number | null>(null)
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
+    const lastRenderedMainVideoFrameCountRef = useRef<number | null>(null)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
     const [previewStageSize, setPreviewStageSize] = useState({ width: 0, height: 0 })
@@ -643,6 +644,13 @@ export const Preview = memo(
     )
 
     const renderCanvas = useCallback(() => {
+      const scheduleNextRender = () => {
+        if (animationFrameId.current !== null) return
+        animationFrameId.current = window.requestAnimationFrame(() => {
+          animationFrameId.current = null
+          renderCanvas()
+        })
+      }
       const canvas = canvasRef.current
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -651,7 +659,21 @@ export const Preview = memo(
       const ctx = canvas?.getContext('2d')
       const primarySource = isEditingImageAsset ? assetImage : video
       if (!canvas || !primarySource || !ctx || !state.videoDimensions.width) {
-        if (state.isPlaying) animationFrameId.current = requestAnimationFrame(renderCanvas)
+        if (state.isPlaying) scheduleNextRender()
+        return
+      }
+
+      const mainVideoFrameCount = video?.getVideoPlaybackQuality?.().totalVideoFrames
+
+      // Canvas work is costly. A 30 fps source can otherwise be composited twice per browser frame.
+      if (
+        !isEditingImageAsset &&
+        video &&
+        state.isPlaying &&
+        mainVideoFrameCount !== undefined &&
+        lastRenderedMainVideoFrameCountRef.current === mainVideoFrameCount
+      ) {
+        scheduleNextRender()
         return
       }
 
@@ -735,8 +757,9 @@ export const Preview = memo(
         'main',
         previewRenderScale,
       )
+      lastRenderedMainVideoFrameCountRef.current = mainVideoFrameCount ?? null
       if (state.isPlaying) {
-        animationFrameId.current = requestAnimationFrame(renderCanvas)
+        scheduleNextRender()
       }
     }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset])
 
@@ -749,14 +772,12 @@ export const Preview = memo(
     }, [renderCanvas])
 
     useEffect(() => {
-      if (isPlaying) {
-        animationFrameId.current = requestAnimationFrame(renderCanvas)
-      } else {
-        renderCanvas()
-      }
+      if (isPlaying) lastRenderedMainVideoFrameCountRef.current = null
+      renderCanvas()
       return () => {
-        if (animationFrameId.current) {
+        if (animationFrameId.current !== null) {
           cancelAnimationFrame(animationFrameId.current)
+          animationFrameId.current = null
         }
         if (monitorRenderFrameRef.current !== null) {
           cancelAnimationFrame(monitorRenderFrameRef.current)

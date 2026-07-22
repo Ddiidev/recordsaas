@@ -19,6 +19,7 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - O canvas do preview e composicoes aninhadas usam raster limitado ao tamanho visivel da stage e DPR limitado; `canvasDimensions` e tamanho canonico de export, nao resolucao obrigatoria do preview. Geometria de blur/monitor permanece normalizada no tamanho CSS.
 - Inicio/fim de scrub da regua e do playhead instala listeners nativos no proprio `mousedown`; nao depender de `useEffect` apos re-render, pois clique curto pode perder `mouseup` e deixar playback pausado.
 - Durante scrub de video, `Preview` nao pode assinar `currentTime` junto com toda sua arvore React; ignore os updates transitorios e reconcilie no fim do scrub. Edicao de imagem continua assinando cada tempo, pois nao existe `seeked` de video para redesenhar.
+- O loop de canvas do Preview deve manter no maximo um `requestAnimationFrame` pendente e, em playback, pular composicao quando `getVideoPlaybackQuality().totalVideoFrames` nao mudou. Seek e preview pausado continuam redesenhando diretamente.
 - Monitor flutuante usa fonte por instancia de regiao, nao apenas por asset. Cada instancia pode ter offset proprio; sincronizacao de video guarda somente o ultimo alvo e nunca sobrescreve seek em voo.
 - Render de monitor aninhado deve reutilizar canvas `screen`/`composition` por caminho da instancia; nunca criar ou copiar canvas por frame no hot path de `drawScene`.
 

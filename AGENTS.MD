@@ -380,6 +380,7 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - Per-media `play()` calls must be serialized while a prior promise is pending. Treat `AbortError` from seek/pause as expected, retry once only when playback remains requested, and never emit an error loop.
 - Ruler and playhead scrub listeners must be installed synchronously at `mousedown`, not only in a post-render effect; a fast click must not lose `mouseup`, leave scrub active, or strand playback paused.
 - During video timeline scrub, Preview must not subscribe its full React tree to every operational `currentTime` update. Ignore transient store ticks and reconcile after scrub ends; image-asset editing remains time-subscribed because it has no video `seeked` event.
+- Preview playback owns at most one pending `requestAnimationFrame`; when Chromium reports no new main-video frame through `getVideoPlaybackQuality().totalVideoFrames`, skip the duplicate canvas composition. Paused and seeked frames still redraw directly.
 - `canvasDimensions` is canonical export geometry. Editor preview and nested monitor compositions may use a capped backing raster fitted to the visible stage/DPR, while preserving the canonical CSS aspect ratio and normalized blur/monitor overlay geometry; export keeps its explicit output resolution.
 
 Toolbar and preview control sizing:
