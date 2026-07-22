@@ -1481,24 +1481,34 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       if (!sourceMonitor) return
 
       let monitor = sourceMonitor
+      const originalName = sourceMonitor.originalName || sourceMonitor.name
+      const existingEdit = Object.values(state.floatingMonitors).find(
+        (candidate) =>
+          candidate.isEditedCopy && candidate.originalName === originalName && candidate.path === sourceMonitor.path,
+      )
       if (!sourceMonitor.isEditedCopy) {
-        const cloneId = `floating-monitor-${Date.now()}`
-        const originalName = sourceMonitor.originalName || sourceMonitor.name
-        monitor = {
+        monitor = existingEdit || {
           ...cloneSerializable(sourceMonitor),
-          id: cloneId,
+          id: `floating-monitor-${Date.now()}`,
           name: `${originalName} Edit`,
           originalName,
           isEditedCopy: true,
           timeline: cloneSerializable(sourceMonitor.timeline),
         }
-        state.floatingMonitors[cloneId] = monitor
+        state.floatingMonitors[monitor.id] = monitor
+      }
+
+      if (monitor.isEditedCopy) {
+        const originalMonitor = Object.values(state.floatingMonitors).find(
+          (candidate) =>
+            !candidate.isEditedCopy && candidate.originalName === originalName && candidate.path === sourceMonitor.path,
+        )
+        const originalMonitorId = originalMonitor?.id || sourceMonitor.id
         // The current timeline owns instances, not the original asset definition.
-        // First editing an asset must move those instances to its Edit clone so the
-        // active card, nested composition, and saved project stay aligned.
+        // Also repair old timelines where the Edit clone already existed.
         Object.values(state.floatingMonitorRegions).forEach((region) => {
-          if (region.monitorId === sourceMonitor.id) {
-            region.monitorId = cloneId
+          if (region.monitorId === originalMonitorId) {
+            region.monitorId = monitor.id
           }
         })
       }
