@@ -59,7 +59,7 @@ export function PreviewControls() {
             <PlayerTrackNext className="w-4 h-4" />
             <span>Speed</span>
           </ToolbarButton>
-          <ToolbarButton tooltip="Add Blur Region" onClick={() => addBlurRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Blur Region" onClick={() => addBlurRegion()}>
             <Search className="w-4 h-4" />
             <span>Blur</span>
           </ToolbarButton>
