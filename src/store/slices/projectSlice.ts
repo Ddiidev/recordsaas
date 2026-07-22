@@ -235,13 +235,17 @@ const parseFloatingMonitors = (value: unknown): Record<string, FloatingMonitor> 
         typeof monitor.timelineStart === 'number' && Number.isFinite(monitor.timelineStart)
           ? kind === 'image'
             ? Math.max(0, monitor.timelineStart)
-            : Math.min(Math.max(0, monitor.timelineStart), duration)
+            : duration > 0
+              ? Math.min(Math.max(0, monitor.timelineStart), duration)
+              : Math.max(0, monitor.timelineStart)
           : 0
       const timelineDuration =
         typeof monitor.timelineDuration === 'number' && Number.isFinite(monitor.timelineDuration)
           ? kind === 'image'
             ? Math.max(0, monitor.timelineDuration)
-            : Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
+            : duration > 0
+              ? Math.max(0, Math.min(monitor.timelineDuration, Math.max(0, duration - timelineStart)))
+              : Math.max(0, monitor.timelineDuration)
           : Math.max(0, duration - timelineStart)
       const id =
         typeof monitor.id === 'string' && monitor.id.length > 0
@@ -1102,8 +1106,9 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           if (!monitor) {
             delete state.floatingMonitorRegions[region.id]
           } else if (monitor.kind !== 'image') {
-            region.sourceStart = Math.max(0, Math.min(region.sourceStart, monitor.duration))
-            region.duration = Math.min(region.duration, Math.max(0.1, monitor.duration - region.sourceStart))
+            const compositionDuration = monitor.timelineDuration > 0 ? monitor.timelineDuration : monitor.duration
+            region.sourceStart = Math.max(0, Math.min(region.sourceStart, compositionDuration))
+            region.duration = Math.min(region.duration, Math.max(0.1, compositionDuration - region.sourceStart))
           }
         })
         if (state.mediaAudioClip) {
