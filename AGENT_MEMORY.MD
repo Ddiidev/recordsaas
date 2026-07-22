@@ -26,6 +26,6 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 
 ## Persistencia de assets
 
-- Edicao temporaria de asset isola timeline, camera, audio, cursor, playback e selecao; ao concluir restaura contexto principal.
+- Edicao temporaria de asset isola timeline, camera, audio, cursor, playback e selecao; ao concluir restaura contexto anterior, que pode ser outra edicao temporaria. Media Audio pertence a timeline local do asset; audio principal permanece isolado. Save durante edicao resolve recursivamente rascunhos aninhados antes de serializar.
 - Primeiro editar cria clone `Edit`; re-editar clone reutiliza-o. Preset dentro da edicao e template local; nunca muda preset global.
 - Swap troca slots `origin` e `target`; participantes validos sao tela, webcam ou instancia de monitor. Participante igual/invalido nao renderiza.

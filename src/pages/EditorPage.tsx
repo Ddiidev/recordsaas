@@ -11,7 +11,7 @@ import { ExportModal } from '../components/editor/ExportModal'
 import { WindowControls } from '../components/editor/WindowControls'
 import { PresetModal } from '../components/editor/PresetModal'
 import { SettingsModal } from '../components/settings/SettingsModal'
-import { Stack3, Loader2, Check, Settings, Home, Folder } from '@icons'
+import { Stack3, Loader2, Check, Settings, Home } from '@icons'
 import { cn } from '../lib/utils'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useExportProcess } from '../hooks/useExportProcess'
@@ -54,13 +54,15 @@ const createCanonicalProjectSaveState = (storeState: any) => {
     blurRegions: storeState.blurRegions,
     swapRegions: storeState.swapRegions,
     floatingMonitorRegions: storeState.floatingMonitorRegions,
+    mediaAudioClip: storeState.mediaAudioClip,
+    mediaAudioRegions: storeState.mediaAudioRegions,
     blurDefaults: editing.blurDefaults,
     swapDefaults: editing.swapDefaults,
     cursorStyles: storeState.cursorStyles,
     selectedRegionId: storeState.selectedRegionId,
   }
 
-  return {
+  return createCanonicalProjectSaveState({
     ...storeState,
     ...editing.mainProject,
     floatingMonitors: {
@@ -77,9 +79,9 @@ const createCanonicalProjectSaveState = (storeState: any) => {
           }
         : {}),
     },
-    assetTimelineEditing: null,
+    assetTimelineEditing: editing.mainProject.assetTimelineEditing,
     isPlaying: false,
-  }
+  })
 }
 
 export function EditorPage() {
@@ -197,7 +199,10 @@ export function EditorPage() {
           systemAudioPath,
           webcamVideoPath,
           mediaAudioClip?.path,
-          ...Object.values(floatingMonitors as Record<string, FloatingMonitor>).map((monitor) => monitor.path),
+          ...Object.values(floatingMonitors as Record<string, FloatingMonitor>).flatMap((monitor) => [
+            monitor.path,
+            monitor.timeline?.mediaAudioClip?.path,
+          ]),
         ]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
@@ -251,6 +256,18 @@ export function EditorPage() {
                   ...monitor,
                   path: serializedPath,
                   url: `media://${serializedPath}`,
+                  timeline: monitor.timeline
+                    ? {
+                        ...monitor.timeline,
+                        mediaAudioClip: monitor.timeline.mediaAudioClip
+                          ? {
+                              ...monitor.timeline.mediaAudioClip,
+                              path: getMediaPathBasename(monitor.timeline.mediaAudioClip.path),
+                              url: `media://${getMediaPathBasename(monitor.timeline.mediaAudioClip.path)}`,
+                            }
+                          : null,
+                      }
+                    : undefined,
                 },
               ]
             },
@@ -458,19 +475,6 @@ export function EditorPage() {
         >
           Editando asset: {editingAssetName || 'Vídeo'}
         </div>,
-        <Button key="asset-presets" variant="outline" onClick={() => setPresetModalOpen(true)}>
-          <Stack3 className="mr-2 h-4 w-4" />
-          Presets
-        </Button>,
-        <Button
-          key="save-asset-edit"
-          variant="secondary"
-          disabled={isExportingProject || duration <= 0}
-          onClick={handleExportProjectButtonClick}
-        >
-          <Folder className="mr-2 h-4 w-4" />
-          Salvar edição
-        </Button>,
         <Button
           key="finish-asset-edit"
           onClick={finishAssetTimelineEdit}

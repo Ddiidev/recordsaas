@@ -593,7 +593,6 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     })
   },
   addMediaAudioRegion: (params) => {
-    if (get().assetTimelineEditing) return
     const { mediaAudioClip, duration } = get()
     if (!mediaAudioClip || duration <= 0) return
 

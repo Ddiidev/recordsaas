@@ -352,6 +352,8 @@ export interface AssetTimelineState {
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
   floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  mediaAudioClip: MediaAudioClip | null
+  mediaAudioRegions: Record<string, MediaAudioRegion>
   blurDefaults: BlurPresetDefaults
   swapDefaults: SwapPresetDefaults
   cursorStyles?: CursorStyles
@@ -398,6 +400,7 @@ export interface AssetTimelineEditing {
     selectedRegionId: string | null
     currentTime: number
     isPlaying: boolean
+    assetTimelineEditing: AssetTimelineEditing | null
   }
 }
 

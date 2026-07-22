@@ -86,6 +86,8 @@ const createAssetTimeline = (
   blurRegions: {},
   swapRegions: {},
   floatingMonitorRegions: {},
+  mediaAudioClip: null,
+  mediaAudioRegions: {},
   blurDefaults: {
     duration: BLUR_REGION.DEFAULT_DURATION,
     style: BLUR_REGION.STYLE.DEFAULT,
@@ -148,6 +150,11 @@ const parseAssetTimeline = (
   const fallback = createAssetTimeline(duration, videoDimensions)
   if (!value || typeof value !== 'object') return fallback
   const timeline = value as Partial<AssetTimelineState>
+  const mediaAudioClip = parseMediaAudioClip(timeline.mediaAudioClip)
+  const timelineLanes =
+    Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0
+      ? timeline.timelineLanes
+      : fallback.timelineLanes
   return {
     ...fallback,
     duration:
@@ -162,10 +169,7 @@ const parseAssetTimeline = (
         : videoDimensions,
     frameStyles: timeline.frameStyles || fallback.frameStyles,
     aspectRatio: timeline.aspectRatio || fallback.aspectRatio,
-    timelineLanes:
-      Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0
-        ? timeline.timelineLanes
-        : fallback.timelineLanes,
+    timelineLanes,
     zoomRegions: timeline.zoomRegions || {},
     cutRegions: timeline.cutRegions || {},
     speedRegions: timeline.speedRegions || {},
@@ -176,6 +180,12 @@ const parseAssetTimeline = (
       timeline.floatingMonitorRegions,
     ),
     floatingMonitorRegions: timeline.floatingMonitorRegions || {},
+    mediaAudioClip,
+    mediaAudioRegions: parseMediaAudioRegions(
+      timeline.mediaAudioRegions,
+      getFallbackLaneId(timelineLanes),
+      mediaAudioClip,
+    ),
     blurDefaults: timeline.blurDefaults || fallback.blurDefaults,
     swapDefaults: timeline.swapDefaults || fallback.swapDefaults,
     cursorStyles: timeline.cursorStyles,
@@ -1323,7 +1333,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {
     set((state) => {
-      if (state.assetTimelineEditing) return
       const normalizedPath = normalizeMediaPath(path)
       const resolvedStartTime = clampStartTime(startTime, state.duration)
       state.mediaAudioClip = {
@@ -1338,7 +1347,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioStartTime: (startTime) => {
     set((state) => {
-      if (state.assetTimelineEditing) return
       if (!state.mediaAudioClip) return
       const resolvedStart = clampStartTime(startTime, state.duration)
       state.mediaAudioClip.startTime = resolvedStart
@@ -1353,7 +1361,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   setMediaAudioDuration: (duration) => {
     set((state) => {
-      if (state.assetTimelineEditing) return
       if (!state.mediaAudioClip) return
       const safeDuration = clampToNonNegative(duration)
       state.mediaAudioClip.duration = safeDuration
@@ -1372,7 +1379,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   clearMediaAudioClip: () => {
     set((state) => {
-      if (state.assetTimelineEditing) return
       const selectedRegionId = state.selectedRegionId
       const shouldClearSelection = selectedRegionId ? !!state.mediaAudioRegions[selectedRegionId] : false
       state.mediaAudioClip = null
@@ -1464,7 +1470,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
   },
   beginAssetTimelineEdit: (id) => {
     set((state) => {
-      if (state.assetTimelineEditing) return
       const sourceMonitor = state.floatingMonitors[id]
       if (!sourceMonitor) return
 
@@ -1538,6 +1543,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           selectedRegionId: state.selectedRegionId,
           currentTime: state.currentTime,
           isPlaying: state.isPlaying,
+          assetTimelineEditing: cloneSerializable(state.assetTimelineEditing),
         },
       }
 
@@ -1551,7 +1557,6 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioMuted = false
       state.volume = 1
       state.isMuted = false
-      state.mediaAudioClip = null
       state.webcamVideoPath = null
       state.webcamVideoUrl = null
       state.duration = assetTimeline.duration || monitor.duration
@@ -1566,7 +1571,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.swapRegions = assetTimeline.swapRegions
       state.floatingMonitorRegions = assetTimeline.floatingMonitorRegions
       state.cursorStyles = assetCursorStyles
-      state.mediaAudioRegions = {}
+      state.mediaAudioClip = cloneSerializable(assetTimeline.mediaAudioClip)
+      state.mediaAudioRegions = cloneSerializable(assetTimeline.mediaAudioRegions)
       state.changeSoundRegions = {}
       state.hasAudioTrack = false
       state.isWebcamVisible = false
@@ -1596,6 +1602,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           blurRegions: cloneSerializable(state.blurRegions),
           swapRegions: cloneSerializable(state.swapRegions),
           floatingMonitorRegions: cloneSerializable(state.floatingMonitorRegions),
+          mediaAudioClip: cloneSerializable(state.mediaAudioClip),
+          mediaAudioRegions: cloneSerializable(state.mediaAudioRegions),
           blurDefaults: cloneSerializable(editing.blurDefaults),
           swapDefaults: cloneSerializable(editing.swapDefaults),
           cursorStyles: cloneSerializable(state.cursorStyles),
@@ -1639,7 +1647,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.selectedRegionId = main.selectedRegionId
       state.currentTime = main.currentTime
       state.isPlaying = main.isPlaying
-      state.assetTimelineEditing = null
+      state.assetTimelineEditing = main.assetTimelineEditing
     })
   },
   setOriginalProjectPath: (path) => {

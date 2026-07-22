@@ -1409,10 +1409,14 @@ export const drawScene = (
       }
     }
 
-    const width = Math.max(1, Math.min(outputWidth, outputWidth * region.width))
-    const height = Math.max(1, Math.min(outputHeight, outputHeight * region.height))
-    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * region.x))
-    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * region.y))
+    const normalizedWidth = Number.isFinite(region.width) ? region.width : monitor.width
+    const normalizedHeight = Number.isFinite(region.height) ? region.height : monitor.height
+    const width = Math.max(1, Math.min(outputWidth, outputWidth * normalizedWidth))
+    const height = Math.max(1, Math.min(outputHeight, outputHeight * normalizedHeight))
+    const normalizedX = Number.isFinite(region.x) ? region.x : monitor.x
+    const normalizedY = Number.isFinite(region.y) ? region.y : monitor.y
+    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * normalizedX))
+    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * normalizedY))
     const borderRadius = Number.isFinite(region.borderRadius)
       ? region.borderRadius
       : DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue
