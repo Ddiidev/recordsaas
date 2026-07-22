@@ -1,4 +1,7 @@
-const fs = require('node:fs/promises')
+/* eslint-disable @typescript-eslint/no-var-requires */
+
+const fs = require('node:fs')
+const fsPromises = require('node:fs/promises')
 const http = require('node:http')
 const path = require('node:path')
 const { app, BrowserWindow } = require('electron')
@@ -102,7 +105,7 @@ function parseArgs(argv) {
 }
 
 async function extractDecodePayload(videoPath) {
-  const stat = await fs.stat(videoPath)
+  const stat = await fsPromises.stat(videoPath)
   if (!stat.isFile()) {
     throw new Error(`Path is not a file: ${videoPath}`)
   }
@@ -161,7 +164,7 @@ async function extractDecodePayload(videoPath) {
     }
   })
 
-  const file = await fs.open(videoPath, 'r')
+  const file = await fsPromises.open(videoPath, 'r')
   let offset = 0
   let chunks = 0
   let bytesFetched = 0
@@ -204,8 +207,40 @@ async function extractDecodePayload(videoPath) {
   }
 }
 
-async function createDecodePage() {
-  const server = http.createServer((_req, res) => {
+function serveVideoFile(req, res, videoPath) {
+  void fsPromises
+    .stat(videoPath)
+    .then((stat) => {
+      const range = req.headers.range
+      const [start, end] = range
+        ? range
+            .replace(/bytes=/, '')
+            .split('-')
+            .map((value) => (value ? Number.parseInt(value, 10) : null))
+        : [0, stat.size - 1]
+      const safeStart = Math.max(0, Math.min(start ?? 0, stat.size - 1))
+      const safeEnd = Math.max(safeStart, Math.min(end ?? stat.size - 1, stat.size - 1))
+      const headers = {
+        'Accept-Ranges': 'bytes',
+        'Content-Length': safeEnd - safeStart + 1,
+        'Content-Type': 'video/mp4',
+      }
+      if (range) headers['Content-Range'] = `bytes ${safeStart}-${safeEnd}/${stat.size}`
+      res.writeHead(range ? 206 : 200, headers)
+      fs.createReadStream(videoPath, { start: safeStart, end: safeEnd }).pipe(res)
+    })
+    .catch((error) => {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end(error instanceof Error ? error.message : String(error))
+    })
+}
+
+async function createDecodePage(videoPath) {
+  const server = http.createServer((req, res) => {
+    if (new URL(req.url || '/', 'http://127.0.0.1').pathname === '/video') {
+      serveVideoFile(req, res, videoPath)
+      return
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     res.end('<!doctype html><title>RecordSaaS WebCodecs Decode Check</title><body>decode-check</body>')
   })
@@ -293,6 +328,51 @@ async function decodeInRenderer(window, payload) {
   return window.webContents.executeJavaScript(script, true)
 }
 
+async function verifyHiddenVideoFrameQuality(window) {
+  const result = await window.webContents.executeJavaScript(
+    `
+      (async () => {
+        const video = document.createElement('video');
+        video.src = '/video';
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        video.style.display = 'none';
+        document.body.append(video);
+
+        const waitFor = (event) => new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => reject(new Error('Timed out waiting for ' + event)), 10000);
+          video.addEventListener(event, () => {
+            window.clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+          video.addEventListener('error', () => {
+            window.clearTimeout(timeout);
+            reject(new Error('Video failed to load'));
+          }, { once: true });
+        });
+
+        await waitFor('loadedmetadata');
+        const hasQualityApi = typeof video.getVideoPlaybackQuality === 'function';
+        const before = hasQualityApi ? video.getVideoPlaybackQuality().totalVideoFrames : null;
+        await video.play();
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+        video.pause();
+        const after = hasQualityApi ? video.getVideoPlaybackQuality().totalVideoFrames : null;
+        const result = { hasQualityApi, before, after, currentTime: video.currentTime };
+        video.remove();
+        return result;
+      })()
+    `,
+    true,
+  )
+
+  console.log(`[verify-webcodecs-decode] Hidden video frame quality ${JSON.stringify(result)}`)
+  if (!result.hasQualityApi || !Number.isFinite(result.after) || result.after <= (result.before ?? 0)) {
+    throw new Error('Hidden HTMLVideoElement did not advance getVideoPlaybackQuality().totalVideoFrames.')
+  }
+}
+
 async function main() {
   const { videoPath } = parseArgs(process.argv.slice(2))
   if (!videoPath) {
@@ -306,7 +386,7 @@ async function main() {
   )
 
   await app.whenReady()
-  const { server, window } = await createDecodePage()
+  const { server, window } = await createDecodePage(videoPath)
   try {
     const result = await decodeInRenderer(window, payload)
     console.log(`[verify-webcodecs-decode] Decode result ${JSON.stringify(result)}`)
@@ -328,6 +408,7 @@ async function main() {
     console.log(
       `[verify-webcodecs-decode] Success frames=${result.frames.length} firstFrame=${JSON.stringify(firstFrame)}`,
     )
+    await verifyHiddenVideoFrameQuality(window)
   } finally {
     window.destroy()
     server.close()
