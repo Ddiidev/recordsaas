@@ -27,6 +27,7 @@ const TIMELINE_MIN_VISIBLE_LANES = 2
 const TIMELINE_MAX_VISIBLE_LANES = 3
 const LANE_ACTION_STRIP_WIDTH_PX = 28
 const LANE_ACTION_GUTTER_PX = 10
+const SCRUB_RESUME_FALLBACK_MS = 1500
 
 const Ruler = memo(
   ({
@@ -394,7 +395,7 @@ export function Timeline({
 
     video.addEventListener('seeked', handleSeeked)
     initialFallbackTimer = window.setTimeout(waitForSeekQueueToSettle, 32)
-    hardFallbackTimer = window.setTimeout(release, 10000)
+    hardFallbackTimer = window.setTimeout(release, SCRUB_RESUME_FALLBACK_MS)
     cancelPendingScrubReleaseRef.current = cancel
   }, [onScrubStateChange, setPlaying, videoRef])
 

@@ -352,16 +352,16 @@ export interface AssetTimelineState {
   blurRegions: Record<string, BlurRegion>
   swapRegions: Record<string, CameraSwapRegion>
   floatingMonitorRegions: Record<string, FloatingMonitorRegion>
-  blurDefaults?: BlurPresetDefaults
-  swapDefaults?: SwapPresetDefaults
+  blurDefaults: BlurPresetDefaults
+  swapDefaults: SwapPresetDefaults
   cursorStyles?: CursorStyles
   selectedRegionId: string | null
 }
 
 export interface AssetTimelineEditing {
   monitorId: string
-  blurDefaults?: BlurPresetDefaults
-  swapDefaults?: SwapPresetDefaults
+  blurDefaults: BlurPresetDefaults
+  swapDefaults: SwapPresetDefaults
   mainProject: {
     videoPath: string | null
     videoUrl: string | null

@@ -19,7 +19,7 @@ import type {
   SwapParticipant,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
-import { DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
+import { BLUR_REGION, DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
 import { initialFrameState, recalculateCanvasDimensions } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
@@ -86,6 +86,22 @@ const createAssetTimeline = (
   blurRegions: {},
   swapRegions: {},
   floatingMonitorRegions: {},
+  blurDefaults: {
+    duration: BLUR_REGION.DEFAULT_DURATION,
+    style: BLUR_REGION.STYLE.DEFAULT,
+    intensity: BLUR_REGION.INTENSITY.defaultValue,
+    x: BLUR_REGION.X.defaultValue,
+    y: BLUR_REGION.Y.defaultValue,
+    width: BLUR_REGION.WIDTH.defaultValue,
+    height: BLUR_REGION.HEIGHT.defaultValue,
+  },
+  swapDefaults: {
+    duration: SWAP_REGION.DEFAULT_DURATION,
+    origin: { kind: 'main-screen' },
+    target: { kind: 'webcam' },
+    transition: SWAP_REGION.TRANSITION.DEFAULT,
+    transitionDuration: SWAP_REGION.TRANSITION_DURATION.defaultValue,
+  },
   selectedRegionId: null,
 })
 
@@ -160,8 +176,8 @@ const parseAssetTimeline = (
       timeline.floatingMonitorRegions,
     ),
     floatingMonitorRegions: timeline.floatingMonitorRegions || {},
-    blurDefaults: timeline.blurDefaults,
-    swapDefaults: timeline.swapDefaults,
+    blurDefaults: timeline.blurDefaults || fallback.blurDefaults,
+    swapDefaults: timeline.swapDefaults || fallback.swapDefaults,
     cursorStyles: timeline.cursorStyles,
     selectedRegionId: typeof timeline.selectedRegionId === 'string' ? timeline.selectedRegionId : null,
   }
