@@ -255,7 +255,6 @@ export const Preview = memo(
       selectedRegionId,
       webcamVideoUrl,
       duration,
-      currentTime,
       togglePlay,
       isPreviewFullScreen,
       togglePreviewFullScreen,
@@ -297,7 +296,6 @@ export const Preview = memo(
         selectedRegionId: state.selectedRegionId,
         webcamVideoUrl: state.webcamVideoUrl,
         duration: state.duration,
-        currentTime: state.currentTime,
         togglePlay: state.togglePlay,
         isPreviewFullScreen: state.isPreviewFullScreen,
         togglePreviewFullScreen: state.togglePreviewFullScreen,
@@ -335,6 +333,10 @@ export const Preview = memo(
     const assetImageRef = useRef<HTMLImageElement>(null)
     const isEditingImageAsset = Boolean(
       assetTimelineEditing && floatingMonitors[assetTimelineEditing.monitorId]?.kind === 'image',
+    )
+    const currentTime = useEditorStore(
+      (state) => state.currentTime,
+      (previousTime, nextTime) => (isTimelineScrubbing && !isEditingImageAsset ? true : previousTime === nextTime),
     )
     const floatingMonitorSourceInstances = useMemo(
       () => collectFloatingMonitorSourceInstances(floatingMonitorRegions, floatingMonitors, null),
