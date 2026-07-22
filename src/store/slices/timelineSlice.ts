@@ -21,6 +21,7 @@ import {
   getFallbackLaneId,
   sortTimelineLanes,
 } from '../../lib/timeline-lanes'
+import { resolveMonitorForAssetTimeline } from '../../lib/floating-monitor'
 
 export const initialTimelineState: TimelineState = {
   timelineLanes: [createDefaultTimelineLane()],
@@ -730,16 +731,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   },
   addFloatingMonitorRegion: (monitorId, params) => {
     const { duration, floatingMonitors, assetTimelineEditing } = get()
-    const sourceMonitor = floatingMonitors[monitorId]
-    const monitor =
-      sourceMonitor && assetTimelineEditing && !sourceMonitor.isEditedCopy
-        ? Object.values(floatingMonitors).find(
-            (candidate) =>
-              candidate.isEditedCopy &&
-              candidate.originalName === sourceMonitor.originalName &&
-              candidate.path === sourceMonitor.path,
-          ) || sourceMonitor
-        : sourceMonitor
+    const monitor = assetTimelineEditing
+      ? resolveMonitorForAssetTimeline(floatingMonitors, monitorId)
+      : floatingMonitors[monitorId]
     if (!monitor || duration <= 0 || monitor.timelineDuration <= 0) return
     if (assetTimelineEditing && monitorWouldCreateCycle(floatingMonitors, assetTimelineEditing.monitorId, monitor.id)) {
       return

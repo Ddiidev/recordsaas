@@ -18,6 +18,7 @@ import { useEditorStore } from '../../../store/editorStore'
 import { cn, formatTime } from '../../../lib/utils'
 import { Button } from '../../ui/button'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../../lib/media-assets'
+import { resolveMonitorForAssetTimeline } from '../../../lib/floating-monitor'
 
 type MediaCategory = 'audio' | 'image' | 'video'
 
@@ -49,6 +50,7 @@ export function MediaAssetsPanel() {
     floatingMonitors,
     floatingMonitorRegions,
     selectedRegionId,
+    assetTimelineEditing,
     addFloatingMonitor,
     updateFloatingMonitor,
     removeFloatingMonitor,
@@ -66,6 +68,7 @@ export function MediaAssetsPanel() {
       floatingMonitors: state.floatingMonitors,
       floatingMonitorRegions: state.floatingMonitorRegions,
       selectedRegionId: state.selectedRegionId,
+      assetTimelineEditing: state.assetTimelineEditing,
       addFloatingMonitor: state.addFloatingMonitor,
       updateFloatingMonitor: state.updateFloatingMonitor,
       removeFloatingMonitor: state.removeFloatingMonitor,
@@ -79,7 +82,11 @@ export function MediaAssetsPanel() {
     if (mediaAudioClip.duration <= 0) return 'Loading...'
     return formatTime(mediaAudioClip.duration, true)
   }, [mediaAudioClip])
-  const selectedMonitorId = selectedRegionId ? floatingMonitorRegions[selectedRegionId]?.monitorId : null
+  const selectedMonitorId = useMemo(() => {
+    const selectedMonitorId = selectedRegionId ? floatingMonitorRegions[selectedRegionId]?.monitorId : null
+    if (!selectedMonitorId || !assetTimelineEditing) return selectedMonitorId
+    return resolveMonitorForAssetTimeline(floatingMonitors, selectedMonitorId)?.id || selectedMonitorId
+  }, [assetTimelineEditing, floatingMonitorRegions, floatingMonitors, selectedRegionId])
 
   const handleImportAudio = async () => {
     try {

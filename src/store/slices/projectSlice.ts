@@ -26,6 +26,7 @@ import { prepareCursorBitmaps } from '../../lib/utils'
 import { createDefaultTimelineLane, getFallbackLaneId } from '../../lib/timeline-lanes'
 import { isWebcamShape, normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
 import { normalizeMediaPath, toMediaUrl } from '../../lib/media-url'
+import { findEditedMonitorClone, normalizeAssetTimelineMonitorRegions } from '../../lib/floating-monitor'
 
 export const initialProjectState: ProjectState = {
   videoPath: null,
@@ -1482,10 +1483,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
 
       let monitor = sourceMonitor
       const originalName = sourceMonitor.originalName || sourceMonitor.name
-      const existingEdit = Object.values(state.floatingMonitors).find(
-        (candidate) =>
-          candidate.isEditedCopy && candidate.originalName === originalName && candidate.path === sourceMonitor.path,
-      )
+      const existingEdit = findEditedMonitorClone(state.floatingMonitors, sourceMonitor)
       if (!sourceMonitor.isEditedCopy) {
         monitor = existingEdit || {
           ...cloneSerializable(sourceMonitor),
@@ -1522,6 +1520,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       const assetTimeline = cloneSerializable(
         monitor.timeline?.duration ? monitor.timeline : createAssetTimeline(sourceDuration, state.videoDimensions),
       )
+      normalizeAssetTimelineMonitorRegions(assetTimeline.floatingMonitorRegions, state.floatingMonitors)
       const assetCursorStyles = cloneSerializable(
         assetTimeline.cursorStyles || {
           ...state.cursorStyles,

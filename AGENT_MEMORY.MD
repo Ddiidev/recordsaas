@@ -34,4 +34,5 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - Primeiro editar cria clone `Edit`; re-editar clone reutiliza-o. Preset dentro da edicao e template local; nunca muda preset global.
 - Ao abrir/crear clone `Edit`, reutilizar clone existente por `originalName`+`path` e mover instancias antigas da timeline atual que apontavam ao original para clone antes do snapshot. Assim composicao aninhada, selecao e card ativo usam mesmo asset, inclusive projetos legados.
 - Ao adicionar monitor dentro de uma edicao temporaria, se card original ja tiver clone `Edit`, criar regiao com ID do clone; main timeline mantem escolha explicita do card original.
+- Ao abrir uma timeline temporaria, normalizar regioes legadas `original → Edit` quando clone correspondente existir; painel tambem resolve destaque por essa regra enquanto estado anterior estiver aberto.
 - Swap troca slots `origin` e `target`; participantes validos sao tela, webcam ou instancia de monitor. Participante igual/invalido nao renderiza.
