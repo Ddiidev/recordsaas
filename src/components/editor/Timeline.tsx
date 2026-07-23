@@ -574,6 +574,30 @@ export function Timeline({
     fallbackLaneId,
   ])
 
+  const cutObscuredRegionIds = useMemo(() => {
+    const cuts = Object.values(cutRegions)
+    if (cuts.length === 0) return new Set<string>()
+
+    return new Set(
+      allRegionsToRender
+        .filter(
+          (region) =>
+            region.type !== 'cut' &&
+            cuts.some(
+              (cut) =>
+                region.startTime < cut.startTime + cut.duration && cut.startTime < region.startTime + region.duration,
+            ),
+        )
+        .map((region) => region.id),
+    )
+  }, [allRegionsToRender, cutRegions])
+
+  useEffect(() => {
+    if (selectedRegionId && cutObscuredRegionIds.has(selectedRegionId)) {
+      setSelectedRegionId(null)
+    }
+  }, [cutObscuredRegionIds, selectedRegionId, setSelectedRegionId])
+
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
 
@@ -859,14 +883,18 @@ export function Timeline({
                     </div>
 
                     {laneRegions.map((region) => {
-                      const isSelected = selectedRegionId === region.id
-                      const zIndex = isSelected ? 100 : (region.zIndex ?? 1)
+                      const isCutObscured = cutObscuredRegionIds.has(region.id)
+                      const isSelected = selectedRegionId === region.id && !isCutObscured
+                      const zIndex = region.type === 'cut' ? 200 : isSelected ? 100 : (region.zIndex ?? 1)
 
                       const regionStyle: React.CSSProperties = {
                         left: `${timeToTrackPx(region.startTime)}px`,
                         width: `${timeToPx(region.duration)}px`,
                         zIndex,
-                        opacity: movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : 1,
+                        opacity:
+                          movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : isCutObscured ? 0.28 : 1,
+                        filter: isCutObscured ? 'grayscale(1)' : undefined,
+                        pointerEvents: isCutObscured ? 'none' : undefined,
                       }
 
                       if (region.type === 'zoom') {

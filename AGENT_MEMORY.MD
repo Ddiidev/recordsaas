@@ -36,3 +36,4 @@ Leitura obrigatoria, inteira, no inicio de todo novo prompt de manutencao deste 
 - Ao adicionar monitor dentro de uma edicao temporaria, se card original ja tiver clone `Edit`, criar regiao com ID do clone; main timeline mantem escolha explicita do card original.
 - Ao abrir uma timeline temporaria, normalizar regioes legadas `original → Edit` quando clone correspondente existir; painel tambem resolve destaque por essa regra enquanto estado anterior estiver aberto.
 - Swap troca slots `origin` e `target`; participantes validos sao tela, webcam ou instancia de monitor. Participante igual/invalido nao renderiza.
+- Cut e bloqueador visual/interativo global da timeline: qualquer regiao nao-Cut com intervalo sobreposto fica esmaecida, sem pointer events e sem selecao; Cut permanece interativo e acima dos demais.
