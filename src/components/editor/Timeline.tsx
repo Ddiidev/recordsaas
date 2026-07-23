@@ -509,6 +509,22 @@ export function Timeline({
     onScrubEnd: releaseScrubAfterSeek,
   })
 
+  const handleCutMoveOnlyMouseDown = useCallback(
+    (
+      event: React.MouseEvent<HTMLDivElement>,
+      region: TimelineRegion,
+      type: 'move' | 'resize-left' | 'resize-right',
+    ) => {
+      if (type !== 'move') {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+      handleRegionMouseDown(event, region, type)
+    },
+    [handleRegionMouseDown],
+  )
+
   const rulerTicks = useMemo(() => {
     if (duration <= 0 || pixelsPerSecond <= 0) return []
     const { major, minor } = calculateRulerInterval(pixelsPerSecond)
@@ -574,29 +590,30 @@ export function Timeline({
     fallbackLaneId,
   ])
 
-  const cutObscuredRegionIds = useMemo(() => {
+  const cutInteractionByRegionId = useMemo(() => {
     const cuts = Object.values(cutRegions)
-    if (cuts.length === 0) return new Set<string>()
+    const interactions = new Map<string, 'blocked' | 'move-only'>()
+    if (cuts.length === 0) return interactions
 
-    return new Set(
-      allRegionsToRender
-        .filter(
-          (region) =>
-            region.type !== 'cut' &&
-            cuts.some(
-              (cut) =>
-                region.startTime < cut.startTime + cut.duration && cut.startTime < region.startTime + region.duration,
-            ),
-        )
-        .map((region) => region.id),
-    )
+    allRegionsToRender.forEach((region) => {
+      if (region.type === 'cut') return
+
+      const overlappingCuts = cuts.filter(
+        (cut) => region.startTime < cut.startTime + cut.duration && cut.startTime < region.startTime + region.duration,
+      )
+      if (overlappingCuts.length === 0) return
+
+      interactions.set(region.id, overlappingCuts.some((cut) => cut.laneId === region.laneId) ? 'blocked' : 'move-only')
+    })
+
+    return interactions
   }, [allRegionsToRender, cutRegions])
 
   useEffect(() => {
-    if (selectedRegionId && cutObscuredRegionIds.has(selectedRegionId)) {
+    if (selectedRegionId && cutInteractionByRegionId.get(selectedRegionId) === 'blocked') {
       setSelectedRegionId(null)
     }
-  }, [cutObscuredRegionIds, selectedRegionId, setSelectedRegionId])
+  }, [cutInteractionByRegionId, selectedRegionId, setSelectedRegionId])
 
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
@@ -883,8 +900,11 @@ export function Timeline({
                     </div>
 
                     {laneRegions.map((region) => {
-                      const isCutObscured = cutObscuredRegionIds.has(region.id)
-                      const isSelected = selectedRegionId === region.id && !isCutObscured
+                      const cutInteraction = cutInteractionByRegionId.get(region.id)
+                      const isCutObscured = !!cutInteraction
+                      const isCutBlocked = cutInteraction === 'blocked'
+                      const isCutMoveOnly = cutInteraction === 'move-only'
+                      const isSelected = selectedRegionId === region.id && !isCutBlocked
                       const zIndex = region.type === 'cut' ? 200 : isSelected ? 100 : (region.zIndex ?? 1)
 
                       const regionStyle: React.CSSProperties = {
@@ -894,8 +914,9 @@ export function Timeline({
                         opacity:
                           movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : isCutObscured ? 0.28 : 1,
                         filter: isCutObscured ? 'grayscale(1)' : undefined,
-                        pointerEvents: isCutObscured ? 'none' : undefined,
+                        pointerEvents: isCutBlocked ? 'none' : undefined,
                       }
+                      const onMouseDown = isCutMoveOnly ? handleCutMoveOnlyMouseDown : handleRegionMouseDown
 
                       if (region.type === 'zoom') {
                         return (
@@ -904,7 +925,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -919,7 +940,7 @@ export function Timeline({
                               isSelected={isSelected}
                               isDraggable={region.id !== previewCutRegion?.id}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -933,7 +954,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -947,7 +968,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -961,7 +982,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -975,7 +996,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -989,7 +1010,7 @@ export function Timeline({
                               region={region}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
@@ -1004,7 +1025,7 @@ export function Timeline({
                               name={floatingMonitors[region.monitorId]?.name || 'Floating monitor'}
                               isSelected={isSelected}
                               isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={handleRegionMouseDown}
+                              onMouseDown={onMouseDown}
                               setRef={(el) => regionRefs.current.set(region.id, el)}
                             />
                           </div>
