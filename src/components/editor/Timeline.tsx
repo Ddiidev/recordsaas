@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback, useMemo, memo } from 'react'
+import React, { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo, memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore, useAllRegions } from '../../store/editorStore'
 import { ZoomRegionBlock } from './timeline/ZoomRegionBlock'
@@ -188,6 +188,8 @@ export function Timeline({
   const cancelPendingScrubReleaseRef = useRef<(() => void) | null>(null)
   const isRulerScrubbingRef = useRef(false)
   const cleanupRulerScrubListenersRef = useRef<(() => void) | null>(null)
+  const previousTimelineZoomRef = useRef(timelineZoom)
+  const previousPixelsPerSecondRef = useRef(0)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [timelineScrollLeft, setTimelineScrollLeft] = useState(0)
@@ -229,6 +231,33 @@ export function Timeline({
     (px: number) => pxToTime(Math.max(0, px - timelineStartOffsetPx)),
     [pxToTime, timelineStartOffsetPx],
   )
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    const previousPixelsPerSecond = previousPixelsPerSecondRef.current
+    const didZoomChange = previousTimelineZoomRef.current !== timelineZoom
+
+    if (container && didZoomChange && previousPixelsPerSecond > 0 && pixelsPerSecond > 0) {
+      const editorState = useEditorStore.getState()
+      const playheadTime = editorState.isPlaying
+        ? (videoRef.current?.currentTime ?? editorState.currentTime)
+        : editorState.currentTime
+      const previousPlayheadViewportX =
+        timelineStartOffsetPx + playheadTime * previousPixelsPerSecond - container.scrollLeft
+      const playheadViewportX =
+        previousPlayheadViewportX >= 0 && previousPlayheadViewportX <= container.clientWidth
+          ? previousPlayheadViewportX
+          : container.clientWidth / 2
+      const nextScrollLeft = timelineStartOffsetPx + playheadTime * pixelsPerSecond - playheadViewportX
+      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth)
+
+      container.scrollLeft = Math.max(0, Math.min(nextScrollLeft, maxScrollLeft))
+      setTimelineScrollLeft(container.scrollLeft)
+    }
+
+    previousTimelineZoomRef.current = timelineZoom
+    previousPixelsPerSecondRef.current = pixelsPerSecond
+  }, [pixelsPerSecond, timelineStartOffsetPx, timelineZoom, videoRef])
 
   const updateVideoTime = useCallback(
     (time: number) => {
@@ -279,7 +308,8 @@ export function Timeline({
         const handleSeekFailure = () => {
           const nextPendingTime = pendingVideoSeekTimeRef.current
           clearInFlightSeek()
-          if (nextPendingTime !== null && Math.abs(nextPendingTime - nextTime) >= 0.001) {
+          // Não drenar próximo seek enquanto decoder ainda busca frame anterior
+          if (nextPendingTime !== null && Math.abs(nextPendingTime - nextTime) >= 0.001 && !video.seeking) {
             requestAnimationFrame(drainPendingSeek)
           }
         }
@@ -370,7 +400,8 @@ export function Timeline({
       const shouldResumePlayback = resumePlaybackAfterScrubRef.current
       resumePlaybackAfterScrubRef.current = false
       onScrubStateChange?.(false)
-      if (shouldResumePlayback) setPlaying(true)
+      // Não retomar playback enquanto vídeo principal ainda busca frame
+      if (shouldResumePlayback && !video.seeking) setPlaying(true)
     }
 
     const cancel = () => {

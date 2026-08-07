@@ -666,10 +666,11 @@ export const Preview = memo(
       const mainVideoFrameCount = video?.getVideoPlaybackQuality?.().totalVideoFrames
 
       // Canvas work is costly. A 30 fps source can otherwise be composited twice per browser frame.
+      // Durante scrubbing, sempre redesenhar canvas para webcam atualizar visualmente
       if (
         !isEditingImageAsset &&
         video &&
-        state.isPlaying &&
+        state.isPlaying && !state.isTimelineScrubbing &&
         mainVideoFrameCount !== undefined &&
         lastRenderedMainVideoFrameCountRef.current === mainVideoFrameCount
       ) {
