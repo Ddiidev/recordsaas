@@ -7,49 +7,74 @@ Tipo de registro: contexto
 ## Card
 
 Registro anterior: [implementacao-gop-seek-timeout](./playback-seek-2026-08-06-{96c08061-context}-implementacao-gop-seek-timeout.MD).
+Arquivo do plano exportado: [implementation_plan_webgl_compositor.MD](./implementation_plan_webgl_compositor.MD)
 Resumo:
-- Ajustar intervalo de GOP para 3s (`fps * 3`), otimizar tamanho do arquivo do projeto atual, diagnosticar o gargalo de FPS da webcam (composição 2D na CPU) e registrar o plano detalhado de migração do compositor para WebGL2 + OffscreenCanvas Worker.
+- Ajustar intervalo de GOP para 3s (`fps * 3`), otimizar tamanho do arquivo do projeto atual, diagnosticar o gargalo de FPS da webcam no player e exportar o plano detalhado de migração do compositor para WebGL2 + OffscreenCanvas Worker.
 
 ## Pedido Do Usuario
 
 Pedido literal:
-> salve esse plano e salve no arquivo de WIP mencionando o plano e que ainda não foi decicido.
+> você atualizou o wip, porém gostaria que exportasse o plano "c:\Users\andre\.gemini\antigravity\brain\96c08061-a13b-4683-8056-44d20a72c4f3\implementation_plan.md" para dentro dessa pasta do projeto e mencionasse o plano que ainda não foi concluído e expicar de forma breve sobre o que é direcionar para mais de detalhes e informar que ainda não foi aplicado o plano e nem respondido nada.
 
 Classificacao:
-- Pedido explicito: salvar o plano de arquitetura WebGL e registrar no documento de WIP que a decisão sobre sua execução permanece pendente.
-- Restricoes explicitas: nenhuma implementação do plano WebGL deve ser iniciada até a aprovação do usuário.
+- Pedido explicito: exportar o arquivo `implementation_plan.md` para a pasta de tarefas do projeto e atualizar o WIP com explicação breve, direcionamento de detalhes e aviso explícito de não aplicação/sem resposta do usuário.
+- Restricoes explicitas: NENHUMA alteração de código ou execução do plano WebGL foi autorizada.
 
 ## Interpretacao E Inferencias
 
-- Inferencia operacional: registrar o plano técnico completo no WIP sem alterar nenhum código referente à migração WebGL neste momento.
-- Motivo: o usuário optou por planejar a Opção B (WebGL2 + OffscreenCanvas Worker) para resolver o gargalo de renderização da webcam e micro-stutters, mas a decisão final de início de desenvolvimento ainda não foi tomada.
+- Inferencia operacional: exportar o plano para [implementation_plan_webgl_compositor.MD](./implementation_plan_webgl_compositor.MD) no repositório e deixar registrado com clareza no WIP o seu status pendente.
+- Motivo: manter o histórico técnico 100% auditável dentro do repositório do projeto.
 
-## Implementacao Ou Alteracao Concluida
+## O Que É O Plano E Direcionamento Para Detalhes
 
-1. **GOP e Seek (Concluído nesta sessão):**
-   - Gravador ([recording-manager.ts](../../../electron/main/features/recording-manager.ts)): GOP configurado para `fps * 3` em tela e webcam.
-   - Script ([fix_project_video.ps1](../../../fix_project_video.ps1)): Re-encode do projeto de teste concluído (`-g 180`, `-crf 22`, redução do arquivo de 281 MB para 40.19 MB).
-   - Player ([Timeline.tsx](../../../src/components/editor/Timeline.tsx) e [Preview.tsx](../../../src/components/editor/Preview.tsx)): Proteção contra seeks cancelados prematuramente e liberação de redraw durante scrubbing.
+### Resumo Breve do Plano:
+O player atual do RecordSaaS usa a API 2D do Canvas (`drawImage`) na thread principal do React para compor a gravação de tela e a webcam. Esse processo obriga o navegador a fazer cópias constantes de quadros entre a GPU e a CPU a cada frame, causando perda severa de FPS na webcam (sensação de "vídeo travado/robótico").
 
-2. **Plano de Arquitetura WebGL2 (Registrado e Pendente de Decisão):**
-   - **Diagnóstico:** O arquivo MP4 gerado tem 30 FPS constantes e sem falhas no MPC. A queda de FPS da webcam ocorre exclusivamente no compositor 2D do player (`Preview.tsx` / `renderer.ts`), que roda em CPU compartilhando a thread do React.
-   - **Plano de Solução (Opção B):**
-     - **Fase 1:** WebGLCompositor no main thread (substitui `ctx.drawImage` por `texImage2D` acelerado por GPU).
-     - **Fase 2:** OffscreenCanvas em Web Worker dedicado (elimina competição por thread com o React).
-     - **Fase 3:** Shaders GLSL avançados (Gaussian blur e transições em GPU).
-   - **Estado Atual:** Plano documentado em [implementation_plan.md](../../../../.gemini/antigravity/brain/96c08061-a13b-4683-8056-44d20a72c4f3/implementation_plan.md). **Ainda não decidido / Não iniciado.**
+O plano propõe a criação de um **Compositor WebGL2 acelerado por GPU rodando em um Web Worker separado (`OffscreenCanvas`)**, dividido em 3 fases:
+- **Fase 1:** WebGL2 Compositor no main thread (upload direto de texturas `texImage2D`, elimina cópia de CPU).
+- **Fase 2:** Transferência do loop para OffscreenCanvas Worker (elimina interferência do React/UI).
+- **Fase 3:** Shaders GLSL para Gaussian blur e transições em GPU.
+
+### Direcionamento para Detalhes Completos:
+Para consultar a arquitetura de shaders, diagramas de thread, alterações necessárias em cada arquivo e plano de validação detalhado, veja o arquivo do plano exportado:
+👉 **[implementation_plan_webgl_compositor.MD](./implementation_plan_webgl_compositor.MD)**
+
+---
+
+## ⚠️ STATUS DO PLANO WEBGL (CRÍTICO)
+
+> [!WARNING]
+> **ESTADO ATUAL DO PLANO WEBGL:**
+> - **NÃO FOI APLICADO:** Nenhuma linha de código referente à migração WebGL2 ou Worker foi implementada.
+> - **NÃO FOI EXECUTADO:** O pipeline de reprodução do app continua exatamente em Canvas 2D.
+> - **SEM RESPOSTA / APROVAÇÃO DO USUÁRIO:** O usuário ainda **NÃO respondeu**, **NÃO aprovou** e **NÃO tomou decisão** sobre a execução deste plano.
+
+---
+
+## Implementacoes Que JA Foram Concluidas Nesta Sessao
+
+1. **GOP de 3s no Gravador:**
+   - [recording-manager.ts](../../../electron/main/features/recording-manager.ts): GOP alterado para `fps * 3` (`-g 90` em 30fps / `-g 180` em 60fps) na tela e na webcam.
+2. **Correcoes no Player Frontend:**
+   - [Timeline.tsx](../../../src/components/editor/Timeline.tsx): `handleSeekFailure` e `release` não drenam/retomam playback enquanto `video.seeking = true`.
+   - [Preview.tsx](../../../src/components/editor/Preview.tsx): Redraw de canvas liberado durante scrubbing.
+3. **Script de Reparo de Vídeos:**
+   - [fix_project_video.ps1](../../../fix_project_video.ps1): Re-encodou o vídeo de teste a `-g 180` / `-crf 22`, reduzindo o arquivo de 281 MB para 40.19 MB mantendo busca fluida.
 
 ## Commits Relacionados Ao Card
 
 - Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
-- Commits: nenhum commit feito; apenas alterações locais de GOP e seek no working tree.
+- Commits realizados:
+  - `c91c543` - `fix(encoder): set 3-second GOP interval for screen and webcam recording`
+  - `316263c` - `fix(editor): improve seek handling and canvas redraw during timeline scrub`
+  - `2cecc96` - `feat(tasks): add playback seek diagnostics and video repair script`
+  - `b8ed148` - `feat(timeline): enhance zoom anchor, resize handles and region blocks`
 
 ## Validacao
 
-- Validacoes feitas: probe do arquivo de vídeo com FFmpeg (CFR 30fps perfeito); re-encode com GOP de 3s gerando arquivo de 40.19 MB; plano de arquitetura WebGL2 validado teoricamente.
-- Validacoes nao feitas: implementação do compositor WebGL (aguardando decisão).
+- Validacoes feitas: export do plano WebGL2 para [implementation_plan_webgl_compositor.MD](./implementation_plan_webgl_compositor.MD); probe do vídeo com FFmpeg (CFR 30fps); re-encode com GOP de 3s gerando arquivo de 40.19 MB.
+- Validacoes nao feitas: execução do plano WebGL (plano não aprovado nem iniciado).
 
 ## Riscos E Pendencias
 
-- O gargalo de FPS da webcam no player continuará até a aprovação e implementação do plano WebGL2.
-- A decisão de iniciar o desenvolvimento do compositor WebGL2 está pendente de autorização do usuário.
+- O gargalo de FPS da webcam no player do editor só será resolvido quando o plano WebGL2 for formalmente aprovado e desenvolvido.
