@@ -201,6 +201,7 @@ type RecordingProfileRuntime = {
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
   screenFps?: RecordingScreenFps
+  webcamFps?: number
   screenNeedsHwDownload?: boolean
   screenCaptureBackend?: string
   screenEncoderStatus?: ScreenEncoderStatus
@@ -1885,6 +1886,10 @@ function appendScreenOutputArgs(
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
+
+  // GOP ≤3s: keyframes a cada 3s para equilíbrio entre tamanho e seek
+  const gopSize = Math.round((outputOptions.screenFps || 30) * 3)
+  args.push('-g', String(gopSize))
   args.push(screenOut)
 }
 
@@ -1968,9 +1973,9 @@ function stopSystemAudioHelperProcess(process: ChildProcessWithoutNullStreams): 
   })
 }
 
-function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string): void {
+function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string, webcamFps: number = 30): void {
   log.info(
-    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt}`,
+    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt} gopSize=${Math.round(webcamFps * 3)}`,
   )
   args.push(
     '-map',
@@ -1987,6 +1992,8 @@ function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: 
     WEBCAM_RECORDING_ENCODING_CONFIG.bufsize,
     '-pix_fmt',
     WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
+    '-g',
+    String(Math.round(webcamFps * 3)),
     webcamOut,
   )
 }
@@ -2008,7 +2015,7 @@ function buildFfmpegArgs(
 
   appendScreenOutputArgs(finalArgs, screenIndex, screenOut, outputOptions)
   if (hasMic && audioOut) appendEncodedAudioOutputArgs(finalArgs, `${micIndex}:a`, audioOut, audioConfig)
-  if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut)
+  if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut, outputOptions.webcamFps)
 
   return finalArgs
 }
@@ -2027,7 +2034,7 @@ function buildWin32SplitWebcamFfmpegSpecs(
   if (hasMic && audioOut) appendEncodedAudioOutputArgs(mainArgs, '0:a', audioOut, audioConfig)
 
   const webcamArgs = [...inputArgs.webcamInputArgs]
-  appendWebcamOutputArgs(webcamArgs, 0, webcamOut)
+  appendWebcamOutputArgs(webcamArgs, 0, webcamOut, outputOptions.webcamFps)
 
   return [
     { role: 'main', args: mainArgs },
@@ -2074,7 +2081,8 @@ export async function startRecording(options: any) {
   }
   const screenFps = recordingProfile.screenFps
   const screenEncoderStatus = await getScreenEncoderStatus()
-  const outputOptions: RecordingOutputOptions = { screenFps, screenEncoderStatus }
+  const webcamFps = webcam ? resolveWebcamFps(recordingProfile) : undefined
+  const outputOptions: RecordingOutputOptions = { screenFps, webcamFps, screenEncoderStatus }
   log.info('[RecordingManager] Received start recording request with options:', options)
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
   log.info('[RecordingManager] Resolved screen encoder:', screenEncoderStatus)
