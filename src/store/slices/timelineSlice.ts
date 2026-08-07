@@ -993,7 +993,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     }),
   setTimelineZoom: (zoom) =>
     set((state) => {
-      state.timelineZoom = zoom
+      state.timelineZoom = Math.min(TIMELINE.VIEW_ZOOM.MAX, Math.max(TIMELINE.VIEW_ZOOM.MIN, zoom))
     }),
   applyAnimationSettingsToAll: ({ transitionDuration, easing, zoomLevel }) => {
     set((state) => {

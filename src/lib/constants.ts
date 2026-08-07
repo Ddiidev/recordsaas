@@ -38,6 +38,11 @@ export const APP = {
 export const TIMELINE = {
   MINIMUM_REGION_DURATION: 0.1, // 100ms
   REGION_DELETE_THRESHOLD: 0.05, // 50ms - Regions smaller than this on mouse up are deleted.
+  VIEW_ZOOM: {
+    MIN: 1,
+    MAX: 100,
+    STEP: 0.5,
+  },
 }
 
 // Zoom and Pan specific constants

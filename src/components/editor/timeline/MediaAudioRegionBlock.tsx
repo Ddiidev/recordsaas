@@ -4,6 +4,7 @@ import type { MediaAudioRegion, TimelineRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { useEditorStore } from '../../../store/editorStore'
 import { ContextMenu, ContextMenuItem, ContextMenuDivider, ContextMenuLabel } from '../../ui/context-menu'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface MediaAudioRegionBlockProps {
   region: MediaAudioRegion
@@ -58,11 +59,6 @@ export const MediaAudioRegionBlock = memo(
       }
     }, [mediaAudioName, region.duration])
 
-    const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>, type: 'resize-left' | 'resize-right') => {
-      e.stopPropagation()
-      onMouseDown(e, region, type)
-    }
-
     const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
       e.stopPropagation()
@@ -86,7 +82,7 @@ export const MediaAudioRegionBlock = memo(
           ref={setRef}
           data-region-id={region.id}
           className={cn(
-            'absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+            'group/region absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
             !isBeingDragged && 'transition-all duration-200 ease-out',
             isSelected
               ? 'bg-card/90 border-emerald-500 transform -translate-y-[2px] shadow-sm shadow-emerald-500/20'
@@ -96,12 +92,14 @@ export const MediaAudioRegionBlock = memo(
           onMouseDown={(e) => onMouseDown(e, region, 'move')}
           onContextMenu={handleContextMenu}
         >
-          <div
-            className="absolute left-0 top-0 w-5 h-full cursor-ew-resize rounded-l-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-left')}
-          >
-            <div className="w-1 h-6 bg-emerald-500/60 rounded-full group-hover:bg-emerald-500 group-hover:h-8 transition-all duration-150" />
-          </div>
+          <RegionResizeHandles
+            isSelected={isSelected}
+            indicatorClassName="bg-emerald-500/60 group-hover/resize-handle:bg-emerald-500"
+            onMouseDown={(event, side) => {
+              event.stopPropagation()
+              onMouseDown(event, region, side)
+            }}
+          />
 
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-6">
             <div className="flex w-full flex-col items-center overflow-hidden">
@@ -143,12 +141,6 @@ export const MediaAudioRegionBlock = memo(
             </div>
           </div>
 
-          <div
-            className="absolute right-0 top-0 w-5 h-full cursor-ew-resize rounded-r-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-right')}
-          >
-            <div className="w-1 h-6 bg-emerald-500/60 rounded-full group-hover:bg-emerald-500 group-hover:h-8 transition-all duration-150" />
-          </div>
         </div>
 
         <ContextMenu

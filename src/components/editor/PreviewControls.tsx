@@ -13,8 +13,10 @@ import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Slider } from '../ui/slider'
+import { Input } from '../ui/input'
 import { ToolbarButton } from './ToolbarButton'
 import { sortTimelineLanes } from '../../lib/timeline-lanes'
+import { TIMELINE } from '../../lib/constants'
 
 export function PreviewControls() {
   const {
@@ -109,8 +111,25 @@ export function PreviewControls() {
         <div className="flex items-center gap-4 ml-2">
           <ZoomIn className="w-4 h-4 text-muted-foreground" />
           <div className="w-24">
-            <Slider min={1} max={4} step={0.5} value={timelineZoom} onChange={setTimelineZoom} />
+            <Slider
+              min={TIMELINE.VIEW_ZOOM.MIN}
+              max={TIMELINE.VIEW_ZOOM.MAX}
+              step={TIMELINE.VIEW_ZOOM.STEP}
+              value={timelineZoom}
+              onChange={setTimelineZoom}
+            />
           </div>
+          <Input
+            aria-label="Timeline zoom"
+            className="h-8 w-[4.5rem] px-2 text-center text-xs"
+            max={TIMELINE.VIEW_ZOOM.MAX}
+            min={TIMELINE.VIEW_ZOOM.MIN}
+            step={TIMELINE.VIEW_ZOOM.STEP}
+            suffix="x"
+            type="number"
+            value={timelineZoom}
+            onChange={(event) => setTimelineZoom(Number(event.target.value))}
+          />
         </div>
       </div>
 

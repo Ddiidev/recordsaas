@@ -4,6 +4,7 @@ import { cn } from '../../../lib/utils'
 import { PlayerTrackNext, Check } from '@icons'
 import { useEditorStore } from '../../../store/editorStore'
 import { ContextMenu, ContextMenuItem, ContextMenuDivider, ContextMenuLabel } from '../../ui/context-menu'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface SpeedRegionBlockProps {
   region: SpeedRegion
@@ -56,7 +57,7 @@ export const SpeedRegionBlock = memo(
           ref={setRef}
           data-region-id={region.id}
           className={cn(
-            'absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+          'group/region absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
             !isBeingDragged && 'transition-all duration-200 ease-out',
             isSelected
               ? 'bg-card/90 border-speed-accent transform -translate-y-[2px] shadow-sm shadow-speed-accent/20'
@@ -71,27 +72,11 @@ export const SpeedRegionBlock = memo(
           }}
           onContextMenu={handleContextMenu}
         >
-          {/* Resize Handles */}
-          <div
-            className="absolute left-0 top-0 w-5 h-full cursor-ew-resize rounded-l-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-left')}
-          >
-            <div
-              className={cn(
-                'w-1 h-6 bg-speed-accent/50 rounded-full group-hover:bg-speed-accent group-hover:h-8 transition-all duration-150',
-              )}
-            />
-          </div>
-          <div
-            className="absolute right-0 top-0 w-5 h-full cursor-ew-resize rounded-r-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-right')}
-          >
-            <div
-              className={cn(
-                'w-1 h-6 bg-speed-accent/50 rounded-full group-hover:bg-speed-accent group-hover:h-8 transition-all duration-150',
-              )}
-            />
-          </div>
+          <RegionResizeHandles
+            isSelected={isSelected}
+            indicatorClassName="bg-speed-accent/50 group-hover/resize-handle:bg-speed-accent"
+            onMouseDown={handleResizeMouseDown}
+          />
 
           {/* Content */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-3">

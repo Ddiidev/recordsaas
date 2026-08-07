@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { TimelineRegion, CutRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { Scissors } from '@icons'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface CutRegionBlockProps {
   region: CutRegion
@@ -35,7 +36,7 @@ export const CutRegionBlock = memo(
         ref={setRef}
         data-region-id={region.id}
         className={cn(
-          'absolute w-full h-14 top-1/2 flex items-center justify-center rounded-xl border-2 backdrop-blur-sm',
+          'group/region absolute w-full h-14 top-1/2 flex items-center justify-center rounded-xl border-2 backdrop-blur-sm',
           !isBeingDragged && 'transition-all duration-200 ease-out',
           canMove ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
           isSelected
@@ -61,14 +62,13 @@ export const CutRegionBlock = memo(
           />
         </div>
 
-        {canResizeLeft && (
-          <div
-            className="absolute left-0 top-0 z-10 flex h-full w-5 cursor-ew-resize items-center justify-center rounded-l-xl group"
-            onMouseDown={(e) => handleMouseDown(e, 'resize-left')}
-          >
-            <div className="h-8 w-1 rounded-full bg-destructive/50 transition-all duration-150 group-hover:h-10 group-hover:bg-destructive" />
-          </div>
-        )}
+        <RegionResizeHandles
+          isSelected={isSelected}
+          canResizeLeft={canResizeLeft}
+          canResizeRight={canResizeRight}
+          indicatorClassName="bg-destructive/50 group-hover/resize-handle:bg-destructive"
+          onMouseDown={handleMouseDown}
+        />
 
         <div className="pointer-events-none flex items-center gap-2.5 overflow-hidden px-3">
           <Scissors
@@ -84,14 +84,6 @@ export const CutRegionBlock = memo(
           </span>
         </div>
 
-        {canResizeRight && (
-          <div
-            className="absolute right-0 top-0 z-10 flex h-full w-5 cursor-ew-resize items-center justify-center rounded-r-xl group"
-            onMouseDown={(e) => handleMouseDown(e, 'resize-right')}
-          >
-            <div className="h-8 w-1 rounded-full bg-destructive/50 transition-all duration-150 group-hover:h-10 group-hover:bg-destructive" />
-          </div>
-        )}
       </div>
     )
   },

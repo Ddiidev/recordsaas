@@ -81,6 +81,10 @@ Recording profile invariant:
 - Saved screen MP4 output must preserve the requested profile FPS as CFR on the output side. Capture inputs such as Windows `gdigrab` can expose sparse/VFR average FPS even when requested at 30fps; do not let new recordings persist as low-FPS screen files when the profile requested 30/60/120fps.
 - Recording metadata should include optional diagnostic fields for the screen capture backend, requested screen FPS, and FFmpeg version so future low-FPS investigations can confirm whether the recording used `ddagrab`, `gdigrab`, `x11grab`, or `avfoundation` and which bundled asset produced the file.
 - Webcam capture size/FPS remain profile-controlled, but the saved webcam MP4 must use controlled `libx264` CRF/VBV settings instead of mirroring the high-quality screen encoder. Keep webcam bitrate bounded for long/noisy recordings so camera files do not grow into multi-GB artifacts.
+- Known seekability defect (confirmed 2026-08-06): the NVIDIA low-latency screen path can produce a finalized CFR MP4 with only the initial IDR when no GOP is explicit. A 588-second 60fps artifact required decoding from `t=0` for every late seek; seeking to 563 seconds took about 82 seconds. The pending recorder fix must enforce a bounded GOP (target at most two seconds) for screen and webcam outputs. Validate keyframe spacing and a near-end random seek; sequential decode and nominal FPS alone do not prove editor seekability.
+- Known persistent-seek amplifier (confirmed 2026-08-06): Timeline's 1.5-second logical seek fallback can clear its in-flight flag and release scrub while Chromium still reports `video.seeking=true`. A later target then restarts the physical decode from the sole IDR; repeated point jumps can prevent completion indefinitely. UI release and playback intent must remain separate from physical decoder completion, and the latest-target queue must not treat a timeout as `seeked`.
+- The composed preview is gated by new main-screen frames. While the main screen is stuck seeking, the duplicate-frame fast path skips webcam synchronization and drawing too, so both sources can look frozen even when the hidden webcam element recovered. Diagnose element state separately from the canvas result.
+- Muting computer audio controls audibility, not decoding. A muted raw ADTS source can still reach a corrupt packet and fail Chromium with `PIPELINE_ERROR_DECODE`; do not assume `systemAudioMuted=true` removes the track from the preview pipeline.
 
 Media URL invariant:
 - Absolute local media paths exposed to renderer media elements use `media://file?path=<encoded absolute path>`.
@@ -370,6 +374,7 @@ Timeline geometry (`src/components/editor/Timeline.tsx`):
 - The temporal ruler above lanes must stay sticky while the timeline scrolls vertically.
 - Viewport buffer `+14px` to avoid unintended vertical scroll for 2 lanes.
 - Region block visual height: `h-12` for speed/blur/swap/media/change-sound blocks.
+- Resize handles are centered on the actual start/end boundary and may extend outside a short region; never position both hit targets inside its width, or the right control crosses into the left side below `40px`. Keep them visible only for the selected or hovered region.
 - Cut region blocks must remain draggable after selection; selection state must not change the hit target or decouple the draggable element from the visual block.
 - Playhead interaction baseline: dragging can start from the full playhead control line (not only the triangle), with `ew-resize` cursor semantics.
 - Ruler scrubbing must update continuously from mouse down through window-level mouse move, preserve whether playback was active before seeking, and clamp the target to the timeline duration. Resume only after final seek when it was active; a paused preview remains paused.
@@ -388,7 +393,8 @@ Toolbar and preview control sizing:
 - `ToolbarButton` default: `h-10 px-4 rounded-lg`.
 - `ToolbarButton` icon: `h-10 w-10 rounded-lg`.
 - Editing toolbar baseline includes `Change Sound` action alongside `Zoom`, `Trim`, `Speed`, `Blur`, `Swap`.
-- Timeline zoom slider wrapper width: `w-24`.
+- Timeline zoom uses the `w-24` slider plus a numeric field, from `1x` to `100x` in `0.5x` steps, so short regions can be edited at sub-second precision.
+- Zooming preserves the playhead's current horizontal viewport coordinate by scaling `scrollLeft` with pixels-per-second. If the playhead was already offscreen, center it; magnification must always leave the playhead visible, subject only to physical start/end scroll limits.
 - Aspect ratio select wrapper width: `w-40`.
 - Preview duration readout block: `min-w-[130px]`.
 - Side-by-side webcam geometry must preserve the selected camera shape/aspect ratio at every frame-padding value. Padding `0` removes the gap only; it must not stretch the camera to the full sidebar height. Keep the webcam anchored to the inner horizontal edge and vertically centered unless its fitted height naturally reaches the top/bottom bounds.
