@@ -1,4 +1,9 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
+import { Input } from '../ui/input'
+import { Button } from '../ui/button'
+
+const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
+const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
 
 const ShortcutItem = ({ keys, description }: { keys: string[]; description: string }) => {
   return (
@@ -19,6 +24,27 @@ const ShortcutItem = ({ keys, description }: { keys: string[]; description: stri
 }
 
 export function ShortcutsTab() {
+  const [takeShortcut, setTakeShortcut] = useState(DEFAULT_TAKE_SHORTCUT)
+  const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
+
+  useEffect(() => {
+    void Promise.all([
+      window.electronAPI.getSetting<string>(TAKE_SHORTCUT_SETTING_KEY),
+      window.electronAPI.getPlatform(),
+    ]).then(([saved, detectedPlatform]) => {
+      setTakeShortcut(saved?.trim() || DEFAULT_TAKE_SHORTCUT)
+      setPlatform(detectedPlatform)
+    })
+  }, [])
+
+  const displayShortcut = takeShortcut.replace('CommandOrControl', platform === 'darwin' ? 'Cmd' : 'Ctrl')
+
+  const persistTakeShortcut = () => {
+    const normalized = takeShortcut.trim() || DEFAULT_TAKE_SHORTCUT
+    setTakeShortcut(normalized)
+    window.electronAPI.setSetting(TAKE_SHORTCUT_SETTING_KEY, normalized)
+  }
+
   const shortcutCategories = [
     {
       title: 'Playback',
@@ -54,6 +80,42 @@ export function ShortcutsTab() {
       <h2 className="text-lg font-semibold text-foreground mb-6">Keyboard Shortcuts</h2>
 
       <div className="space-y-6">
+        <div>
+          <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-2">Recording</h3>
+          <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">Mark Take</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Global while Take Mode is recording: {displayShortcut}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={takeShortcut}
+                  onChange={(event) => setTakeShortcut(event.target.value)}
+                  onBlur={persistTakeShortcut}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                  }}
+                  aria-label="Mark Take shortcut"
+                  className="h-8 w-64 font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setTakeShortcut(DEFAULT_TAKE_SHORTCUT)
+                    window.electronAPI.setSetting(TAKE_SHORTCUT_SETTING_KEY, DEFAULT_TAKE_SHORTCUT)
+                  }}
+                >
+                  Reset
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {shortcutCategories.map((category) => (
           <div key={category.title}>
             <h3 className="text-sm font-bold text-muted-foreground uppercase tracking-wider mb-2">{category.title}</h3>

@@ -6,7 +6,19 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { constants as osConstants, cpus, setPriority } from 'node:os'
-import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  nativeImage,
+  screen,
+  ipcMain,
+  dialog,
+  globalShortcut,
+  systemPreferences,
+  type Display,
+} from 'electron'
 import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
@@ -22,6 +34,7 @@ import {
   getWindowsPhysicalAreaRect,
   getWindowsPhysicalDisplayRect,
   getWindowsScreenCaptureCandidates,
+  resolveWindowsScreenCaptureFrameTransfer,
   selectWindowsScreenCaptureCandidate,
   PhysicalCaptureRect,
 } from './windows-screen-capture'
@@ -31,6 +44,198 @@ const FFMPEG_PATH = getFFmpegPath()
 const WINDOWS_SYSTEM_AUDIO_HELPER_PATH =
   process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
 const store = new Store()
+const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
+const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
+
+const normalizeTakeShortcut = (value: unknown): string =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : DEFAULT_TAKE_SHORTCUT
+
+const getMonotonicMilliseconds = (): number => performance.now()
+
+const TAKE_TOAST_DURATION_MS = 1800
+const TAKE_TOAST_WIDTH = 286
+const TAKE_TOAST_HEIGHT = 72
+const TAKE_TOAST_MARGIN = 24
+const TAKE_TOAST_HTML = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body { padding: 1px; box-sizing: border-box; opacity: 0; transform: translateY(-5px); transition: opacity 140ms ease, transform 140ms ease; }
+      body.visible { opacity: 1; transform: translateY(0); }
+      .toast { box-sizing: border-box; width: 100%; height: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid rgba(168, 85, 247, .55); border-radius: 10px; background: rgba(24, 24, 27, .96); box-shadow: 0 14px 34px rgba(0, 0, 0, .35); }
+      .badge { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 999px; background: rgba(168, 85, 247, .18); color: #d8b4fe; font-size: 17px; font-weight: 700; }
+      strong, span { display: block; }
+      strong { color: #fafafa; font-size: 13px; line-height: 18px; }
+      #take { margin-top: 2px; color: #a1a1aa; font-size: 11px; line-height: 15px; }
+    </style>
+  </head>
+  <body>
+    <div class="toast" role="status" aria-live="polite">
+      <div class="badge">✓</div>
+      <div><strong>Take marked</strong><span id="take"></span></div>
+    </div>
+    <script>
+      window.setTakeToast = (takeNumber) => {
+        document.getElementById('take').textContent = 'Take ' + takeNumber + ' started';
+        document.body.classList.remove('visible');
+        void document.body.offsetWidth;
+        document.body.classList.add('visible');
+      };
+    </script>
+  </body>
+</html>`
+
+let takeToastHideTimer: NodeJS.Timeout | null = null
+let pendingTakeToastNumber: number | null = null
+
+const positionTakeToast = (toastWindow: BrowserWindow): void => {
+  const recorderWindow = appState.recorderWin
+  const referenceBounds =
+    recorderWindow && !recorderWindow.isDestroyed() ? recorderWindow.getBounds() : screen.getPrimaryDisplay().bounds
+  const workArea = screen.getDisplayMatching(referenceBounds).workArea
+  toastWindow.setBounds({
+    x: workArea.x + workArea.width - TAKE_TOAST_WIDTH - TAKE_TOAST_MARGIN,
+    y: workArea.y + workArea.height - TAKE_TOAST_HEIGHT - TAKE_TOAST_MARGIN,
+    width: TAKE_TOAST_WIDTH,
+    height: TAKE_TOAST_HEIGHT,
+  })
+}
+
+const updateTakeToast = (toastWindow: BrowserWindow, takeNumber: number): void => {
+  if (toastWindow.webContents.isLoading()) {
+    pendingTakeToastNumber = takeNumber
+    return
+  }
+
+  void toastWindow.webContents
+    .executeJavaScript(`window.setTakeToast(${JSON.stringify(takeNumber)})`, true)
+    .then(() => {
+      if (pendingTakeToastNumber === takeNumber) pendingTakeToastNumber = null
+    })
+    .catch((error) => {
+      pendingTakeToastNumber = takeNumber
+      log.warn('[TakeMode] Failed to update take toast:', error)
+    })
+}
+
+const ensureTakeToastWindow = (): BrowserWindow => {
+  const existing = appState.takeToastWin
+  if (existing && !existing.isDestroyed()) return existing
+
+  const toastWindow = new BrowserWindow({
+    width: TAKE_TOAST_WIDTH,
+    height: TAKE_TOAST_HEIGHT,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      sandbox: true,
+    },
+  })
+  toastWindow.setContentProtection(true)
+  toastWindow.setIgnoreMouseEvents(true)
+  toastWindow.setAlwaysOnTop(true, 'floating')
+  toastWindow.webContents.on('did-finish-load', () => {
+    if (pendingTakeToastNumber === null || toastWindow.isDestroyed()) return
+    const takeNumber = pendingTakeToastNumber
+    pendingTakeToastNumber = null
+    updateTakeToast(toastWindow, takeNumber)
+  })
+  toastWindow.on('closed', () => {
+    if (appState.takeToastWin === toastWindow) appState.takeToastWin = null
+  })
+  appState.takeToastWin = toastWindow
+  void toastWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(TAKE_TOAST_HTML)}`)
+    .catch((error) => log.debug('[TakeMode] Take toast window closed before loading:', error))
+  return toastWindow
+}
+
+const closeTakeToast = (): void => {
+  if (takeToastHideTimer) {
+    clearTimeout(takeToastHideTimer)
+    takeToastHideTimer = null
+  }
+  pendingTakeToastNumber = null
+  const toastWindow = appState.takeToastWin
+  appState.takeToastWin = null
+  if (toastWindow && !toastWindow.isDestroyed()) toastWindow.close()
+}
+
+const showTakeToast = (takeNumber: number): void => {
+  const toastWindow = ensureTakeToastWindow()
+  positionTakeToast(toastWindow)
+  pendingTakeToastNumber = takeNumber
+  updateTakeToast(toastWindow, takeNumber)
+  toastWindow.showInactive()
+  if (takeToastHideTimer) clearTimeout(takeToastHideTimer)
+  takeToastHideTimer = setTimeout(closeTakeToast, TAKE_TOAST_DURATION_MS)
+}
+
+const unregisterTakeShortcut = (): void => {
+  const shortcut = appState.currentRecordingSession?.takeShortcut
+  if (shortcut && globalShortcut.isRegistered(shortcut)) globalShortcut.unregister(shortcut)
+}
+
+export function markTake(): { marked: boolean; takeNumber?: number; timestamp?: number; reason?: string } {
+  const session = appState.currentRecordingSession
+  if (!session?.takeModeEnabled) return { marked: false, reason: 'take-mode-disabled' }
+  if (typeof session.takeRecordingReadyMonotonicMs !== 'number') return { marked: false, reason: 'recording-not-ready' }
+
+  const now = getMonotonicMilliseconds()
+  const basePts = session.takeLastPtsSeconds || 0
+  const baseMonotonic = session.takeLastPtsMonotonicMs ?? session.takeRecordingReadyMonotonicMs
+  const timestamp = Math.max(0, basePts + Math.max(0, now - baseMonotonic) / 1000)
+  const boundaries = session.takeBoundaries || (session.takeBoundaries = [])
+  const lastBoundary = boundaries[boundaries.length - 1] || 0
+  const fps = Math.max(1, session.requestedScreenFps || 30)
+  const minimumDuration = Math.max(0.1, 2 / fps)
+  if (timestamp - lastBoundary < minimumDuration) return { marked: false, reason: 'take-too-short' }
+
+  boundaries.push(timestamp)
+  const takeNumber = boundaries.length + 1
+  appState.tray?.setToolTip(`RecordSaaS is recording — Take ${takeNumber}`)
+  appState.recorderWin?.webContents.send('recording:take-marked', { takeNumber, timestamp })
+  showTakeToast(takeNumber)
+  log.info(`[TakeMode] Marked Take ${takeNumber} at ${timestamp.toFixed(3)}s.`)
+  return { marked: true, takeNumber, timestamp }
+}
+
+const registerTakeShortcut = async (session: RecordingSession): Promise<boolean> => {
+  if (!session.takeModeEnabled) return true
+  const shortcut = normalizeTakeShortcut(session.takeShortcut)
+  session.takeShortcut = shortcut
+  globalShortcut.unregister(shortcut)
+  try {
+    if (globalShortcut.register(shortcut, () => markTake())) return true
+  } catch (error) {
+    log.warn(`[TakeMode] Invalid global shortcut "${shortcut}".`, error)
+  }
+
+  const messageBoxOptions: Electron.MessageBoxOptions = {
+    type: 'warning',
+    title: 'Take Shortcut Unavailable',
+    message: `${shortcut} is already used by another application.`,
+    detail: 'Continue with Mark Take in the tray, or cancel this recording.',
+    buttons: ['Continue with tray', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }
+  const response = appState.recorderWin
+    ? await dialog.showMessageBox(appState.recorderWin, messageBoxOptions)
+    : await dialog.showMessageBox(messageBoxOptions)
+  return response.response === 0
+}
 
 const getFFmpegVersionLine = (): string | undefined => {
   const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-version'], {
@@ -206,6 +411,8 @@ type RecordingOutputOptions = {
   screenFps?: RecordingScreenFps
   webcamFps?: number
   screenNeedsHwDownload?: boolean
+  screenFrameTransferFilters?: string[]
+  screenFrameTransferMode?: string
   screenCaptureBackend?: string
   screenEncoderStatus?: ScreenEncoderStatus
   screenCaptureDisplay?: any
@@ -1488,6 +1695,8 @@ async function startActualRecording(
   recordSystemAudio: boolean = false,
   systemAudioCapture?: SupportedComputerAudioCaptureConfig,
   audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
+  takeModeEnabled: boolean = false,
+  takeShortcut: string = DEFAULT_TAKE_SHORTCUT,
 ) {
   const recordingProcessPriorityMode = normalizeRecordingProcessPriorityMode(
     store.get(RECORDING_PROCESS_PRIORITY_SETTING_KEY, DEFAULT_RECORDING_PROCESS_PRIORITY_MODE),
@@ -1521,6 +1730,22 @@ async function startActualRecording(
     recordingAudioCodec: audioConfig.audioCodec,
     recordingAudioBitrateKbps: audioConfig.audioBitrateKbps,
     recordingAudioSampleRate: audioConfig.audioSampleRate,
+    takeModeEnabled,
+    takeBoundaries: [],
+    takeLastPtsSeconds: 0,
+    takeShortcut: normalizeTakeShortcut(takeShortcut),
+  }
+  if (!(await registerTakeShortcut(appState.currentRecordingSession))) {
+    unregisterTakeShortcut()
+    appState.currentRecordingSession = null
+    await cleanupEditorFiles({
+      screenVideoPath,
+      webcamVideoPath,
+      audioPath,
+      systemAudioPath,
+      metadataPath,
+    })
+    return { canceled: true }
   }
   appState.recorderWin?.minimize()
 
@@ -1712,6 +1937,8 @@ async function startActualRecording(
       }
 
       log.info('[FFMPEG] Recording pipeline is ready.')
+      session.takeRecordingReadyMonotonicMs = getMonotonicMilliseconds()
+      session.takeLastPtsMonotonicMs = session.takeRecordingReadyMonotonicMs
       appState.recorderWin?.webContents.send('recording-started')
       createTray()
       resolveOnce({ canceled: false, ...session })
@@ -1773,13 +2000,26 @@ async function startActualRecording(
 
       // Monitor FFmpeg's stderr for progress, errors, and sync timing
       ffmpeg.stderr.on('data', (data: any) => {
-        const message = data.toString()
+        const message: string = data.toString()
         const current = ffmpegStartupErrorText.get(run.role) || ''
         ffmpegStartupErrorText.set(run.role, `${current}${message}`.slice(-16000))
         log.warn(`[FFMPEG:${run.role} stderr]: ${message}`)
 
         if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
           markRecordingReady(run.role)
+        }
+
+        if (run.role === 'main') {
+          const progressMatches = Array.from(message.matchAll(/out_time_us=(\d+)/g))
+          const latest = progressMatches[progressMatches.length - 1]
+          const session = appState.currentRecordingSession
+          if (latest && session) {
+            const ptsSeconds = Number(latest[1]) / 1_000_000
+            if (Number.isFinite(ptsSeconds) && ptsSeconds >= (session.takeLastPtsSeconds || 0)) {
+              session.takeLastPtsSeconds = ptsSeconds
+              session.takeLastPtsMonotonicMs = getMonotonicMilliseconds()
+            }
+          }
         }
 
         // Early detection of fatal errors to provide immediate feedback
@@ -1882,20 +2122,23 @@ function appendScreenOutputArgs(
     `[RecordingManager] Screen recording encode config: output=${screenOut} codecArgs=${encoderDef.codecArgs.join(' ')} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
   )
   args.push('-map', `${screenIndex}:v`, ...encoderDef.codecArgs)
+  const screenFilters =
+    outputOptions.screenFrameTransferFilters ||
+    (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])
   if (outputOptions.screenScale) {
-    const screenFilters = outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : []
     screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
     args.push('-vf', screenFilters.join(','))
-  } else if (outputOptions.screenNeedsHwDownload) {
-    args.push('-vf', 'hwdownload,format=bgra')
+  } else if (screenFilters.length > 0) {
+    args.push('-vf', screenFilters.join(','))
   }
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
 
-  // GOP ≤3s: keyframes a cada 3s para equilíbrio entre tamanho e seek
-  const gopSize = Math.round((outputOptions.screenFps || 30) * 3)
+  // GOP ≤2s: take edits and deep seeks need regular random-access points.
+  const gopSize = Math.round((outputOptions.screenFps || 30) * 2)
   args.push('-g', String(gopSize))
+  args.push('-progress', 'pipe:2', '-stats_period', '0.25')
   args.push(screenOut)
 }
 
@@ -1981,7 +2224,7 @@ function stopSystemAudioHelperProcess(process: ChildProcessWithoutNullStreams): 
 
 function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string, webcamFps: number = 30): void {
   log.info(
-    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt} gopSize=${Math.round(webcamFps * 3)}`,
+    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt} gopSize=${Math.round(webcamFps * 2)}`,
   )
   args.push(
     '-map',
@@ -1999,7 +2242,7 @@ function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: 
     '-pix_fmt',
     WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
     '-g',
-    String(Math.round(webcamFps * 3)),
+    String(Math.round(webcamFps * 2)),
     webcamOut,
   )
 }
@@ -2055,6 +2298,18 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(VITE_PUBLIC, 'recordsaas-appicon-tray.png'))
   appState.tray = new Tray(icon)
   const contextMenu = Menu.buildFromTemplate([
+    ...(appState.currentRecordingSession?.takeModeEnabled
+      ? [
+          {
+            label: 'Mark Take',
+            accelerator: appState.currentRecordingSession.takeShortcut,
+            click: () => {
+              markTake()
+            },
+          },
+          { type: 'separator' as const },
+        ]
+      : []),
     {
       label: 'Stop Recording',
       click: async () => {
@@ -2068,7 +2323,11 @@ function createTray() {
       },
     },
   ])
-  appState.tray.setToolTip('RecordSaaS is recording...')
+  appState.tray.setToolTip(
+    appState.currentRecordingSession?.takeModeEnabled
+      ? 'RecordSaaS is recording — Take 1'
+      : 'RecordSaaS is recording...',
+  )
   appState.tray.setContextMenu(contextMenu)
 }
 
@@ -2288,8 +2547,19 @@ export async function startRecording(options: any) {
       case 'win32': {
         const windowsPhysicalRect = getWindowsPhysicalDisplayRect(targetDisplay)
         const candidate = selectWindowsScreenCaptureCandidate(targetDisplay, windowsPhysicalRect, screenFps)
+        const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
+        const transfer = resolveWindowsScreenCaptureFrameTransfer(
+          candidate,
+          screenEncoderStatus.encoder,
+          encoderDef.prefixArgs,
+          encoderDef.codecArgs,
+          !outputOptions.screenScale,
+        )
         outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenFrameTransferFilters = transfer.filters
+        outputOptions.screenFrameTransferMode = transfer.mode
         outputOptions.screenCaptureBackend = candidate.backend
+        log.info(`[RecordingManager] Windows screen frame transfer: ${transfer.mode}`)
         screenInputArgs.push(...candidate.inputArgs)
         break
       }
@@ -2387,8 +2657,19 @@ export async function startRecording(options: any) {
           containingDisplay,
         )
         const candidate = selectWindowsScreenCaptureCandidate(containingDisplay, windowsPhysicalRect, screenFps)
+        const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
+        const transfer = resolveWindowsScreenCaptureFrameTransfer(
+          candidate,
+          screenEncoderStatus.encoder,
+          encoderDef.prefixArgs,
+          encoderDef.codecArgs,
+          !outputOptions.screenScale,
+        )
         outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenFrameTransferFilters = transfer.filters
+        outputOptions.screenFrameTransferMode = transfer.mode
         outputOptions.screenCaptureBackend = candidate.backend
+        log.info(`[RecordingManager] Windows screen frame transfer: ${transfer.mode}`)
         screenInputArgs.push(...candidate.inputArgs)
         break
       }
@@ -2443,6 +2724,8 @@ export async function startRecording(options: any) {
     computerAudioEnabled,
     computerAudioCapture?.supported ? computerAudioCapture : undefined,
     audioConfig,
+    options.takeModeEnabled === true,
+    normalizeTakeShortcut(store.get(TAKE_SHORTCUT_SETTING_KEY, DEFAULT_TAKE_SHORTCUT)),
   )
 }
 
@@ -2572,6 +2855,8 @@ export async function selectRecordingArea() {
 export async function stopRecording() {
   restoreOriginalCursorScale()
   log.info('Stopping recording, preparing to save...')
+  unregisterTakeShortcut()
+  closeTakeToast()
   appState.tray?.destroy()
   appState.tray = null
   createSavingWindow()
@@ -2665,6 +2950,8 @@ export async function stopRecording() {
  */
 export async function cancelRecording() {
   log.info('Cancelling recording and deleting files...')
+  unregisterTakeShortcut()
+  closeTakeToast()
   await cleanupAndDiscard()
   appState.recorderWin?.webContents.send('recording-finished', { canceled: true })
   appState.recorderWin?.show()
@@ -2848,6 +3135,21 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       syncOffset: 0,
       cursorImages: Object.fromEntries(appState.runtimeCursorImageMap || []),
       events: finalEvents,
+      takeModeEnabled: session.takeModeEnabled === true,
+      sourceDuration: Math.max(0, session.takeLastPtsSeconds || 0),
+      takeBoundaries: (() => {
+        if (!session.takeModeEnabled) return []
+        const duration = Math.max(0, session.takeLastPtsSeconds || 0)
+        const minimumDuration = Math.max(0.1, 2 / Math.max(1, session.requestedScreenFps || 30))
+        const boundaries = (session.takeBoundaries || []).filter(
+          (boundary, index, values) =>
+            boundary >= minimumDuration &&
+            boundary < duration &&
+            (index === 0 || boundary - values[index - 1] >= minimumDuration),
+        )
+        if (boundaries.length > 0 && duration - boundaries[boundaries.length - 1] < minimumDuration) boundaries.pop()
+        return boundaries
+      })(),
     }
 
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(finalMetadata))
@@ -2867,6 +3169,9 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       requestedScreenFps: session.requestedScreenFps,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
+      takeModeEnabled: session.takeModeEnabled === true,
+      sourceDuration: Math.max(0, session.takeLastPtsSeconds || 0),
+      takeBoundaries: session.takeBoundaries || [],
     }
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(errorMetadata))
     return false
@@ -2877,6 +3182,8 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
  * Forcefully terminates all recording processes and deletes any temporary files.
  */
 export async function cleanupAndDiscard() {
+  unregisterTakeShortcut()
+  closeTakeToast()
   if (!appState.currentRecordingSession) return
   log.warn('[Cleanup] Discarding current recording session.')
   const sessionToDiscard = { ...appState.currentRecordingSession }
@@ -2960,6 +3267,8 @@ export async function cleanupOrphanedRecordings() {
  * Event handler for application quit, ensuring recordings are cleaned up before exit.
  */
 export async function onAppQuit(event: Electron.Event) {
+  unregisterTakeShortcut()
+  closeTakeToast()
   if (appState.currentRecordingSession && !appState.isCleanupInProgress) {
     log.warn('[AppQuit] Active session detected. Cleaning up before exit...')
     event.preventDefault()

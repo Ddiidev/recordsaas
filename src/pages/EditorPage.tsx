@@ -21,6 +21,7 @@ import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
 import type { FloatingMonitor } from '../types'
+import { positionTakes } from '../lib/takes'
 
 const generateDefaultProjectName = () => {
   const now = new Date()
@@ -322,7 +323,12 @@ export function EditorPage() {
   }, [handleExportProject, projectExportName])
 
   const handleDeleteSelectedRegion = useCallback(() => {
-    const currentSelectedId = useEditorStore.getState().selectedRegionId
+    const state = useEditorStore.getState()
+    if (state.selectedTakeId) {
+      state.deleteTake(state.selectedTakeId)
+      return
+    }
+    const currentSelectedId = state.selectedRegionId
     if (currentSelectedId) {
       deleteRegion(currentSelectedId)
     }
@@ -330,6 +336,13 @@ export function EditorPage() {
 
   const handleSplitAtPlayhead = useCallback(() => {
     const state = useEditorStore.getState()
+    if (state.selectedTakeId) {
+      const positioned = positionTakes(state.takes, state.takeTransitions).find(
+        (item) => item.take.id === state.selectedTakeId,
+      )
+      if (positioned) state.splitTake(state.selectedTakeId, state.currentTime - positioned.start)
+      return
+    }
     const selectedId = state.selectedRegionId
     if (!selectedId) return
     const time = state.currentTime
@@ -349,7 +362,7 @@ export function EditorPage() {
       } else {
         seekToPreviousFrame()
       }
-      if (videoRef.current) {
+      if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
         videoRef.current.currentTime = useEditorStore.getState().currentTime
       }
     },
@@ -363,7 +376,7 @@ export function EditorPage() {
       } else {
         seekBackward(Math.abs(seconds))
       }
-      if (videoRef.current) {
+      if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
         videoRef.current.currentTime = useEditorStore.getState().currentTime
       }
     },
@@ -399,8 +412,35 @@ export function EditorPage() {
         e.preventDefault()
         redo()
       },
+      'ctrl+d': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.duplicateTake(state.selectedTakeId)
+      },
+      'alt+arrowleft': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.moveTake(state.selectedTakeId, 'left')
+      },
+      'alt+arrowright': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.moveTake(state.selectedTakeId, 'right')
+      },
+      f2: () => {
+        const state = useEditorStore.getState()
+        const take = state.takes.find((candidate) => candidate.id === state.selectedTakeId)
+        if (!take) return
+        const name = window.prompt('Take name', take.name || '')
+        if (name !== null) state.renameTake(take.id, name)
+      },
     },
-    [handleDeleteSelectedRegion, handleSplitAtPlayhead, undo, redo, togglePlay, handleSeekFrame, togglePreviewFullScreen],
+    [
+      handleDeleteSelectedRegion,
+      handleSplitAtPlayhead,
+      undo,
+      redo,
+      togglePlay,
+      handleSeekFrame,
+      togglePreviewFullScreen,
+    ],
   )
 
   useEffect(() => {

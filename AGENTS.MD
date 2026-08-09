@@ -71,6 +71,7 @@ Recording profile invariant:
 - On Windows, webcam capture options must be probed before recording when an explicit size is requested. If DShow rejects the target size, fall back to a supported common size or device default instead of aborting the recording.
 - On Windows, when webcam capture is enabled, screen capture and webcam capture must run in separate FFmpeg processes. Keep screen+mic in the main process and webcam in an auxiliary process so a slow DShow camera cannot starve `ddagrab` screen frames. Stop/cancel paths must shut down every FFmpeg process before validating or discarding session files.
 - On Windows, pass the friendly DShow device name to FFmpeg (`deviceLabel`); keep the alternative/PnP identifier only as the persisted selection id. Do not use the PnP id as `video=` or `audio=` input text.
+- On Windows `gfxcapture` produces D3D11 frames. For native-resolution captures, probe the selected hardware encoder before choosing frame transfer: NVIDIA NVENC and AMD AMF may use direct D3D11 frames, Intel QSV may use an explicit direct D3D11-to-QSV map, and any failed/unsupported route must fall back to `hwdownload,format=bgra`. Do not remove the fallback, and retain it for CPU encoders or CPU scaling until an equivalent hardware path is validated.
 - The Windows DShow webcam probe must require at least one captured frame, not only a successful device open/exit code. If the device returns zero frames, stop before starting the rest of the recording and show a camera-busy/driver diagnostic.
 - On Windows, DShow webcam capture should use enlarged input buffering (`thread_queue_size`/`rtbufsize`) and should fall back from requested 60fps to 30fps when the camera rejects 60fps. Do not lower screen FPS just because the webcam only supports 30fps.
 - Never apply Windows `PRIORITY_LOW`/Idle to the DShow webcam process; use at least `PRIORITY_BELOW_NORMAL` so it can deliver the first frame.
@@ -115,6 +116,9 @@ Media URL invariant:
 
 ### 3.3 Timeline and media UI
 - Timeline shell: `src/components/editor/Timeline.tsx`
+- Take EDL/model helpers: `src/lib/takes.ts`
+- Take track: `src/components/editor/timeline/TakeTrack.tsx`
+- Take inspector/setup: `src/components/editor/sidepanel/TakeSettings.tsx`
 - Region settings: `src/components/editor/RegionSettingsPanel.tsx`
 - Media panel: `src/components/editor/sidepanel/MediaAssetsPanel.tsx`
 - Side panel routing: `src/components/editor/SidePanel.tsx`
@@ -125,10 +129,13 @@ Media URL invariant:
 - Preview controls: `src/components/editor/PreviewControls.tsx`
 - Export UI flow: `src/components/editor/ExportModal.tsx`
 - Export orchestration hook: `src/hooks/useExportProcess.ts`
+- Export composition worker: `src/pages/RendererPage.tsx`
+- Export audio EDL/mix: `electron/main/features/export-manager.ts`
 
 ### 3.5 IPC and desktop integration
 - IPC registration: `electron/main/ipc/index.ts`
 - Media import handler: `electron/main/ipc/handlers/media.ts`
+- Recording/take marker owner: `electron/main/features/recording-manager.ts`
 - Recording handlers: `electron/main/ipc/handlers/recording.ts`
 - Export handlers: `electron/main/ipc/handlers/export.ts`
 - File/project handlers: `electron/main/ipc/handlers/file-system.ts`
@@ -152,6 +159,17 @@ Media URL invariant:
 Store composition:
 - Global store uses Zustand + Immer + Zundo in `src/store/editorStore.ts`.
 - Undo/redo history is intentionally partialized to visual/timeline state; operational state must not pollute history.
+
+Take-mode contract:
+- `takeModeEnabled` is optional and defaults to legacy continuous-video behavior when absent.
+- `sourceDuration` is the physical recording length; `duration` is the composed EDL length.
+- `takes` array order is canonical. Destination positions are derived with `positionTakes`; never serialize destination starts.
+- `takeTransitions` only connect adjacent explicit IDs. Missing transition means hard cut; reorder, split, duplicate, and delete prune invalid transitions instead of silently retargeting them.
+- `currentTime` is composition time in take mode. Mapping to screen, webcam, imported video, mic, computer audio, or embedded source audio goes through the take EDL.
+- Lower timeline regions remain at absolute composition seconds. Shortening/reordering takes does not ripple them; preview/export clip content outside composed duration without deleting stored regions.
+- Auto-generated click zooms and mouse effects are projected from each screen take's source interval into composition time. Delete/trim removes the absent segment, while a surviving partial effect keeps its original animation phase; manually authored regions stay at absolute composition seconds.
+- Imported take video is copied into app-owned storage and prepared as a CFR, GOP-2s seekable proxy through `media:prepare-take-video`; renderer access stays behind preload IPC.
+- Accepted take marks emit a silent, click-through, content-protected toast window from the main recording process; it is not rendered in the recorder/preview/export video path.
 
 Media-audio contract state:
 - `systemAudioPath: string | null`
@@ -374,6 +392,7 @@ Global layout:
 - Header icon chip blocks (settings sections): `w-10 h-10 rounded-lg`.
 
 Timeline geometry (`src/components/editor/Timeline.tsx`):
+- Take mode keeps the sticky temporal ruler first, then one sticky `64px` EDL track directly below it; both share the same horizontal time scroll, `pixelsPerSecond`, zoom, playhead, and temporal hitboxes.
 - `LANE_HEIGHT_PX = 72`
 - `LANE_GAP_PX = 8`
 - `RULER_HEIGHT_PX = 48`
@@ -570,6 +589,7 @@ Escalation path:
 | Recorder toolbar/window interaction bug | `src/pages/RecorderPage.tsx`, `src/lib/recorder-window.ts`, `electron/main/windows/recorder-window.ts` | High | Dropdowns open downward, long labels truncate, switching between recorder dropdowns does not focus the background window, toolbar clicks outside an open menu stay on the recorder, and hover click-through still restores after leaving the toolbar |
 | Screen capture/encoder selection issue | `electron/main/features/windows-screen-capture.ts`, `electron/main/features/screen-encoder.ts`, `electron/main/features/recording-manager.ts`, `src/components/settings/PerformanceTab.tsx`, `src/pages/RecorderPage.tsx` | Critical | Probe selected encoder, verify Automatic/manual/Generic warnings, record secondary monitors with mixed DPI, confirm cursor appears once, and compare hardware versus Generic CPU usage |
 | Recorder-to-editor handoff issue | `src/pages/RecorderPage.tsx`, `electron/main/ipc/handlers/recording.ts`, `src/pages/EditorPage.tsx` | High | Open/import flow starts editor with correct payload |
+| Take recording/editor/export issue | `src/lib/takes.ts`, `electron/main/features/recording-manager.ts`, `src/components/editor/timeline/TakeTrack.tsx`, `src/components/editor/Preview.tsx`, `src/pages/RendererPage.tsx`, `electron/main/features/export-manager.ts` | Critical | Pure EDL tests + Windows global shortcut/tray recording + boundary scrub + full decode/probe export |
 | Release CI / artifact publishing change | `.github/workflows/release.yml`, `.releaserc.json`, `package.json` | High | Confirm release tag/version handoff, public asset names, and GitHub Release upload behavior |
 
 Workflow simulation checkpoints:

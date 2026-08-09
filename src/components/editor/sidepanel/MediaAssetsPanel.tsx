@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   FileImport,
@@ -38,6 +38,17 @@ export function MediaAssetsPanel() {
   const [isImporting, setIsImporting] = useState(false)
   const [isImportingVideo, setIsImportingVideo] = useState(false)
   const [isImportingImage, setIsImportingImage] = useState(false)
+  const [takePreparation, setTakePreparation] = useState<{ requestId: string; progress: number; stage: string } | null>(
+    null,
+  )
+
+  useEffect(
+    () =>
+      window.electronAPI.onPrepareTakeVideoProgress((payload) => {
+        setTakePreparation((current) => (current?.requestId === payload.requestId ? payload : current))
+      }),
+    [],
+  )
 
   const {
     currentTime,
@@ -128,11 +139,16 @@ export function MediaAssetsPanel() {
     try {
       setIsImportingVideo(true)
       const result = await window.electronAPI.importMediaVideoAsset()
-      if (result.asset) addFloatingMonitor(result.asset)
+      if (!result.asset) return
+      const requestId = `take-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setTakePreparation({ requestId, progress: 0, stage: 'Reading metadata' })
+      const prepared = await window.electronAPI.prepareTakeVideo(result.asset.path, requestId)
+      if (prepared.asset) addFloatingMonitor(prepared.asset)
     } catch (error) {
       console.error('Failed to import media video asset:', error)
     } finally {
       setIsImportingVideo(false)
+      setTakePreparation(null)
     }
   }
 
@@ -168,12 +184,23 @@ export function MediaAssetsPanel() {
             <Upload className={cn('h-4 w-4', (isVideo ? isImportingVideo : isImportingImage) && 'animate-pulse')} />
             {isVideo
               ? isImportingVideo
-                ? 'Importing...'
+                ? takePreparation
+                  ? `${takePreparation.stage} ${Math.round(takePreparation.progress)}%`
+                  : 'Importing...'
                 : 'Import Video'
               : isImportingImage
                 ? 'Importing...'
                 : 'Import Image'}
           </Button>
+          {isVideo && takePreparation && (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => window.electronAPI.cancelPrepareTakeVideo(takePreparation.requestId)}
+            >
+              Cancel preparation
+            </Button>
+          )}
 
           {visualAssets.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center">

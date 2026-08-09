@@ -20,6 +20,7 @@ import { ContextMenu, ContextMenuItem } from '../ui/context-menu'
 import { SimpleTooltip } from '../ui/tooltip'
 import type { TimelineRegion } from '../../types'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../lib/media-assets'
+import { TakeTrack, TAKE_TRACK_HEIGHT } from './timeline/TakeTrack'
 
 const LANE_HEIGHT_PX = 72
 const CONTENT_ROOT_LANE_HEIGHT_PX = 30
@@ -38,14 +39,17 @@ const Ruler = memo(
     timeToPx,
     formatTime: formatTimeFunc,
     onMouseDown,
+    topOffset,
   }: {
     ticks: { time: number; type: string }[]
     timeToPx: (time: number) => number
     formatTime: (seconds: number) => string
     onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void
+    topOffset: number
   }) => (
     <div
-      className="sticky top-0 left-0 right-0 z-[300] h-12 cursor-ew-resize overflow-hidden border-b border-border/30 bg-card/95 backdrop-blur-md"
+      className="sticky left-0 right-0 z-[300] h-12 cursor-ew-resize overflow-hidden border-b border-border/30 bg-card/95 backdrop-blur-md"
+      style={{ top: topOffset }}
       onMouseDown={onMouseDown}
     >
       <div className="relative h-full pt-2">
@@ -94,8 +98,8 @@ const TimelinePlayhead = memo(
 
     useEffect(() => {
       const animate = () => {
-        if (videoRef.current && playheadRef.current) {
-          playheadRef.current.style.transform = `translateX(${timeToTrackPx(videoRef.current.currentTime)}px)`
+        if (playheadRef.current) {
+          playheadRef.current.style.transform = `translateX(${timeToTrackPx(useEditorStore.getState().currentTime)}px)`
         }
         animationFrameRef.current = requestAnimationFrame(animate)
       }
@@ -137,7 +141,16 @@ export function Timeline({
   videoRef: React.RefObject<HTMLVideoElement>
   onScrubStateChange?: (isScrubbing: boolean) => void
 }) {
-  const { duration, timelineZoom, previewCutRegion, selectedRegionId, timelineLanes, mediaAudioClip } = useEditorStore(
+  const {
+    duration,
+    timelineZoom,
+    previewCutRegion,
+    selectedRegionId,
+    timelineLanes,
+    mediaAudioClip,
+    takeModeEnabled,
+    assetTimelineEditing,
+  } = useEditorStore(
     useShallow((state) => ({
       duration: state.duration,
       timelineZoom: state.timelineZoom,
@@ -145,6 +158,8 @@ export function Timeline({
       selectedRegionId: state.selectedRegionId,
       timelineLanes: state.timelineLanes,
       mediaAudioClip: state.mediaAudioClip,
+      takeModeEnabled: state.takeModeEnabled,
+      assetTimelineEditing: state.assetTimelineEditing,
     })),
   )
 
@@ -152,6 +167,7 @@ export function Timeline({
     setCurrentTime,
     setPlaying,
     setSelectedRegionId,
+    selectTake,
     addTimelineLane,
     moveTimelineLane,
     removeTimelineLane,
@@ -162,6 +178,7 @@ export function Timeline({
       setCurrentTime: state.setCurrentTime,
       setPlaying: state.setPlaying,
       setSelectedRegionId: state.setSelectedRegionId,
+      selectTake: state.selectTake,
       addTimelineLane: state.addTimelineLane,
       moveTimelineLane: state.moveTimelineLane,
       removeTimelineLane: state.removeTimelineLane,
@@ -174,6 +191,7 @@ export function Timeline({
   const fallbackLaneId = useMemo(() => getFallbackLaneId(timelineLanes), [timelineLanes])
   const showLaneActionButtons = sortedLanes.length > 1
   const timelineStartOffsetPx = LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX
+  const takeTrackHeight = takeModeEnabled && !assetTimelineEditing ? TAKE_TRACK_HEIGHT : 0
 
   const containerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -242,9 +260,11 @@ export function Timeline({
 
     if (container && didZoomChange && previousPixelsPerSecond > 0 && pixelsPerSecond > 0) {
       const editorState = useEditorStore.getState()
-      const playheadTime = editorState.isPlaying
-        ? (videoRef.current?.currentTime ?? editorState.currentTime)
-        : editorState.currentTime
+      const playheadTime = editorState.takeModeEnabled
+        ? editorState.currentTime
+        : editorState.isPlaying
+          ? (videoRef.current?.currentTime ?? editorState.currentTime)
+          : editorState.currentTime
       const previousPlayheadViewportX =
         timelineStartOffsetPx + playheadTime * previousPixelsPerSecond - container.scrollLeft
       const playheadViewportX =
@@ -266,6 +286,10 @@ export function Timeline({
     (time: number) => {
       const clampedTime = Math.max(0, Math.min(time, duration))
       setCurrentTime(clampedTime)
+      if (takeModeEnabled) {
+        pendingVideoSeekTimeRef.current = null
+        return
+      }
       const video = videoRef.current
       if (!video) {
         pendingVideoSeekTimeRef.current = null
@@ -329,7 +353,7 @@ export function Timeline({
 
       drainPendingSeek()
     },
-    [duration, setCurrentTime, videoRef],
+    [duration, setCurrentTime, takeModeEnabled, videoRef],
   )
 
   const applyRulerTime = useCallback(
@@ -694,10 +718,7 @@ export function Timeline({
   }, [allRegionsToRender, sortedLanes, fallbackLaneId])
 
   const visibleSortedLanes = useMemo(
-    () =>
-      sortedLanes.filter(
-        (lane) => !lane.isContentRootLane || (regionsByLane.get(lane.id)?.length ?? 0) > 0,
-      ),
+    () => sortedLanes.filter((lane) => !lane.isContentRootLane || (regionsByLane.get(lane.id)?.length ?? 0) > 0),
     [sortedLanes, regionsByLane],
   )
 
@@ -706,16 +727,19 @@ export function Timeline({
       visibleSortedLanes.reduce(
         (total, lane) => total + (lane.isContentRootLane ? CONTENT_ROOT_LANE_HEIGHT_PX : LANE_HEIGHT_PX),
         0,
-      ) + Math.max(0, visibleSortedLanes.length - 1) * LANE_GAP_PX,
+      ) +
+      Math.max(0, visibleSortedLanes.length - 1) * LANE_GAP_PX,
     [visibleSortedLanes],
   )
-  const timelineContentHeight = RULER_HEIGHT_PX + lanesContentHeight
+  const timelineContentHeight = takeTrackHeight + RULER_HEIGHT_PX + lanesContentHeight
   const minTimelineViewportHeight =
+    takeTrackHeight +
     RULER_HEIGHT_PX +
     CONTENT_ROOT_LANE_HEIGHT_PX +
     TIMELINE_MIN_VISIBLE_LANES * LANE_HEIGHT_PX +
     TIMELINE_MIN_VISIBLE_LANES * LANE_GAP_PX
   const maxTimelineViewportHeight =
+    takeTrackHeight +
     RULER_HEIGHT_PX +
     CONTENT_ROOT_LANE_HEIGHT_PX +
     TIMELINE_MAX_VISIBLE_LANES * LANE_HEIGHT_PX +
@@ -863,29 +887,42 @@ export function Timeline({
             if (
               (e.target as HTMLElement).closest('[data-region-id]') ||
               (e.target as HTMLElement).closest('[data-lane-control]') ||
+              (e.target as HTMLElement).closest('[data-take-control]') ||
               (e.target as HTMLElement).closest('[data-playhead]')
             ) {
               return
             }
             setSelectedRegionId(null)
+            selectTake(null)
           }}
         >
           <div
             ref={timelineRef}
             className="relative min-w-full overflow-visible"
-            style={{ width: `${timelineStartOffsetPx + timeToPx(trackDuration)}px`, height: `${timelineContentHeight}px` }}
+            style={{
+              width: `${timelineStartOffsetPx + timeToPx(trackDuration)}px`,
+              height: `${timelineContentHeight}px`,
+            }}
           >
             <Ruler
               ticks={rulerTicks}
               timeToPx={timeToTrackPx}
               formatTime={formatTime}
               onMouseDown={handleRulerMouseDown}
+              topOffset={0}
             />
+            {takeTrackHeight > 0 && (
+              <TakeTrack
+                timeToTrackPx={timeToTrackPx}
+                pixelsPerSecond={pixelsPerSecond}
+                topOffset={RULER_HEIGHT_PX}
+              />
+            )}
 
             <div
               ref={lanesContainerRef}
               className="absolute left-0 w-full"
-              style={{ top: `${RULER_HEIGHT_PX}px`, height: `${lanesContentHeight}px` }}
+              style={{ top: `${RULER_HEIGHT_PX + takeTrackHeight}px`, height: `${lanesContentHeight}px` }}
             >
               {visibleSortedLanes.map((lane, laneIndex) => {
                 const isContentRootLane = !!lane.isContentRootLane
@@ -913,7 +950,11 @@ export function Timeline({
                       height: `${laneHeightPx}px`,
                       marginBottom: laneIndex === visibleSortedLanes.length - 1 ? 0 : `${LANE_GAP_PX}px`,
                     }}
-                    onDragOver={isSpecialLane ? (event) => handleMediaAssetDragOver(event, lane.id, true) : (event) => handleMediaAssetDragOver(event, lane.id)}
+                    onDragOver={
+                      isSpecialLane
+                        ? (event) => handleMediaAssetDragOver(event, lane.id, true)
+                        : (event) => handleMediaAssetDragOver(event, lane.id)
+                    }
                     onDragLeave={
                       isSpecialLane
                         ? undefined
@@ -923,7 +964,11 @@ export function Timeline({
                             }
                           }
                     }
-                    onDrop={isSpecialLane ? (event) => handleMediaAssetDrop(event, lane.id, true) : (event) => handleMediaAssetDrop(event, lane.id)}
+                    onDrop={
+                      isSpecialLane
+                        ? (event) => handleMediaAssetDrop(event, lane.id, true)
+                        : (event) => handleMediaAssetDrop(event, lane.id)
+                    }
                   >
                     {showLaneActionButtons && !isSpecialLane && (
                       <div

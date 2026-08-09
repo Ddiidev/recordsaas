@@ -31,8 +31,10 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
-// Enable WebCodecs in renderer/worker contexts
-app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
+// Enable WebCodecs and the Wayland global-shortcut portal before app readiness.
+const enabledFeatures = ['WebCodecs', 'WebCodecsExperimental']
+if (process.platform === 'linux') enabledFeatures.push('GlobalShortcutsPortal')
+app.commandLine.appendSwitch('enable-features', enabledFeatures.join(','))
 app.commandLine.appendSwitch('enable-blink-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('disable-gpu-vsync')
 

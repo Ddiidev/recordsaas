@@ -24,6 +24,12 @@ import { getTopActiveRegionAtTime, getTopRegionByPredicate } from '../../lib/tim
 import { BlurOverlayEditor } from './preview/BlurOverlayEditor'
 import { FloatingMonitorOverlayEditor } from './preview/FloatingMonitorOverlayEditor'
 import type { ChangeSoundSourceKey, FloatingMonitor, FloatingMonitorRegion } from '../../types'
+import {
+  getTakeScopedZoomRegions,
+  mapCompositionTimeToTake,
+  mapTakeMetadataToComposition,
+  positionTakes,
+} from '../../lib/takes'
 
 const PLAYBACK_UI_SYNC_INTERVAL_MS = 200
 const WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS = 0.12
@@ -279,6 +285,9 @@ export const Preview = memo(
       updateRegion,
       cursorStyles,
       cursorBitmapsToRender,
+      takeModeEnabled,
+      takes,
+      takeTransitions,
     } = useEditorStore(
       useShallow((state) => ({
         videoUrl: state.videoUrl,
@@ -322,6 +331,9 @@ export const Preview = memo(
         updateRegion: state.updateRegion,
         cursorStyles: state.cursorStyles,
         cursorBitmapsToRender: state.cursorBitmapsToRender,
+        takeModeEnabled: state.takeModeEnabled,
+        takes: state.takes,
+        takeTransitions: state.takeTransitions,
       })),
     )
 
@@ -343,6 +355,9 @@ export const Preview = memo(
     const mediaAudioRef = useRef<HTMLAudioElement>(null)
     const floatingMonitorVideoRefs = useRef(new Map<string, HTMLVideoElement>())
     const floatingMonitorImageRefs = useRef(new Map<string, HTMLImageElement>())
+    const takeVideoRefs = useRef(new Map<string, HTMLVideoElement>())
+    const takeCanvasARef = useRef<HTMLCanvasElement | null>(null)
+    const takeCanvasBRef = useRef<HTMLCanvasElement | null>(null)
     const assetImageRef = useRef<HTMLImageElement>(null)
     const isEditingImageAsset = Boolean(
       assetTimelineEditing && floatingMonitors[assetTimelineEditing.monitorId]?.kind === 'image',
@@ -355,11 +370,21 @@ export const Preview = memo(
       () => collectFloatingMonitorSourceInstances(floatingMonitorRegions, floatingMonitors, null),
       [floatingMonitorRegions, floatingMonitors],
     )
+    const importedTakeAssets = useMemo(
+      () =>
+        takes.flatMap((take) => {
+          if (take.source.kind !== 'imported-video') return []
+          const monitor = floatingMonitors[take.source.assetId]
+          return monitor?.kind === 'video' ? [{ takeId: take.id, monitor }] : []
+        }),
+      [floatingMonitors, takes],
+    )
     const animationFrameId = useRef<number | null>(null)
     const monitorRenderFrameRef = useRef<number | null>(null)
     const lastWebcamResyncAtRef = useRef(0)
     const lastUiSyncAtRef = useRef(0)
     const lastRenderedMainVideoFrameCountRef = useRef<number | null>(null)
+    const takePlaybackFrameRef = useRef<number | null>(null)
     const [playbackUiTime, setPlaybackUiTime] = useState(0)
     const [controlBarWidth, setControlBarWidth] = useState(0)
     const [previewStageSize, setPreviewStageSize] = useState({ width: 0, height: 0 })
@@ -538,6 +563,124 @@ export const Preview = memo(
       ],
     )
 
+    const syncTakeCompositionMedia = useCallback(
+      (compositionTime: number, resumePlayback: boolean) => {
+        const mapping = mapCompositionTimeToTake(compositionTime, takes, takeTransitions)
+        if (!mapping) return
+        const mainVideo = videoRef.current
+        const webcamVideo = webcamVideoRef.current
+        const sourceElements = new Map<string, HTMLVideoElement>()
+        if (mainVideo) sourceElements.set('screen', mainVideo)
+        if (webcamVideo) sourceElements.set('webcam', webcamVideo)
+        takeVideoRefs.current.forEach((element, takeId) => sourceElements.set(`take:${takeId}`, element))
+        const sourceKey = (take: typeof mapping.primary.take): string => {
+          if (take.source.kind === 'recording-screen') return 'screen'
+          if (take.source.kind === 'recording-webcam') return 'webcam'
+          return `take:${take.id}`
+        }
+        const active = [mapping.primary, ...(mapping.secondary ? [mapping.secondary] : [])]
+        const activeKeys = new Set(active.map(({ take }) => sourceKey(take)))
+
+        sourceElements.forEach((element, key) => {
+          if (!activeKeys.has(key)) requestMediaPlayback(element, false)
+          element.muted = true
+        })
+        active.forEach((source) => {
+          const element = sourceElements.get(sourceKey(source.take))
+          if (!element) return
+          queueMediaSeek(
+            element,
+            source.sourceTime,
+            resumePlayback ? WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS : WEBCAM_SCRUB_RESYNC_DRIFT_SECS,
+          )
+          element.playbackRate = 1
+          const embeddedAudioActive =
+            source.take.source.kind === 'imported-video' && source.take.audioMode === 'source' && !source.take.isMuted
+          element.muted = !embeddedAudioActive
+          element.volume = embeddedAudioActive ? Math.max(0, Math.min(1, source.take.volume * source.weight)) : 0
+          requestMediaPlayback(element, resumePlayback)
+        })
+
+        const sessionSource =
+          mapping.transition?.audioMode === 'crossfade' && mapping.secondary
+            ? mapping.transitionProgress < 0.5
+              ? mapping.primary
+              : mapping.secondary
+            : mapping.primary
+        const sessionEnabled = sessionSource.take.audioMode === 'session' && !sessionSource.take.isMuted
+        const sessionLocalTime = sessionSource.sourceTime - sessionSource.take.sourceStart
+        const sessionAudioTime = Math.max(
+          0,
+          (sessionSource.take.sessionAudioStart ?? sessionSource.take.sourceStart) + sessionLocalTime,
+        )
+        const sessionGain = sessionEnabled ? sessionSource.take.volume : 0
+        const resolvedRecording = resolveRecordingForTime(compositionTime)
+        syncResolvedAudioElement(
+          recordingAudioRef.current,
+          {
+            ...resolvedRecording,
+            isActive: sessionEnabled && resolvedRecording.isActive,
+            sourceTime: sessionAudioTime,
+          },
+          volume * resolvedRecording.volumeMultiplier * sessionGain,
+          1,
+          resumePlayback && sessionEnabled,
+          AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
+          recordingSyncOffsetMs / 1000,
+        )
+        const resolvedSystem = resolveSystemAudioForTime(compositionTime)
+        syncResolvedAudioElement(
+          systemAudioRef.current,
+          { ...resolvedSystem, isActive: sessionEnabled && resolvedSystem.isActive, sourceTime: sessionAudioTime },
+          systemAudioVolume * resolvedSystem.volumeMultiplier * sessionGain,
+          1,
+          resumePlayback && sessionEnabled,
+          AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
+          systemAudioSyncOffsetMs / 1000,
+        )
+        const resolvedMedia = resolveMediaForTime(compositionTime)
+        syncResolvedAudioElement(
+          mediaAudioRef.current,
+          resolvedMedia,
+          resolvedMedia.volumeMultiplier,
+          1,
+          resumePlayback,
+          AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
+        )
+
+        const activeInstances = collectFloatingMonitorSourceInstances(
+          floatingMonitorRegions,
+          floatingMonitors,
+          compositionTime,
+        )
+        const activeInstanceKeys = new Set(activeInstances.map((instance) => instance.sourceKey))
+        floatingMonitorVideoRefs.current.forEach((monitorVideo, key) => {
+          if (!activeInstanceKeys.has(key)) requestMediaPlayback(monitorVideo, false)
+        })
+        activeInstances.forEach(({ sourceKey: key, monitor, sourceTime }) => {
+          if (monitor.kind === 'image') return
+          const monitorVideo = floatingMonitorVideoRefs.current.get(key)
+          if (!monitorVideo) return
+          queueMediaSeek(monitorVideo, sourceTime, WEBCAM_PLAYBACK_RESYNC_DRIFT_SECS)
+          requestMediaPlayback(monitorVideo, resumePlayback)
+        })
+      },
+      [
+        floatingMonitorRegions,
+        floatingMonitors,
+        recordingSyncOffsetMs,
+        resolveMediaForTime,
+        resolveRecordingForTime,
+        resolveSystemAudioForTime,
+        systemAudioSyncOffsetMs,
+        systemAudioVolume,
+        takeTransitions,
+        takes,
+        videoRef,
+        volume,
+      ],
+    )
+
     // --- Start of Changes for Fullscreen Controls ---
     const [isControlBarVisible, setIsControlBarVisible] = useState(false)
     const [isCursorHidden, setIsCursorHidden] = useState(false)
@@ -687,7 +830,9 @@ export const Preview = memo(
       if (
         !isEditingImageAsset &&
         video &&
-        state.isPlaying && !state.isTimelineScrubbing &&
+        state.isPlaying &&
+        !isTimelineScrubbing &&
+        !state.takeModeEnabled &&
         mainVideoFrameCount !== undefined &&
         lastRenderedMainVideoFrameCountRef.current === mainVideoFrameCount
       ) {
@@ -737,6 +882,120 @@ export const Preview = memo(
       }
       if (!video) return
 
+      if (state.takeModeEnabled && state.takes.length > 0) {
+        const mapping = mapCompositionTimeToTake(state.currentTime, state.takes, state.takeTransitions)
+        if (!mapping) return
+        const takePositions = new Map(
+          positionTakes(state.takes, state.takeTransitions).map((item) => [item.take.id, item]),
+        )
+
+        const resolveSource = (take: typeof mapping.primary.take): HTMLVideoElement | null => {
+          if (take.source.kind === 'recording-screen') return video
+          if (take.source.kind === 'recording-webcam') return webcamVideo
+          return takeVideoRefs.current.get(take.id) || null
+        }
+        const drawTake = (target: HTMLCanvasElement, sourceTime: typeof mapping.primary): boolean => {
+          const source = resolveSource(sourceTime.take)
+          const targetContext = target.getContext('2d')
+          if (!source || !targetContext || source.readyState < 2) return false
+          target.width = canvas.width
+          target.height = canvas.height
+          const isScreen = sourceTime.take.source.kind === 'recording-screen'
+          const takePosition = takePositions.get(sourceTime.take.id)
+          const takeEffects = takePosition
+            ? {
+                zoomRegions: getTakeScopedZoomRegions(state.zoomRegions, sourceTime.take.id),
+                metadata: mapTakeMetadataToComposition(state.metadata, sourceTime.take, takePosition.start),
+              }
+            : { zoomRegions: state.zoomRegions, metadata: [] }
+          const sceneState = isScreen
+            ? { ...state, ...takeEffects }
+            : {
+                ...state,
+                ...takeEffects,
+                isWebcamVisible: false,
+                swapRegions: {},
+                cursorStyles: {
+                  ...state.cursorStyles,
+                  showCursor: false,
+                  clickRippleEffect: false,
+                  clickScaleEffect: false,
+                },
+              }
+          drawScene(
+            targetContext,
+            sceneState,
+            source,
+            isScreen ? webcamVideo : null,
+            state.currentTime,
+            target.width,
+            target.height,
+            bgImage,
+            undefined,
+            undefined,
+            floatingMonitorSources,
+            undefined,
+            'main',
+            previewRenderScale,
+          )
+          return true
+        }
+
+        takeCanvasARef.current ||= document.createElement('canvas')
+        takeCanvasBRef.current ||= document.createElement('canvas')
+        const canvasA = takeCanvasARef.current
+        const canvasB = takeCanvasBRef.current
+        const hasPrimary = drawTake(canvasA, mapping.primary)
+        if (!hasPrimary) {
+          if (state.isPlaying) scheduleNextRender()
+          return
+        }
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        if (!mapping.secondary || !mapping.transition || !drawTake(canvasB, mapping.secondary)) {
+          ctx.drawImage(canvasA, 0, 0)
+        } else {
+          const progress = Math.max(0, Math.min(1, mapping.transitionProgress))
+          if (mapping.transition.type === 'dip-black') {
+            if (progress < 0.5) {
+              ctx.drawImage(canvasA, 0, 0)
+              ctx.fillStyle = `rgba(0,0,0,${progress * 2})`
+              ctx.fillRect(0, 0, canvas.width, canvas.height)
+            } else {
+              ctx.drawImage(canvasB, 0, 0)
+              ctx.fillStyle = `rgba(0,0,0,${(1 - progress) * 2})`
+              ctx.fillRect(0, 0, canvas.width, canvas.height)
+            }
+          } else if (mapping.transition.type === 'slide-left' || mapping.transition.type === 'slide-right') {
+            const direction = mapping.transition.type === 'slide-left' ? -1 : 1
+            ctx.drawImage(canvasA, direction * progress * canvas.width, 0)
+            ctx.drawImage(canvasB, direction * (progress - 1) * canvas.width, 0)
+          } else if (mapping.transition.type === 'zoom') {
+            const outgoingScale = 1 + progress * 0.08
+            const incomingScale = 0.92 + progress * 0.08
+            ctx.save()
+            ctx.globalAlpha = 1 - progress
+            ctx.translate(canvas.width / 2, canvas.height / 2)
+            ctx.scale(outgoingScale, outgoingScale)
+            ctx.drawImage(canvasA, -canvas.width / 2, -canvas.height / 2)
+            ctx.restore()
+            ctx.save()
+            ctx.globalAlpha = progress
+            ctx.translate(canvas.width / 2, canvas.height / 2)
+            ctx.scale(incomingScale, incomingScale)
+            ctx.drawImage(canvasB, -canvas.width / 2, -canvas.height / 2)
+            ctx.restore()
+          } else {
+            ctx.drawImage(canvasA, 0, 0)
+            ctx.globalAlpha = progress
+            ctx.drawImage(canvasB, 0, 0)
+            ctx.globalAlpha = 1
+          }
+        }
+        if (state.isPlaying) scheduleNextRender()
+        return
+      }
+
       if (webcamVideo && !isTimelineScrubbing) {
         webcamVideo.playbackRate = video.playbackRate
         const drift = Math.abs(webcamVideo.currentTime - video.currentTime)
@@ -780,6 +1039,54 @@ export const Preview = memo(
         scheduleNextRender()
       }
     }, [videoRef, bgImage, isTimelineScrubbing, isEditingImageAsset])
+
+    useEffect(() => {
+      if (!takeModeEnabled || isEditingImageAsset) return
+      if (takePlaybackFrameRef.current !== null) {
+        cancelAnimationFrame(takePlaybackFrameRef.current)
+        takePlaybackFrameRef.current = null
+      }
+
+      if (!isPlaying) return
+
+      let previousTick = performance.now()
+      let playbackTime = useEditorStore.getState().currentTime
+      const tick = (now: number) => {
+        const state = useEditorStore.getState()
+        if (!state.isPlaying || !state.takeModeEnabled) return
+        const deltaSeconds = Math.min(0.1, Math.max(0, now - previousTick) / 1000)
+        previousTick = now
+        const activeCut = getTopActiveRegionAtTime(Object.values(state.cutRegions), playbackTime, state.timelineLanes)
+        if (activeCut) playbackTime = activeCut.startTime + activeCut.duration
+        const activeSpeed = getTopActiveRegionAtTime(
+          Object.values(state.speedRegions),
+          playbackTime,
+          state.timelineLanes,
+        )
+        playbackTime = Math.min(state.duration, playbackTime + deltaSeconds * (activeSpeed?.speed || 1))
+        state.setCurrentTime(playbackTime)
+        setPlaybackUiTime(playbackTime)
+        syncTakeCompositionMedia(playbackTime, true)
+        if (playbackTime >= state.duration) {
+          state.setPlaying(false)
+          return
+        }
+        takePlaybackFrameRef.current = requestAnimationFrame(tick)
+      }
+      syncTakeCompositionMedia(playbackTime, true)
+      renderCanvas()
+      takePlaybackFrameRef.current = requestAnimationFrame(tick)
+      return () => {
+        if (takePlaybackFrameRef.current !== null) cancelAnimationFrame(takePlaybackFrameRef.current)
+        takePlaybackFrameRef.current = null
+      }
+    }, [isEditingImageAsset, isPlaying, renderCanvas, syncTakeCompositionMedia, takeModeEnabled])
+
+    useEffect(() => {
+      if (!takeModeEnabled || isPlaying || isEditingImageAsset) return
+      syncTakeCompositionMedia(currentTime, false)
+      renderCanvas()
+    }, [currentTime, isEditingImageAsset, isPlaying, renderCanvas, syncTakeCompositionMedia, takeModeEnabled])
 
     const queueMonitorCanvasRender = useCallback(() => {
       if (useEditorStore.getState().isPlaying || monitorRenderFrameRef.current !== null) return
@@ -843,6 +1150,7 @@ export const Preview = memo(
     useEffect(() => {
       const video = videoRef.current
       if (!video) return
+      if (takeModeEnabled) return
       const webcamVideo = webcamVideoRef.current
       const recordingAudio = recordingAudioRef.current
       const systemAudio = systemAudioRef.current
@@ -868,21 +1176,23 @@ export const Preview = memo(
         if (systemAudio) systemAudio.playbackRate = 1
         if (mediaAudio) mediaAudio.playbackRate = 1
       }
-    }, [isPlaying, isTimelineScrubbing, syncMediaToVideoTime, videoRef])
+    }, [isPlaying, isTimelineScrubbing, syncMediaToVideoTime, takeModeEnabled, videoRef])
 
     useEffect(() => {
       const video = videoRef.current
       if (!video) return
+      if (takeModeEnabled) return
       syncMediaToVideoTime(video.currentTime, isPlaying)
-    }, [audioUrl, isPlaying, mediaAudioClip, syncMediaToVideoTime, systemAudioUrl, videoRef])
+    }, [audioUrl, isPlaying, mediaAudioClip, syncMediaToVideoTime, systemAudioUrl, takeModeEnabled, videoRef])
 
     useEffect(() => {
       if (isTimelineScrubbing) return
+      if (takeModeEnabled) return
       const video = videoRef.current
       if (!video) return
       syncMediaToVideoTime(video.currentTime, !video.paused)
       renderCanvas()
-    }, [isTimelineScrubbing, renderCanvas, syncMediaToVideoTime, videoRef])
+    }, [isTimelineScrubbing, renderCanvas, syncMediaToVideoTime, takeModeEnabled, videoRef])
 
     // Effect to handle volume and mute state
     useEffect(() => {
@@ -901,19 +1211,19 @@ export const Preview = memo(
         }
       }
       if (recordingAudio) {
-        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
+        const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedRecording = resolveRecordingForTime(playbackTime)
         recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
-        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
+        const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
         systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume * resolvedSystemAudio.volumeMultiplier))
         systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
-        const playbackTime = video?.currentTime ?? useEditorStore.getState().currentTime
+        const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedMedia = resolveMediaForTime(playbackTime)
         mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
         mediaAudio.muted = false
@@ -928,10 +1238,13 @@ export const Preview = memo(
       resolveMediaForTime,
       systemAudioVolume,
       systemAudioMuted,
+      takeModeEnabled,
+      currentTime,
     ])
 
     const handleTimeUpdate = () => {
       if (!videoRef.current) return
+      if (takeModeEnabled) return
       const video = videoRef.current
       const recordingAudio = recordingAudioRef.current
       const systemAudio = systemAudioRef.current
@@ -1066,7 +1379,11 @@ export const Preview = memo(
 
         // Restore the video's time from the store to prevent rewinding. The
         // persistent seeked handler redraws the canvas and syncs audio.
-        video.currentTime = timeFromStore
+        const mapping = store.takeModeEnabled
+          ? mapCompositionTimeToTake(timeFromStore, store.takes, store.takeTransitions)
+          : null
+        video.currentTime =
+          mapping?.primary.take.source.kind === 'recording-screen' ? mapping.primary.sourceTime : timeFromStore
       }
     }
 
@@ -1147,6 +1464,7 @@ export const Preview = memo(
     }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, videoRef])
 
     const handleVideoPlay = useCallback(() => {
+      if (takeModeEnabled) return
       if (isTimelineScrubbing) {
         requestMediaPlayback(videoRef.current, false)
         return
@@ -1156,9 +1474,10 @@ export const Preview = memo(
       if (video) {
         setPlaybackUiTime(video.currentTime)
       }
-    }, [isTimelineScrubbing, setPlaying, videoRef])
+    }, [isTimelineScrubbing, setPlaying, takeModeEnabled, videoRef])
 
     const handleVideoPause = useCallback(() => {
+      if (takeModeEnabled) return
       setPlaying(false)
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -1174,9 +1493,10 @@ export const Preview = memo(
           webcamVideo.currentTime = video.currentTime
         }
       }
-    }, [isTimelineScrubbing, setPlaying, videoRef, syncCurrentTimeToStore])
+    }, [isTimelineScrubbing, setPlaying, takeModeEnabled, videoRef, syncCurrentTimeToStore])
 
     const handleVideoEnded = useCallback(() => {
+      if (takeModeEnabled) return
       setPlaying(false)
       const video = videoRef.current
       const webcamVideo = webcamVideoRef.current
@@ -1192,11 +1512,12 @@ export const Preview = memo(
           webcamVideo.currentTime = video.currentTime
         }
       }
-    }, [isTimelineScrubbing, setPlaying, videoRef, syncCurrentTimeToStore])
+    }, [isTimelineScrubbing, setPlaying, takeModeEnabled, videoRef, syncCurrentTimeToStore])
 
     const handleVideoSeeking = useCallback(() => {
       const video = videoRef.current
       if (!video) return
+      if (takeModeEnabled) return
 
       if (isTimelineScrubbing) {
         requestMediaPlayback(webcamVideoRef.current, false)
@@ -1207,11 +1528,12 @@ export const Preview = memo(
       }
 
       syncMediaToVideoTime(video.currentTime, false)
-    }, [isTimelineScrubbing, syncMediaToVideoTime, videoRef])
+    }, [isTimelineScrubbing, syncMediaToVideoTime, takeModeEnabled, videoRef])
 
     const handleVideoSeeked = useCallback(() => {
       const video = videoRef.current
       if (!video) return
+      if (takeModeEnabled) return
 
       setPlaybackUiTime(video.currentTime)
       syncCurrentTimeToStore(video.currentTime, true)
@@ -1219,9 +1541,16 @@ export const Preview = memo(
       if (!isTimelineScrubbing) {
         syncMediaToVideoTime(video.currentTime, !video.paused)
       }
-    }, [isTimelineScrubbing, renderCanvas, syncCurrentTimeToStore, syncMediaToVideoTime, videoRef])
+    }, [isTimelineScrubbing, renderCanvas, syncCurrentTimeToStore, syncMediaToVideoTime, takeModeEnabled, videoRef])
 
     const handleScrub = (value: number) => {
+      if (takeModeEnabled) {
+        setPlaybackUiTime(value)
+        syncCurrentTimeToStore(value, true)
+        syncTakeCompositionMedia(value, false)
+        renderCanvas()
+        return
+      }
       if (videoRef.current) {
         videoRef.current.currentTime = value
         setPlaybackUiTime(value)
@@ -1239,6 +1568,11 @@ export const Preview = memo(
       const rewindTime = startTrimRegion ? startTrimRegion.startTime + startTrimRegion.duration : 0
       setPlaybackUiTime(rewindTime)
       syncCurrentTimeToStore(rewindTime, true)
+      if (takeModeEnabled) {
+        syncTakeCompositionMedia(rewindTime, false)
+        renderCanvas()
+        return
+      }
       if (videoRef.current) {
         videoRef.current.currentTime = rewindTime
       }
@@ -1374,6 +1708,33 @@ export const Preview = memo(
             style={{ display: 'none' }}
           />
         )}
+        {importedTakeAssets.map(({ takeId, monitor }) => (
+          <video
+            key={`take-source-${takeId}`}
+            ref={(element) => {
+              if (element) takeVideoRefs.current.set(takeId, element)
+              else takeVideoRefs.current.delete(takeId)
+            }}
+            src={monitor.url}
+            muted
+            playsInline
+            preload="auto"
+            onLoadedMetadata={(event) => {
+              const importedDuration = event.currentTarget.duration
+              if (Number.isFinite(importedDuration) && importedDuration > 0 && importedDuration !== monitor.duration) {
+                updateFloatingMonitor(monitor.id, {
+                  duration: importedDuration,
+                  timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : importedDuration,
+                })
+              }
+              syncTakeCompositionMedia(useEditorStore.getState().currentTime, false)
+              renderCanvas()
+            }}
+            onSeeked={renderCanvas}
+            onError={(event) => handleMediaLoadError(`Take source ${monitor.name}`, event.currentTarget)}
+            style={{ display: 'none' }}
+          />
+        ))}
         {floatingMonitorSourceInstances.map(({ sourceKey, monitor }) =>
           monitor.kind === 'image' ? (
             <img

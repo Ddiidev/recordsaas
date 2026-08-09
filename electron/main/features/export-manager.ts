@@ -94,6 +94,31 @@ type ChangeSoundRegionLike = {
   fadeOutDuration: number
   zIndex?: number
 }
+type TakeLike = {
+  id: string
+  source?: { kind?: string; assetId?: string }
+  sourceStart?: number
+  duration?: number
+  audioMode?: 'session' | 'source' | 'none'
+  sessionAudioStart?: number
+  volume?: number
+  isMuted?: boolean
+}
+type TakeTransitionLike = {
+  fromTakeId?: string
+  toTakeId?: string
+  duration?: number
+  audioMode?: 'cut' | 'crossfade'
+}
+type TakeAudioPart = {
+  path: string
+  sourceStart: number
+  targetStart: number
+  duration: number
+  volume: number
+  fadeIn: number
+  fadeOut: number
+}
 type RunFFmpeg = (args: string[], label: string) => Promise<void>
 
 const MIN_AUDIO_SEGMENT_DURATION = 0.01
@@ -725,7 +750,8 @@ const mixAudioTracks = async (
   recordingTrackPath: string,
   mediaTrackPath: string,
   runFFmpeg: RunFFmpeg,
-): Promise<string | null> => {  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
+): Promise<string | null> => {
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
   const outPath = path.join(tmpDir, 'mixed.m4a')
   const args = [
     '-y',
@@ -752,6 +778,120 @@ const mixAudioTracks = async (
     } catch {
       // ignore cleanup errors
     }
+    return null
+  }
+}
+
+const buildTakeAudioParts = (
+  takes: TakeLike[],
+  transitions: TakeTransitionLike[],
+  resolvePath: (take: TakeLike) => string | null,
+): { parts: TakeAudioPart[]; duration: number } => {
+  const transitionMap = new Map(
+    transitions.map((transition) => [`${transition.fromTakeId}\0${transition.toTakeId}`, transition]),
+  )
+  const parts: TakeAudioPart[] = []
+  let cursor = 0
+  let previous: { take: TakeLike; start: number; duration: number } | null = null
+  for (const take of takes) {
+    const takeDuration = Math.max(0, Number(take.duration) || 0)
+    if (takeDuration <= 0) continue
+    const previousTake = previous?.take
+    const transition = previousTake ? transitionMap.get(`${previousTake.id}\0${take.id}`) : undefined
+    const overlap = transition
+      ? Math.max(0, Math.min(Number(transition.duration) || 0, (previous?.duration || 0) / 2, takeDuration / 2, 2))
+      : 0
+    const start = Math.max(0, cursor - overlap)
+    const path = resolvePath(take)
+    if (path && take.audioMode !== 'none' && !take.isMuted) {
+      const crossfade = transition?.audioMode === 'crossfade' ? overlap : 0
+      parts.push({
+        path,
+        sourceStart: Math.max(0, Number(take.audioMode === 'session' ? take.sessionAudioStart : take.sourceStart) || 0),
+        targetStart: start,
+        duration: takeDuration,
+        volume: Math.max(
+          0,
+          Math.min(1, typeof take.volume === 'number' && Number.isFinite(take.volume) ? take.volume : 1),
+        ),
+        fadeIn: crossfade,
+        fadeOut: 0,
+      })
+      if (crossfade > 0 && parts.length > 1) parts[parts.length - 2].fadeOut = crossfade
+      if (overlap > 0 && transition?.audioMode !== 'crossfade' && parts.length > 1) {
+        const cutAt = start + overlap / 2
+        const outgoing = parts[parts.length - 2]
+        outgoing.duration = Math.max(MIN_AUDIO_SEGMENT_DURATION, cutAt - outgoing.targetStart)
+        const incoming = parts[parts.length - 1]
+        const skipped = overlap / 2
+        incoming.targetStart += skipped
+        incoming.sourceStart += skipped
+        incoming.duration = Math.max(MIN_AUDIO_SEGMENT_DURATION, incoming.duration - skipped)
+      }
+    }
+    cursor = start + takeDuration
+    previous = { take, start, duration: takeDuration }
+  }
+  return { parts, duration: cursor }
+}
+
+const renderTakeAudioComposition = async (
+  parts: TakeAudioPart[],
+  duration: number,
+  runFFmpeg: RunFFmpeg,
+  label: string,
+): Promise<string | null> => {
+  if (parts.length === 0 || duration <= 0) return null
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-take-audio-'))
+  const outPath = path.join(tmpDir, 'take-composition.m4a')
+  const inputIndexes = new Map<string, number>()
+  const inputPaths: string[] = []
+  for (const part of parts) {
+    if (!inputIndexes.has(part.path)) {
+      inputIndexes.set(part.path, inputPaths.length)
+      inputPaths.push(part.path)
+    }
+  }
+  const filterLines = parts.map((part, index) => {
+    const filters = [
+      `[${inputIndexes.get(part.path)}:a]atrim=start=${part.sourceStart.toFixed(6)}:duration=${part.duration.toFixed(6)}`,
+      'asetpts=PTS-STARTPTS',
+      `volume=${part.volume.toFixed(6)}`,
+    ]
+    if (part.fadeIn > 0) filters.push(`afade=t=in:st=0:d=${part.fadeIn.toFixed(6)}`)
+    if (part.fadeOut > 0)
+      filters.push(
+        `afade=t=out:st=${Math.max(0, part.duration - part.fadeOut).toFixed(6)}:d=${part.fadeOut.toFixed(6)}`,
+      )
+    filters.push(`adelay=${Math.round(part.targetStart * 1000)}:all=1`, 'aresample=48000')
+    return `${filters.join(',')}[take${index}]`
+  })
+  filterLines.push(
+    `${parts.map((_, index) => `[take${index}]`).join('')}amix=inputs=${parts.length}:normalize=0:dropout_transition=0,apad,atrim=duration=${duration.toFixed(6)}[aout]`,
+  )
+  const scriptPath = path.join(tmpDir, 'take-audio-filter.txt')
+  fs.writeFileSync(scriptPath, filterLines.join(';\n'), 'utf-8')
+  try {
+    await runFFmpeg(
+      [
+        '-y',
+        ...inputPaths.flatMap((inputPath) => ['-i', inputPath]),
+        '-filter_complex_script',
+        scriptPath,
+        '-map',
+        '[aout]',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        outPath,
+      ],
+      label,
+    )
+    return outPath
+  } catch (error) {
+    log.error(`[ExportManager] Failed to compose take audio (${label}):`, error)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
     return null
   }
 }
@@ -1457,8 +1597,8 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   const projectStateRecord = projectState as Record<string, unknown>
   try {
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
-    const recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
-    const systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
+    let recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
+    let systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
     const recordingVolume =
       typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume)
         ? Math.max(0, Math.min(projectStateRecord.recordingVolume, 1))
@@ -1470,7 +1610,8 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         : 1
     const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioVolume <= 0
     const recordingSyncOffsetMs =
-      typeof projectStateRecord.recordingSyncOffsetMs === 'number' && Number.isFinite(projectStateRecord.recordingSyncOffsetMs)
+      typeof projectStateRecord.recordingSyncOffsetMs === 'number' &&
+      Number.isFinite(projectStateRecord.recordingSyncOffsetMs)
         ? Math.round(Math.max(-10000, Math.min(projectStateRecord.recordingSyncOffsetMs, 10000)))
         : 0
     const systemAudioSyncOffsetMs =
@@ -1491,6 +1632,83 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       typeof projectState.duration === 'number' && Number.isFinite(projectState.duration)
         ? Math.max(0, projectState.duration)
         : 0
+    const takeModeEnabled = projectStateRecord.takeModeEnabled === true
+    const takes = Array.isArray(projectStateRecord.takes) ? (projectStateRecord.takes as TakeLike[]) : []
+    const takeTransitions = Array.isArray(projectStateRecord.takeTransitions)
+      ? (projectStateRecord.takeTransitions as TakeTransitionLike[])
+      : []
+    const floatingMonitors =
+      projectStateRecord.floatingMonitors && typeof projectStateRecord.floatingMonitors === 'object'
+        ? (projectStateRecord.floatingMonitors as Record<string, { path?: string }>)
+        : {}
+    let embeddedTakeAudioPath: string | null = null
+
+    if (takeModeEnabled && takes.length > 0) {
+      if (recordingPath) {
+        const composition = buildTakeAudioParts(takes, takeTransitions, (take) =>
+          take.audioMode === 'session' ? recordingPath : null,
+        )
+        const composed = await renderTakeAudioComposition(
+          composition.parts,
+          composition.duration,
+          runAuxiliaryFFmpeg,
+          'take-audio:recording',
+        )
+        if (composed) {
+          recordingPath = composed
+          processedAudioTempRoots.add(path.dirname(composed))
+        } else if (composition.parts.length > 0) {
+          throw new Error('Failed to compose recording audio takes')
+        }
+      }
+      if (systemAudioPath) {
+        const composition = buildTakeAudioParts(takes, takeTransitions, (take) =>
+          take.audioMode === 'session' ? systemAudioPath : null,
+        )
+        const composed = await renderTakeAudioComposition(
+          composition.parts,
+          composition.duration,
+          runAuxiliaryFFmpeg,
+          'take-audio:system',
+        )
+        if (composed) {
+          systemAudioPath = composed
+          processedAudioTempRoots.add(path.dirname(composed))
+        } else if (composition.parts.length > 0) {
+          throw new Error('Failed to compose computer audio takes')
+        }
+      }
+      const embeddedComposition = buildTakeAudioParts(takes, takeTransitions, (take) => {
+        if (take.audioMode !== 'source' || take.source?.kind !== 'imported-video' || !take.source.assetId) return null
+        return normalizeMediaPath(floatingMonitors[take.source.assetId]?.path)
+      })
+      const embeddedCompositionPath = await renderTakeAudioComposition(
+        embeddedComposition.parts,
+        embeddedComposition.duration,
+        runAuxiliaryFFmpeg,
+        'take-audio:embedded',
+      )
+      if (embeddedCompositionPath) {
+        const embeddedSegments = buildChangeSoundExportAudioSegments(
+          buildAudioTimelineSegments(
+            duration,
+            Object.values(projectState.cutRegions || {}) as CutLike[],
+            Object.values(projectState.speedRegions || {}) as SpeedLike[],
+            timelineLanes,
+          ),
+          [],
+          timelineLanes,
+        )
+        embeddedTakeAudioPath = await renderProcessedAudioFile(
+          embeddedCompositionPath,
+          embeddedSegments,
+          runAuxiliaryFFmpeg,
+        )
+        processedAudioTempRoots.add(path.dirname(embeddedCompositionPath))
+        if (!embeddedTakeAudioPath) throw new Error('Failed to process embedded take audio')
+        processedAudioTempRoots.add(path.dirname(embeddedTakeAudioPath))
+      }
+    }
     const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
     const speedRegions = Object.values(projectState.speedRegions || {}) as SpeedLike[]
     const recordingTimelineSegments = buildAudioTimelineSegments(
@@ -1544,11 +1762,15 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * recordingVolume)),
       }))
       if (recordingSegments.length > 0) {
-        if (recordingHasNoTransform) {
+        if (recordingHasNoTransform && !takeModeEnabled) {
           log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')
           recordingTrackPath = recordingPath
         } else {
-          const processedRecordingPath = await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)
+          const processedRecordingPath = await renderProcessedAudioFile(
+            recordingPath,
+            recordingSegments,
+            runAuxiliaryFFmpeg,
+          )
           if (!processedRecordingPath) {
             throw new Error('Failed to process recording audio track')
           }
@@ -1566,9 +1788,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         if (offsetRecordingPath !== recordingTrackPath) {
           processedAudioTempRoots.add(path.dirname(offsetRecordingPath))
           recordingTrackPath = offsetRecordingPath
-          log.info(
-            `[ExportManager] Applied recording audio sync offset of ${recordingSyncOffsetMs}ms.`,
-          )
+          log.info(`[ExportManager] Applied recording audio sync offset of ${recordingSyncOffsetMs}ms.`)
         }
       }
     }
@@ -1583,11 +1803,15 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
       }))
       if (systemSegments.length > 0) {
-        if (systemAudioHasNoTransform) {
+        if (systemAudioHasNoTransform && !takeModeEnabled) {
           log.info('[ExportManager] Reusing original computer audio; no computer audio edits detected.')
           systemTrackPath = systemAudioPath
         } else {
-          const processedSystemPath = await renderProcessedAudioFile(systemAudioPath, systemSegments, runAuxiliaryFFmpeg)
+          const processedSystemPath = await renderProcessedAudioFile(
+            systemAudioPath,
+            systemSegments,
+            runAuxiliaryFFmpeg,
+          )
           if (!processedSystemPath) {
             throw new Error('Failed to process computer audio track')
           }
@@ -1622,7 +1846,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       }
     }
 
-    const audioTracksToMix = [recordingTrackPath, systemTrackPath, mediaTrackPath].filter(
+    const audioTracksToMix = [recordingTrackPath, systemTrackPath, embeddedTakeAudioPath, mediaTrackPath].filter(
       (trackPath): trackPath is string => Boolean(trackPath),
     )
     if (audioTracksToMix.length > 1) {

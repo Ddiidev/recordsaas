@@ -29,11 +29,18 @@ export interface RecordingSession {
   recordingAudioBitrateKbps?: 128 | 192 | 320
   recordingAudioSampleRate?: 44100 | 48000
   originalProjectPath?: string
+  takeModeEnabled?: boolean
+  takeBoundaries?: number[]
+  takeLastPtsSeconds?: number
+  takeLastPtsMonotonicMs?: number
+  takeRecordingReadyMonotonicMs?: number
+  takeShortcut?: string
 }
 
 interface AppState {
   // Windows
   recorderWin: BrowserWindow | null
+  takeToastWin: BrowserWindow | null
   editorWin: BrowserWindow | null
   renderWorker: BrowserWindow | null
   savingWin: BrowserWindow | null
@@ -67,6 +74,7 @@ interface AppState {
 
 export const appState: AppState = {
   recorderWin: null,
+  takeToastWin: null,
   editorWin: null,
   renderWorker: null,
   savingWin: null,

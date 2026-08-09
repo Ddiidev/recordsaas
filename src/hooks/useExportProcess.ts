@@ -117,6 +117,12 @@ export const useExportProcess = () => {
       mediaAudioClip: fullState.mediaAudioClip,
       mediaAudioRegions: fullState.mediaAudioRegions,
       changeSoundRegions: fullState.changeSoundRegions,
+      takeModeEnabled: fullState.takeModeEnabled,
+      sourceDuration: fullState.sourceDuration,
+      takes: fullState.takes,
+      takeTransitions: fullState.takeTransitions,
+      floatingMonitors: fullState.floatingMonitors,
+      floatingMonitorRegions: fullState.floatingMonitorRegions,
     }
 
     setResult(null)

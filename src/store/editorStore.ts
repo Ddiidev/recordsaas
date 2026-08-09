@@ -100,6 +100,11 @@ export const useEditorStore = create(
           volume,
           isMuted,
           hasAudioTrack,
+          takeModeEnabled,
+          sourceDuration,
+          takes,
+          takeTransitions,
+          selectedTakeId,
         } = state
 
         return {
@@ -142,6 +147,11 @@ export const useEditorStore = create(
           volume,
           isMuted,
           hasAudioTrack,
+          takeModeEnabled,
+          sourceDuration,
+          takes,
+          takeTransitions,
+          selectedTakeId,
         }
       },
       equality: shallow,

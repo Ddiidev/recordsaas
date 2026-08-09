@@ -114,6 +114,10 @@ export interface ZoomRegion {
   targetY: number
   mode: 'auto' | 'fixed'
   zIndex: number
+  generatedTakeId?: string
+  generatedEffectStartTime?: number
+  generatedEffectDuration?: number
+  generatedEffectTransitionDuration?: number
 }
 
 export interface CutRegion {
@@ -325,6 +329,35 @@ export interface MediaAudioClip {
   startTime: number
 }
 
+export type TakeSourceRef =
+  | { kind: 'recording-screen' }
+  | { kind: 'recording-webcam' }
+  | { kind: 'imported-video'; assetId: string }
+
+export type TakeAudioMode = 'session' | 'source' | 'none'
+
+export interface TakeClip {
+  id: string
+  name?: string
+  source: TakeSourceRef
+  sourceStart: number
+  duration: number
+  audioMode: TakeAudioMode
+  sessionAudioStart?: number
+  volume: number
+  isMuted: boolean
+}
+
+export type TakeTransitionType = 'dissolve' | 'dip-black' | 'slide-left' | 'slide-right' | 'zoom'
+
+export interface TakeTransition {
+  fromTakeId: string
+  toTakeId: string
+  type: TakeTransitionType
+  duration: number
+  audioMode: 'cut' | 'crossfade'
+}
+
 export interface FloatingMonitor {
   id: string
   kind: 'video' | 'image'
@@ -341,6 +374,9 @@ export interface FloatingMonitor {
   width: number
   height: number
   timeline?: AssetTimelineState
+  hasAudioTrack?: boolean
+  isSeekableProxy?: boolean
+  originalPath?: string
 }
 
 export interface AssetTimelineState {
@@ -406,6 +442,11 @@ export interface AssetTimelineEditing {
     currentTime: number
     isPlaying: boolean
     assetTimelineEditing: AssetTimelineEditing | null
+    takeModeEnabled: boolean
+    sourceDuration: number
+    takes: TakeClip[]
+    takeTransitions: TakeTransition[]
+    selectedTakeId: string | null
   }
 }
 
@@ -439,6 +480,11 @@ export interface ProjectState {
   cursorTheme: CursorTheme | null
   hasAudioTrack: boolean
   originalProjectPath?: string
+  takeModeEnabled: boolean
+  sourceDuration: number
+  takes: TakeClip[]
+  takeTransitions: TakeTransition[]
+  selectedTakeId: string | null
 }
 
 export interface ProjectActions {
@@ -463,12 +509,32 @@ export interface ProjectActions {
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void
   clearMediaAudioClip: () => void
-  addFloatingMonitor: (monitor: { path: string; name: string; kind?: 'video' | 'image' }) => void
+  addFloatingMonitor: (monitor: {
+    path: string
+    name: string
+    kind?: 'video' | 'image'
+    duration?: number
+    hasAudioTrack?: boolean
+    isSeekableProxy?: boolean
+    originalPath?: string
+  }) => void
   updateFloatingMonitor: (id: string, updates: Partial<Omit<FloatingMonitor, 'id' | 'path' | 'url'>>) => void
   removeFloatingMonitor: (id: string) => void
   beginAssetTimelineEdit: (id: string) => void
   finishAssetTimelineEdit: () => void
   setOriginalProjectPath: (path: string) => void
+  setTakeModeEnabled: (enabled: boolean) => void
+  initializeTakes: (boundaries?: number[]) => void
+  selectTake: (id: string | null) => void
+  splitTake: (id: string, offset: number) => void
+  trimTake: (id: string, edge: 'start' | 'end', delta: number) => void
+  moveTake: (id: string, direction: 'left' | 'right') => void
+  duplicateTake: (id: string) => void
+  replaceTake: (id: string, source: TakeSourceRef, sourceDuration: number, audioMode?: TakeAudioMode) => void
+  renameTake: (id: string, name: string) => void
+  deleteTake: (id: string) => void
+  setTakeTransition: (transition: TakeTransition | null, boundary?: { fromTakeId: string; toTakeId: string }) => void
+  updateTake: (id: string, updates: Partial<Omit<TakeClip, 'id'>>) => void
 }
 
 export interface PlaybackState {

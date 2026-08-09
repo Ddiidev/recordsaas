@@ -17,7 +17,9 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap, deps: React.Depende
       let shortcutKey: string | null = null
 
       // Check for combinations with modifiers
-      if (platformModifier) {
+      if (event.altKey && !platformModifier) {
+        shortcutKey = `alt+${key}`
+      } else if (platformModifier) {
         const parts = ['ctrl'] // Normalize to 'ctrl' for simplicity
         if (event.shiftKey) {
           parts.push('shift')

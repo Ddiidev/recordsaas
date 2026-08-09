@@ -25,6 +25,7 @@ import { cn } from '../../lib/utils'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { AudioSettings } from './sidepanel/AudioSettings'
 import { MediaAssetsPanel } from './sidepanel/MediaAssetsPanel'
+import { TakeModeSettings, TakeSettingsPanel } from './sidepanel/TakeSettings'
 
 interface TabButtonProps {
   label: string
@@ -89,6 +90,7 @@ function FrameSettingsPanel() {
         {/* MODIFIED HERE */}
         <div className="p-6 space-y-8">
           <BackgroundSettings />
+          <TakeModeSettings />
           <FrameEffectsSettings />
         </div>
       </div>
@@ -100,6 +102,7 @@ export function SidePanel() {
   // Get necessary states from the store
   const {
     selectedRegionId,
+    selectedTakeId,
     zoomRegions,
     cutRegions,
     blurRegions,
@@ -112,11 +115,13 @@ export function SidePanel() {
     hasAudioTrack,
     assetTimelineEditing,
     setSelectedRegionId,
+    selectTake,
     activeSidePanelTab,
     setActiveSidePanelTab,
   } = useEditorStore(
     useShallow((state) => ({
       selectedRegionId: state.selectedRegionId,
+      selectedTakeId: state.selectedTakeId,
       zoomRegions: state.zoomRegions,
       cutRegions: state.cutRegions,
       blurRegions: state.blurRegions,
@@ -129,6 +134,7 @@ export function SidePanel() {
       hasAudioTrack: state.hasAudioTrack,
       assetTimelineEditing: state.assetTimelineEditing,
       setSelectedRegionId: state.setSelectedRegionId,
+      selectTake: state.selectTake,
       activeSidePanelTab: state.activeSidePanelTab,
       setActiveSidePanelTab: state.setActiveSidePanelTab,
     })),
@@ -161,10 +167,10 @@ export function SidePanel() {
 
   // Auto switch to 'general' tab when a region is selected
   useEffect(() => {
-    if (selectedRegion) {
+    if (selectedRegion || selectedTakeId) {
       setActiveSidePanelTab('general')
     }
-  }, [selectedRegion, setActiveSidePanelTab])
+  }, [selectedRegion, selectedTakeId, setActiveSidePanelTab])
 
   useEffect(() => {
     if (assetTimelineEditing && (activeSidePanelTab === 'camera' || activeSidePanelTab === 'audio')) {
@@ -178,10 +184,11 @@ export function SidePanel() {
       if (event.key === 'Escape' && selectedRegionId) {
         setSelectedRegionId(null)
       }
+      if (event.key === 'Escape' && selectedTakeId) selectTake(null)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedRegionId, setSelectedRegionId])
+  }, [selectTake, selectedRegionId, selectedTakeId, setSelectedRegionId])
 
   return (
     <div className="h-full flex">
@@ -270,7 +277,13 @@ export function SidePanel() {
         {/* Render all panels but only show the active one.
             This prevents unmounting and preserves the internal state of components like Collapse. */}
         <div className="h-full" hidden={activeSidePanelTab !== 'general'}>
-          {selectedRegion ? <RegionSettingsPanel region={selectedRegion} /> : <FrameSettingsPanel />}
+          {selectedRegion ? (
+            <RegionSettingsPanel region={selectedRegion} />
+          ) : selectedTakeId ? (
+            <TakeSettingsPanel takeId={selectedTakeId} />
+          ) : (
+            <FrameSettingsPanel />
+          )}
         </div>
         <div className="h-full" hidden={activeSidePanelTab !== 'camera'}>
           <CameraSettings />

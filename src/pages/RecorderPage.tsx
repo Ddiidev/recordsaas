@@ -50,6 +50,7 @@ const DEFAULT_PREPARATION_COUNTDOWN_SECONDS = 3
 const WEBCAM_RELEASE_DELAY_MS = 1000
 const RECORDER_DEVICE_LABEL_MAX_LENGTH = 50
 const CREATE_RECORDING_PROFILE_ACTION = '__create_recording_profile__'
+const TAKE_MODE_SETTING_KEY = 'recorder.takeModeEnabled'
 
 const EMPTY_AUTH_SESSION: AuthSession = {
   user: null,
@@ -110,6 +111,8 @@ export function RecorderPage() {
   const [recordingProfiles, setRecordingProfiles] = useState<RecordingProfile[]>(normalizeRecordingProfiles(null))
   const [selectedRecordingProfileId, setSelectedRecordingProfileId] = useState<string>(NATIVE_RECORDING_PROFILE_ID)
   const [appVersion, setAppVersion] = useState<string>('')
+  const [takeModeEnabled, setTakeModeEnabled] = useState(false)
+  const [currentTakeNumber, setCurrentTakeNumber] = useState(1)
 
   const { platform, webcams, mics, windowsAudioDevices, isInitializing, reload: reloadDevices } = useDeviceManager()
   const webcamPreviewRef = useRef<HTMLVideoElement>(null)
@@ -274,6 +277,7 @@ export function RecorderPage() {
           savedPreparationCountdown,
           fetchedDisplays,
           savedComputerAudioId,
+          savedTakeModeEnabled,
         ] = await Promise.all([
           window.electronAPI.getSetting<string>('recorder.selectedWebcamId'),
           window.electronAPI.getSetting<string>('recorder.selectedMicId'),
@@ -283,6 +287,7 @@ export function RecorderPage() {
           window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
           window.electronAPI.getDisplays(),
           window.electronAPI.getSetting<string>('recorder.selectedComputerAudioId'),
+          window.electronAPI.getSetting<boolean>(TAKE_MODE_SETTING_KEY),
         ])
 
         setSelectedWebcamId(savedWebcamId || 'none')
@@ -291,6 +296,7 @@ export function RecorderPage() {
         setComputerAudioSupported(computerAudioSupport.supported)
         setComputerAudioSupportReason(computerAudioSupport.reason || null)
         setComputerAudioEnabled(computerAudioSupport.supported && savedComputerAudioEnabled === true)
+        setTakeModeEnabled(savedTakeModeEnabled === true)
 
         if (typeof savedPreparationCountdown === 'number' && isPreparationCountdownOption(savedPreparationCountdown)) {
           setPreparationCountdownSeconds(savedPreparationCountdown)
@@ -340,6 +346,7 @@ export function RecorderPage() {
       setIsRecording(true)
       setPreparationSecondsLeft(null)
       setActionInProgress('none')
+      setCurrentTakeNumber(1)
     })
 
     const cleanupFinished = window.electronAPI.onRecordingFinished(() => {
@@ -347,11 +354,16 @@ export function RecorderPage() {
       setRecordingState('idle')
       setIsRecording(false)
       setPreparationSecondsLeft(null)
+      setCurrentTakeNumber(1)
       reloadDevices() // Refresh device list in case something changed
+    })
+    const cleanupTakeMarked = window.electronAPI.onTakeMarked(({ takeNumber }) => {
+      setCurrentTakeNumber(takeNumber)
     })
     return () => {
       cleanupStarted()
       cleanupFinished()
+      cleanupTakeMarked()
     }
   }, [reloadDevices])
 
@@ -517,9 +529,7 @@ export function RecorderPage() {
       setEncoderWarningStatus(status)
     })
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // @ts-ignore
-  const resolveEncoderWarning = (decision: EncoderWarningDecision) => {
+  const _resolveEncoderWarning = (decision: EncoderWarningDecision) => {
     if (decision === 'continue' && encoderWarningStatus?.preference === 'auto' && suppressGenericEncoderWarning) {
       window.electronAPI.setSetting(HIDE_GENERIC_ENCODER_WARNING_SETTING_KEY, true)
     }
@@ -529,6 +539,7 @@ export function RecorderPage() {
     encoderWarningResolverRef.current = null
     resolver?.(decision)
   }
+  void _resolveEncoderWarning
 
   const resolvePreparationCountdownSeconds = async () => {
     try {
@@ -597,6 +608,7 @@ export function RecorderPage() {
         computerAudioEnabled,
         computerAudioDeviceId: selectedComputerAudioId !== 'default' ? selectedComputerAudioId : undefined,
         recordingProfile: selectedRecordingProfile,
+        takeModeEnabled,
       })
 
       if (result.canceled) {
@@ -1127,6 +1139,29 @@ export function RecorderPage() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Version */}
+              <div className="recorder-sidebar-item">
+                <span className="recorder-sidebar-label">Take Mode</span>
+                <div className="flex h-8 items-center gap-2 rounded-md border border-border bg-card px-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[10px] font-medium text-foreground">
+                      {isRecording && takeModeEnabled ? `Take ${currentTakeNumber}` : 'Mark separate takes'}
+                    </div>
+                    <div className="truncate text-[9px] text-muted-foreground">Ctrl+Shift+F12</div>
+                  </div>
+                  <Switch
+                    checked={takeModeEnabled}
+                    onCheckedChange={(checked) => {
+                      setTakeModeEnabled(checked)
+                      window.electronAPI.setSetting(TAKE_MODE_SETTING_KEY, checked)
+                    }}
+                    disabled={isRecording || actionInProgress !== 'none'}
+                    className="scale-75"
+                    aria-label="Enable Take Mode"
+                  />
+                </div>
               </div>
 
               {/* Version */}
