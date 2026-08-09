@@ -36,32 +36,16 @@ export const CutRegionBlock = memo(
         ref={setRef}
         data-region-id={region.id}
         className={cn(
-          'group/region absolute w-full h-14 top-1/2 flex items-center justify-center rounded-xl border-2 backdrop-blur-sm',
+          'group/region absolute inset-y-0 left-0 w-full flex items-center justify-center rounded-md border-2 backdrop-blur-sm',
           !isBeingDragged && 'transition-all duration-200 ease-out',
           canMove ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
           isSelected
-            ? 'bg-card/90 border-destructive -translate-y-[calc(50%+2px)] shadow-sm shadow-destructive/20'
-            : 'bg-card/70 border-destructive/60 -translate-y-1/2 hover:border-destructive/80 hover:bg-card/80 hover:shadow-md hover:shadow-destructive/10',
+            ? 'bg-card/90 border-destructive shadow-sm shadow-destructive/20'
+            : 'bg-card/70 border-destructive/60 hover:border-destructive/80 hover:bg-card/80 hover:shadow-md hover:shadow-destructive/10',
         )}
         style={{ willChange: 'transform, width' }}
         onMouseDown={(e) => handleMouseDown(e, 'move')}
       >
-        <div className="absolute bottom-full left-0 h-[200px] w-full overflow-hidden rounded-t-lg pointer-events-none">
-          <div className="absolute inset-0 bg-destructive/15" />
-          <div
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage: `repeating-linear-gradient(
-              -45deg,
-              transparent,
-              transparent 8px,
-              rgb(var(--destructive) / 0.15) 8px,
-              rgb(var(--destructive) / 0.15) 16px
-            )`,
-            }}
-          />
-        </div>
-
         <RegionResizeHandles
           isSelected={isSelected}
           canResizeLeft={canResizeLeft}
@@ -70,13 +54,13 @@ export const CutRegionBlock = memo(
           onMouseDown={handleMouseDown}
         />
 
-        <div className="pointer-events-none flex items-center gap-2.5 overflow-hidden px-3">
+        <div className="pointer-events-none flex items-center gap-1.5 overflow-hidden px-2">
           <Scissors
-            className={cn('h-5 w-5 transition-colors', isSelected ? 'text-destructive' : 'text-destructive/70')}
+            className={cn('h-3.5 w-3.5 shrink-0 transition-colors', isSelected ? 'text-destructive' : 'text-destructive/70')}
           />
           <span
             className={cn(
-              'overflow-hidden text-ellipsis text-xs font-semibold tracking-wide transition-colors',
+              'overflow-hidden text-ellipsis text-[10px] font-semibold tracking-wide transition-colors',
               isSelected ? 'text-destructive' : 'text-destructive/70',
             )}
           >

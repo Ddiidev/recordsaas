@@ -30,12 +30,14 @@ import {
   Square,
   SquareToggle,
   Wand,
+  ArrowsMove,
 } from '@icons'
 import { FocusPointPicker } from './sidepanel/FocusPointPicker'
 import { AnimationSettings } from './sidepanel/AnimationSettings'
 import { Slider } from '../ui/slider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { BLUR_REGION, DEFAULTS } from '../../lib/constants'
+import { hasPendingCutAdaptation } from '../../lib/media-audio-cuts'
 import { normalizeWebcamCrop } from '../../lib/webcam'
 import { hexToRgb, rgbaToHexAlpha } from '../../lib/utils'
 import { Switch } from '../ui/switch'
@@ -450,19 +452,32 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
 }
 
 function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
-  const { updateRegion, deleteRegion, splitMediaAudioRegion, currentTime, mediaAudioClip } = useEditorStore(
+  const {
+    updateRegion,
+    deleteRegion,
+    splitMediaAudioRegion,
+    adaptMediaAudioToCuts,
+    currentTime,
+    mediaAudioClip,
+    cutRegions,
+    mediaAudioRegions,
+  } = useEditorStore(
     (state) => ({
       updateRegion: state.updateRegion,
       deleteRegion: state.deleteRegion,
       splitMediaAudioRegion: state.splitMediaAudioRegion,
+      adaptMediaAudioToCuts: state.adaptMediaAudioToCuts,
       currentTime: state.currentTime,
       mediaAudioClip: state.mediaAudioClip,
+      cutRegions: state.cutRegions,
+      mediaAudioRegions: state.mediaAudioRegions,
     }),
   )
 
   const canSplitAtPlayhead =
     currentTime > region.startTime + 0.1 && currentTime < region.startTime + region.duration - 0.1
   const effectiveVolume = region.isMuted ? 0 : region.volume
+  const canAdaptToCuts = hasPendingCutAdaptation(cutRegions, mediaAudioRegions)
 
   return (
     <div className="space-y-6">
@@ -537,6 +552,18 @@ function MediaAudioSettings({ region }: { region: MediaAudioRegion }) {
         >
           <Scissors className="w-4 h-4" />
           <span>Split at playhead</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => adaptMediaAudioToCuts(region.id)}
+          disabled={!canAdaptToCuts}
+          title="Divide o audio no inicio de cada corte e desloca o trecho seguinte para depois do corte, mantendo o audio continuo na renderizacao."
+          className="w-full h-10 border-border bg-card/70 text-foreground hover:bg-accent hover:text-foreground transition-all duration-200 flex items-center gap-2 justify-center font-medium"
+        >
+          <ArrowsMove className="w-4 h-4" />
+          <span>Adaptar aos cortes</span>
         </Button>
 
         <Button

@@ -11,6 +11,7 @@ import {
 } from '@icons'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
+import { useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Slider } from '../ui/slider'
 import { Input } from '../ui/input'
@@ -32,6 +33,12 @@ export function PreviewControls() {
     setTimelineZoom,
     selectedRegionId,
     deleteRegion,
+    splitFloatingMonitorRegion,
+    splitMediaAudioRegion,
+    splitChangeSoundRegion,
+    floatingMonitorRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
     aspectRatio,
     setAspectRatio,
   } = useEditorStore()
@@ -42,6 +49,28 @@ export function PreviewControls() {
   const handleDelete = () => {
     if (selectedRegionId) {
       deleteRegion(selectedRegionId)
+    }
+  }
+
+  const canSplitSelected = useMemo(() => {
+    if (!selectedRegionId) return false
+    const region =
+      floatingMonitorRegions[selectedRegionId] ??
+      mediaAudioRegions[selectedRegionId] ??
+      changeSoundRegions[selectedRegionId]
+    if (!region) return false
+    const localOffset = currentTime - region.startTime
+    return localOffset > 0.1 && localOffset < region.duration - 0.1
+  }, [selectedRegionId, currentTime, floatingMonitorRegions, mediaAudioRegions, changeSoundRegions])
+
+  const handleSplitAtPlayhead = () => {
+    if (!selectedRegionId) return
+    if (floatingMonitorRegions[selectedRegionId]) {
+      splitFloatingMonitorRegion(selectedRegionId, currentTime)
+    } else if (mediaAudioRegions[selectedRegionId]) {
+      splitMediaAudioRegion(selectedRegionId, currentTime)
+    } else if (changeSoundRegions[selectedRegionId]) {
+      splitChangeSoundRegion(selectedRegionId, currentTime)
     }
   }
 
@@ -76,6 +105,14 @@ export function PreviewControls() {
           >
             <AdjustmentsHorizontal className="w-4 h-4" />
             <span>Change Sound</span>
+          </ToolbarButton>
+          <ToolbarButton
+            variant="icon"
+            tooltip="Split at playhead (S)"
+            onClick={handleSplitAtPlayhead}
+            disabled={!canSplitSelected}
+          >
+            <Scissors className="w-4 h-4" />
           </ToolbarButton>
           <ToolbarButton
             variant="icon"

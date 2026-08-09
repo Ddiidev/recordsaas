@@ -96,6 +96,9 @@ export interface TimelineLane {
   order: number
   visible: boolean
   locked: boolean
+  isContentRootLane?: boolean
+  isCutLane?: boolean
+  isChangeSoundLane?: boolean
 }
 
 export interface ZoomRegion {
@@ -373,6 +376,8 @@ export interface AssetTimelineEditing {
     systemAudioUrl: string | null
     systemAudioVolume: number
     systemAudioMuted: boolean
+    recordingSyncOffsetMs: number
+    systemAudioSyncOffsetMs: number
     volume: number
     isMuted: boolean
     mediaAudioClip: MediaAudioClip | null
@@ -416,6 +421,8 @@ export interface ProjectState {
   systemAudioUrl: string | null
   systemAudioVolume: number
   systemAudioMuted: boolean
+  recordingSyncOffsetMs: number
+  systemAudioSyncOffsetMs: number
   mediaAudioClip: MediaAudioClip | null
   floatingMonitors: Record<string, FloatingMonitor>
   assetTimelineEditing: AssetTimelineEditing | null
@@ -450,6 +457,8 @@ export interface ProjectActions {
   reloadCursorTheme: (themeName: string) => Promise<void>
   setHasAudioTrack: (hasAudio: boolean) => void
   updateSystemAudioSettings: (settings: { volume?: number; isMuted?: boolean }) => void
+  setRecordingSyncOffsetMs: (offsetMs: number) => void
+  setSystemAudioSyncOffsetMs: (offsetMs: number) => void
   setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void
@@ -523,7 +532,9 @@ export interface TimelineActions {
   addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
   addFloatingMonitorRegion: (monitorId: string, params?: { startTime?: number; laneId?: string }) => void
   splitMediaAudioRegion: (regionId: string, splitTime: number) => void
+  adaptMediaAudioToCuts: (regionId: string) => void
   splitChangeSoundRegion: (regionId: string, splitTime: number) => void
+  splitFloatingMonitorRegion: (regionId: string, splitTime: number) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void

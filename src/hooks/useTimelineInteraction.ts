@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../store/editorStore'
 import { TimelineRegion, CutRegion } from '../types'
 import { TIMELINE } from '../lib/constants'
-import { getTopRegionByPredicate } from '../lib/timeline-lanes'
 
 interface UseTimelineInteractionProps {
   timelineRef: RefObject<HTMLDivElement>
@@ -87,8 +86,6 @@ export const useTimelineInteraction = ({
   const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
   const [activeDropLaneId, setActiveDropLaneId] = useState<string | null>(null)
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false)
-  const [isDraggingLeftStrip, setIsDraggingLeftStrip] = useState(false)
-  const [isDraggingRightStrip, setIsDraggingRightStrip] = useState(false)
   const [isRegionHidden, setIsRegionHidden] = useState(false)
   const [dragMovePreview, setDragMovePreview] = useState<DragMovePreview | null>(null)
 
@@ -97,12 +94,6 @@ export const useTimelineInteraction = ({
       e.stopPropagation()
       setIsRegionHidden(false)
       setSelectedRegionId(region.id)
-
-      if (type === 'resize-left') {
-        updateVideoTime(region.startTime)
-      } else if (type === 'resize-right') {
-        updateVideoTime(region.startTime + region.duration)
-      }
 
       const isTrimRegion = (region as CutRegion).trimType !== undefined
       if (isTrimRegion && type === 'move') {
@@ -131,7 +122,7 @@ export const useTimelineInteraction = ({
       })
       setDragMovePreview(null)
     },
-    [setSelectedRegionId, updateVideoTime, defaultLaneId],
+    [setSelectedRegionId, defaultLaneId],
   )
 
   const queuePlayheadTime = useCallback(
@@ -407,60 +398,24 @@ export const useTimelineInteraction = ({
           if (intendedDuration < TIMELINE.REGION_DELETE_THRESHOLD) {
             element.style.display = 'none'
             setIsRegionHidden(true)
-            updateVideoTime(draggingRegion.initialStartTime)
           } else {
             const newDuration = Math.min(intendedDuration, maxDuration)
             element.style.display = 'block'
             setIsRegionHidden(false)
             element.style.width = `${timeToPx(newDuration)}px`
-            updateVideoTime(draggingRegion.initialStartTime + newDuration)
           }
         } else if (draggingRegion.type === 'resize-left') {
           const { newStartTime, newDuration } = calcResizeLeft(draggingRegion, deltaTime)
           if (newDuration < TIMELINE.REGION_DELETE_THRESHOLD) {
             element.style.display = 'none'
             setIsRegionHidden(true)
-            updateVideoTime(draggingRegion.initialStartTime + draggingRegion.initialDuration)
           } else {
             element.style.display = 'block'
             setIsRegionHidden(false)
             element.style.width = `${timeToPx(newDuration)}px`
             element.style.transform = `translateX(${timeToPx(newStartTime - draggingRegion.initialStartTime)}px)`
-            updateVideoTime(newStartTime)
           }
         }
-      }
-
-      if ((isDraggingLeftStrip || isDraggingRightStrip) && timelineRef.current) {
-        document.body.style.cursor = 'grabbing'
-        const rect = timelineRef.current.getBoundingClientRect()
-        const timeAtMouse = pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx))
-        let newPreview: CutRegion | null = null
-        if (isDraggingLeftStrip) {
-          const duration = Math.min(timeAtMouse, useEditorStore.getState().duration)
-          newPreview = {
-            id: 'preview-cut-left',
-            type: 'cut',
-            laneId: defaultLaneId,
-            startTime: 0,
-            duration,
-            trimType: 'start',
-            zIndex: 0,
-          }
-        } else {
-          const startTime = Math.max(0, timeAtMouse)
-          const duration = useEditorStore.getState().duration - startTime
-          newPreview = {
-            id: 'preview-cut-right',
-            type: 'cut',
-            laneId: defaultLaneId,
-            startTime,
-            duration,
-            trimType: 'end',
-            zIndex: 0,
-          }
-        }
-        setPreviewCutRegion(newPreview.duration >= TIMELINE.MINIMUM_REGION_DURATION ? newPreview : null)
       }
     }
 
@@ -675,20 +630,6 @@ export const useTimelineInteraction = ({
         setIsRegionHidden(false)
       }
 
-      if (isDraggingLeftStrip || isDraggingRightStrip) {
-        const finalPreview = useEditorStore.getState().previewCutRegion
-        if (finalPreview) {
-          addCutRegion({
-            startTime: finalPreview.startTime,
-            duration: finalPreview.duration,
-            laneId: defaultLaneId,
-            trimType: isDraggingLeftStrip ? 'start' : 'end',
-          })
-        }
-      }
-
-      setIsDraggingLeftStrip(false)
-      setIsDraggingRightStrip(false)
       setActiveDropLaneId(null)
       setDragMovePreview(null)
       setPreviewCutRegion(null)
@@ -703,8 +644,6 @@ export const useTimelineInteraction = ({
   }, [
     draggingRegion,
     isDraggingPlayhead,
-    isDraggingLeftStrip,
-    isDraggingRightStrip,
     pxToTime,
     timeToPx,
     updateVideoTime,
@@ -731,25 +670,5 @@ export const useTimelineInteraction = ({
     isDraggingPlayhead,
     handleRegionMouseDown,
     handlePlayheadMouseDown,
-    handleLeftStripMouseDown: () => {
-      const state = useEditorStore.getState()
-      const existingTrim = getTopRegionByPredicate(
-        Object.values(state.cutRegions),
-        state.timelineLanes,
-        (r) => r.trimType === 'start',
-      )
-      if (existingTrim) deleteRegion(existingTrim.id)
-      setIsDraggingLeftStrip(true)
-    },
-    handleRightStripMouseDown: () => {
-      const state = useEditorStore.getState()
-      const existingTrim = getTopRegionByPredicate(
-        Object.values(state.cutRegions),
-        state.timelineLanes,
-        (r) => r.trimType === 'end',
-      )
-      if (existingTrim) deleteRegion(existingTrim.id)
-      setIsDraggingRightStrip(true)
-    },
   }
 }

@@ -57,6 +57,9 @@ type ImportedProjectPayload = {
     order?: number
     visible?: boolean
     locked?: boolean
+    isContentRootLane?: boolean
+    isCutLane?: boolean
+    isChangeSoundLane?: boolean
   }>
   mediaAudioClip?: {
     id?: string
@@ -1258,6 +1261,9 @@ function normalizeTimelineLanes(
       order: typeof lane?.order === 'number' && Number.isFinite(lane.order) ? lane.order : index,
       visible: lane?.visible !== false,
       locked: lane?.locked === true,
+      isContentRootLane: lane?.isContentRootLane === true,
+      isCutLane: lane?.isCutLane === true,
+      isChangeSoundLane: lane?.isChangeSoundLane === true,
     }))
     .sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
     .map((lane, index) => ({ ...lane, order: index }))

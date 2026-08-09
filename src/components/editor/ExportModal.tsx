@@ -8,6 +8,7 @@ import { Switch } from '../ui/switch'
 import { cn } from '../../lib/utils'
 import { useEditorStore } from '../../store/editorStore'
 import { formatTime } from '../../lib/utils'
+import { calcRealDuration } from '../../lib/real-duration'
 import type { AuthSession } from '../../types/auth'
 
 export type ExportSettings = {
@@ -180,26 +181,10 @@ const SettingsView = ({
     }),
   )
 
-  const estimatedDuration = useMemo(() => {
-    if (duration === 0) return 0
-
-    let finalDuration = duration
-
-    // Subtract cut regions
-    Object.values(cutRegions).forEach((region) => {
-      finalDuration -= region.duration
-    })
-
-    // Adjust for speed regions
-    Object.values(speedRegions).forEach((region) => {
-      // Subtract the original duration of the segment
-      finalDuration -= region.duration
-      // Add the new duration of the segment
-      finalDuration += region.duration / region.speed
-    })
-
-    return Math.max(0, finalDuration)
-  }, [duration, cutRegions, speedRegions])
+  const estimatedDuration = useMemo(
+    () => calcRealDuration(duration, cutRegions, speedRegions),
+    [duration, cutRegions, speedRegions],
+  )
 
   const handleValueChange = (key: keyof ExportSettings, value: unknown) => {
     setSettings((prev) => {
@@ -570,18 +555,10 @@ const ResultView = ({ result, onClose }: { result: NonNullable<ExportModalProps[
     speedRegions: state.speedRegions,
   }))
 
-  const estimatedDuration = useMemo(() => {
-    if (duration === 0) return 0
-    let finalDuration = duration
-    Object.values(cutRegions).forEach((region) => {
-      finalDuration -= region.duration
-    })
-    Object.values(speedRegions).forEach((region) => {
-      finalDuration -= region.duration
-      finalDuration += region.duration / region.speed
-    })
-    return Math.max(0, finalDuration)
-  }, [duration, cutRegions, speedRegions])
+  const estimatedDuration = useMemo(
+    () => calcRealDuration(duration, cutRegions, speedRegions),
+    [duration, cutRegions, speedRegions],
+  )
 
   const isCancelled = !result.success && result.error === 'Export cancelled.'
 

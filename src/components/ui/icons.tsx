@@ -6,6 +6,7 @@ import {
   Check as CheckIcon,
   CheckCircle as CheckCircleIcon,
   Circle as CircleIcon,
+  Clock as ClockIcon,
   CloudUpload as CloudUploadIcon,
   Computer as ComputerIcon,
   ControlSlider as ControlSliderIcon,
@@ -347,6 +348,7 @@ export const Volume3 = withIconMotion(SoundOffIcon, 'Volume3')
 export const DotsVertical = withIconMotion(DotsVerticalIcon, 'DotsVertical')
 export const CircleCheck = withIconMotion(CheckCircleIcon, 'CircleCheck')
 export const CircleX = withIconMotion(XmarkCircleIcon, 'CircleX')
+export const Clock = withIconMotion(ClockIcon, 'Clock')
 export const Ban = withIconMotion(BanCircleIcon, 'Ban')
 export const PlayerPlay = withIconMotion(PlayIcon, 'PlayerPlay')
 export const PlayerTrackPrev = withIconMotion(RewindIcon, 'PlayerTrackPrev')

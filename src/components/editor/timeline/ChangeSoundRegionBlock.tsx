@@ -53,10 +53,10 @@ export const ChangeSoundRegionBlock = memo(
           ref={setRef}
           data-region-id={region.id}
           className={cn(
-            'group/region absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+            'group/region absolute inset-y-0 left-0 w-full flex items-center justify-center rounded-md cursor-grab border-2 backdrop-blur-sm',
             !isBeingDragged && 'transition-all duration-200 ease-out',
             isSelected
-              ? 'bg-card/90 border-sky-500 transform -translate-y-[2px] shadow-sm shadow-sky-500/20'
+              ? 'bg-card/90 border-sky-500 shadow-sm shadow-sky-500/20'
               : 'bg-card/70 border-sky-500/60 hover:border-sky-500 hover:bg-card/80 hover:shadow-md hover:shadow-sky-500/10',
           )}
           style={{ willChange: 'transform, width' }}
@@ -72,20 +72,18 @@ export const ChangeSoundRegionBlock = memo(
             }}
           />
 
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-3">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <AdjustmentsHorizontal
-                className={cn('w-4 h-4 shrink-0 transition-colors text-sky-500', !isSelected && 'opacity-70')}
-              />
-              <span
-                className={cn(
-                  'text-sm font-bold tracking-wide select-none whitespace-nowrap transition-colors text-sky-500',
-                  !isSelected && 'opacity-70',
-                )}
-              >
-                CHANGE SOUND
-              </span>
-            </div>
+          <div className="pointer-events-none flex items-center gap-1.5 overflow-hidden px-2">
+            <AdjustmentsHorizontal
+              className={cn('h-3.5 w-3.5 shrink-0 transition-colors text-sky-500', !isSelected && 'opacity-70')}
+            />
+            <span
+              className={cn(
+                'text-[10px] font-bold tracking-wide select-none whitespace-nowrap transition-colors text-sky-500',
+                !isSelected && 'opacity-70',
+              )}
+            >
+              CHANGE SOUND
+            </span>
           </div>
 
         </div>

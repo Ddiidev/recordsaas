@@ -328,6 +328,20 @@ export function EditorPage() {
     }
   }, [deleteRegion])
 
+  const handleSplitAtPlayhead = useCallback(() => {
+    const state = useEditorStore.getState()
+    const selectedId = state.selectedRegionId
+    if (!selectedId) return
+    const time = state.currentTime
+    if (state.floatingMonitorRegions[selectedId]) {
+      state.splitFloatingMonitorRegion(selectedId, time)
+    } else if (state.mediaAudioRegions[selectedId]) {
+      state.splitMediaAudioRegion(selectedId, time)
+    } else if (state.changeSoundRegions[selectedId]) {
+      state.splitChangeSoundRegion(selectedId, time)
+    }
+  }, [])
+
   const handleSeekFrame = useCallback(
     (direction: 'next' | 'prev') => {
       if (direction === 'next') {
@@ -360,6 +374,10 @@ export function EditorPage() {
     {
       delete: handleDeleteSelectedRegion,
       backspace: handleDeleteSelectedRegion,
+      s: (e) => {
+        e.preventDefault()
+        handleSplitAtPlayhead()
+      },
       ' ': (e) => {
         e.preventDefault()
         togglePlay()
@@ -382,7 +400,7 @@ export function EditorPage() {
         redo()
       },
     },
-    [handleDeleteSelectedRegion, undo, redo, togglePlay, handleSeekFrame, togglePreviewFullScreen],
+    [handleDeleteSelectedRegion, handleSplitAtPlayhead, undo, redo, togglePlay, handleSeekFrame, togglePreviewFullScreen],
   )
 
   useEffect(() => {

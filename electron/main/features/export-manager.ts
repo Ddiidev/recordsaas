@@ -589,7 +589,7 @@ const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
       ? `min(1,max(0,(${regionDuration.toFixed(6)}-(${localTimeExpr}))/(${fadeOutDuration.toFixed(6)})))`
       : '1'
 
-  return `volume='${baseVolume.toFixed(6)}*min(${fadeInExpr},${fadeOutExpr})'`
+  return `volume='if(isnan(t),${baseVolume.toFixed(6)},${baseVolume.toFixed(6)}*min(${fadeInExpr},${fadeOutExpr}))':eval=frame`
 }
 
 const escapeFilterValue = (value: string): string => value.replace(/\\/g, '/').replace(/'/g, "\\'")
@@ -680,12 +680,52 @@ const renderProcessedAudioFile = async (
   }
 }
 
+/**
+ * Applies a constant audio sync offset to a prepared track.
+ * Positive offset delays the audio (it starts later in the video);
+ * negative offset advances it (it starts earlier).
+ * Returns a new temp path or the original when offset is zero.
+ */
+const applyAudioSyncOffset = async (
+  sourcePath: string,
+  offsetMs: number,
+  runFFmpeg: RunFFmpeg,
+  totalDurationSec: number,
+): Promise<string> => {
+  if (Math.abs(offsetMs) < 1) return sourcePath
+
+  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-sync-'))
+  const outPath = path.join(tmpDir, 'sync.m4a')
+  const delayMs = Math.round(Math.abs(offsetMs))
+
+  try {
+    const filter =
+      offsetMs > 0
+        ? `adelay=${delayMs}:all=1`
+        : `atrim=start=${(delayMs / 1000).toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${totalDurationSec.toFixed(6)}`
+
+    await runFFmpeg(
+      ['-y', '-i', sourcePath, '-af', filter, '-c:a', 'aac', '-b:a', '192k', outPath],
+      `audio-sync:${Math.round(offsetMs)}ms`,
+    )
+
+    return outPath
+  } catch (error) {
+    log.error('[ExportManager] Failed to apply audio sync offset:', error)
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      // ignore cleanup errors
+    }
+    return sourcePath
+  }
+}
+
 const mixAudioTracks = async (
   recordingTrackPath: string,
   mediaTrackPath: string,
   runFFmpeg: RunFFmpeg,
-): Promise<string | null> => {
-  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
+): Promise<string | null> => {  const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
   const outPath = path.join(tmpDir, 'mixed.m4a')
   const args = [
     '-y',
@@ -1429,6 +1469,15 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, 1))
         : 1
     const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioVolume <= 0
+    const recordingSyncOffsetMs =
+      typeof projectStateRecord.recordingSyncOffsetMs === 'number' && Number.isFinite(projectStateRecord.recordingSyncOffsetMs)
+        ? Math.round(Math.max(-10000, Math.min(projectStateRecord.recordingSyncOffsetMs, 10000)))
+        : 0
+    const systemAudioSyncOffsetMs =
+      typeof projectStateRecord.systemAudioSyncOffsetMs === 'number' &&
+      Number.isFinite(projectStateRecord.systemAudioSyncOffsetMs)
+        ? Math.round(Math.max(-10000, Math.min(projectStateRecord.systemAudioSyncOffsetMs, 10000)))
+        : 0
     const mediaClip = (projectStateRecord.mediaAudioClip || null) as MediaAudioClipLike | null
     const mediaPath = normalizeMediaPath(mediaClip?.path)
     const timelineLanes = Array.isArray(projectStateRecord.timelineLanes)
@@ -1499,16 +1548,27 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
           log.info('[ExportManager] Reusing original recording audio; no recording audio edits detected.')
           recordingTrackPath = recordingPath
         } else {
-          const processedRecordingPath = await renderProcessedAudioFile(
-            recordingPath,
-            recordingSegments,
-            runAuxiliaryFFmpeg,
-          )
+          const processedRecordingPath = await renderProcessedAudioFile(recordingPath, recordingSegments, runAuxiliaryFFmpeg)
           if (!processedRecordingPath) {
             throw new Error('Failed to process recording audio track')
           }
           recordingTrackPath = processedRecordingPath
           processedAudioTempRoots.add(path.dirname(processedRecordingPath))
+        }
+      }
+      if (recordingTrackPath && recordingSyncOffsetMs !== 0) {
+        const offsetRecordingPath = await applyAudioSyncOffset(
+          recordingTrackPath,
+          recordingSyncOffsetMs,
+          runAuxiliaryFFmpeg,
+          duration,
+        )
+        if (offsetRecordingPath !== recordingTrackPath) {
+          processedAudioTempRoots.add(path.dirname(offsetRecordingPath))
+          recordingTrackPath = offsetRecordingPath
+          log.info(
+            `[ExportManager] Applied recording audio sync offset of ${recordingSyncOffsetMs}ms.`,
+          )
         }
       }
     }
@@ -1527,16 +1587,25 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
           log.info('[ExportManager] Reusing original computer audio; no computer audio edits detected.')
           systemTrackPath = systemAudioPath
         } else {
-          const processedSystemPath = await renderProcessedAudioFile(
-            systemAudioPath,
-            systemSegments,
-            runAuxiliaryFFmpeg,
-          )
+          const processedSystemPath = await renderProcessedAudioFile(systemAudioPath, systemSegments, runAuxiliaryFFmpeg)
           if (!processedSystemPath) {
             throw new Error('Failed to process computer audio track')
           }
           systemTrackPath = processedSystemPath
           processedAudioTempRoots.add(path.dirname(processedSystemPath))
+        }
+      }
+      if (systemTrackPath && systemAudioSyncOffsetMs !== 0) {
+        const offsetSystemPath = await applyAudioSyncOffset(
+          systemTrackPath,
+          systemAudioSyncOffsetMs,
+          runAuxiliaryFFmpeg,
+          duration,
+        )
+        if (offsetSystemPath !== systemTrackPath) {
+          processedAudioTempRoots.add(path.dirname(offsetSystemPath))
+          systemTrackPath = offsetSystemPath
+          log.info(`[ExportManager] Applied computer audio sync offset of ${systemAudioSyncOffsetMs}ms.`)
         }
       }
     }

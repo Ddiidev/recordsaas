@@ -7,12 +7,65 @@ import {
   Volume as MaxVolume,
   Volume3 as MuteVolume,
   MicrophoneOff,
+  Clock,
 } from '@icons'
 import { Collapse } from '../../ui/collapse'
 import { Slider } from '../../ui/slider'
 import { Button } from '../../ui/button'
 import { cn } from '../../../lib/utils'
 import { DEFAULTS } from '../../../lib/constants'
+
+const SYNC_OFFSET = { min: -2000, max: 2000, step: 10, defaultValue: 0 }
+
+const SyncOffsetControl = ({
+  label,
+  offsetMs,
+  onChange,
+  onReset,
+}: {
+  label: string
+  offsetMs: number
+  onChange: (offsetMs: number) => void
+  onReset: () => void
+}) => (
+  <div className="space-y-2">
+    <div className="flex items-center gap-2">
+      <Clock className="w-4 h-4 text-muted-foreground" />
+      <span className="text-sm font-medium text-foreground">{label}</span>
+      <span className="ml-auto text-xs font-semibold text-primary tabular-nums">
+        {offsetMs > 0 ? '+' : ''}
+        {offsetMs} ms
+      </span>
+    </div>
+    <div className="flex items-center gap-3">
+      <div className="flex-1">
+        <Slider
+          min={SYNC_OFFSET.min}
+          max={SYNC_OFFSET.max}
+          step={SYNC_OFFSET.step}
+          value={offsetMs}
+          onChange={onChange}
+        />
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onReset}
+        disabled={offsetMs === 0}
+        className="flex-shrink-0 h-8 px-2 text-xs"
+      >
+        Reset
+      </Button>
+    </div>
+    <p className="text-xs text-muted-foreground">
+      {offsetMs > 0
+        ? 'Áudio começa mais tarde no vídeo.'
+        : offsetMs < 0
+          ? 'Áudio começa mais cedo no vídeo.'
+          : 'Sem deslocamento de tempo.'}
+    </p>
+  </div>
+)
 
 const DisabledPanelPlaceholder = ({
   icon,
@@ -45,6 +98,10 @@ export function AudioSettings() {
     systemAudioVolume,
     systemAudioMuted,
     updateSystemAudioSettings,
+    recordingSyncOffsetMs,
+    systemAudioSyncOffsetMs,
+    setRecordingSyncOffsetMs,
+    setSystemAudioSyncOffsetMs,
   } = useEditorStore(
     useShallow((state) => ({
       volume: state.volume,
@@ -58,6 +115,10 @@ export function AudioSettings() {
       systemAudioVolume: state.systemAudioVolume,
       systemAudioMuted: state.systemAudioMuted,
       updateSystemAudioSettings: state.updateSystemAudioSettings,
+      recordingSyncOffsetMs: state.recordingSyncOffsetMs,
+      systemAudioSyncOffsetMs: state.systemAudioSyncOffsetMs,
+      setRecordingSyncOffsetMs: state.setRecordingSyncOffsetMs,
+      setSystemAudioSyncOffsetMs: state.setSystemAudioSyncOffsetMs,
     })),
   )
 
@@ -144,6 +205,14 @@ export function AudioSettings() {
                     Set to Max Volume
                   </Button>
                 </div>
+                <div className="pt-2 border-t border-border/60">
+                  <SyncOffsetControl
+                    label="Sync offset"
+                    offsetMs={recordingSyncOffsetMs}
+                    onChange={setRecordingSyncOffsetMs}
+                    onReset={() => setRecordingSyncOffsetMs(0)}
+                  />
+                </div>
               </Collapse>
             )}
 
@@ -191,6 +260,14 @@ export function AudioSettings() {
                     <MaxVolume className="w-4 h-4 mr-2" />
                     Set to Max Volume
                   </Button>
+                </div>
+                <div className="pt-2 border-t border-border/60">
+                  <SyncOffsetControl
+                    label="Sync offset"
+                    offsetMs={systemAudioSyncOffsetMs}
+                    onChange={setSystemAudioSyncOffsetMs}
+                    onReset={() => setSystemAudioSyncOffsetMs(0)}
+                  />
                 </div>
               </Collapse>
             )}

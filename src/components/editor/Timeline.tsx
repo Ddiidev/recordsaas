@@ -11,17 +11,20 @@ import { ChangeSoundRegionBlock } from './timeline/ChangeSoundRegionBlock'
 import { FloatingMonitorRegionBlock } from './timeline/FloatingMonitorRegionBlock'
 import { Playhead } from './timeline/Playhead'
 import { cn } from '../../lib/utils'
-import { Scissors, ChevronUp, ChevronDown, Trash, DotsVertical } from '@icons'
+import { ChevronUp, ChevronDown, Trash, DotsVertical, Plus } from '@icons'
 import { formatTime, calculateRulerInterval } from '../../lib/utils'
+import { TIMELINE } from '../../lib/constants'
 import { useTimelineInteraction } from '../../hooks/useTimelineInteraction'
-import { FlipScissorsIcon } from '../ui/icons'
-import { sortTimelineLanes } from '../../lib/timeline-lanes'
+import { sortTimelineLanes, getFallbackLaneId } from '../../lib/timeline-lanes'
 import { ContextMenu, ContextMenuItem } from '../ui/context-menu'
+import { SimpleTooltip } from '../ui/tooltip'
 import type { TimelineRegion } from '../../types'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../lib/media-assets'
 
-const LANE_HEIGHT_PX = 64
+const LANE_HEIGHT_PX = 72
+const CONTENT_ROOT_LANE_HEIGHT_PX = 30
 const LANE_GAP_PX = 8
+const TIMELINE_END_BUFFER_SECONDS = 20
 const RULER_HEIGHT_PX = 48
 const TIMELINE_MIN_VISIBLE_LANES = 2
 const TIMELINE_MAX_VISIBLE_LANES = 3
@@ -168,9 +171,9 @@ export function Timeline({
   )
 
   const sortedLanes = useMemo(() => sortTimelineLanes(timelineLanes), [timelineLanes])
-  const fallbackLaneId = sortedLanes[0]?.id ?? 'lane-1'
+  const fallbackLaneId = useMemo(() => getFallbackLaneId(timelineLanes), [timelineLanes])
   const showLaneActionButtons = sortedLanes.length > 1
-  const timelineStartOffsetPx = showLaneActionButtons ? LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX : 0
+  const timelineStartOffsetPx = LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX
 
   const containerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -523,8 +526,6 @@ export function Timeline({
     isDraggingPlayhead,
     handleRegionMouseDown,
     handlePlayheadMouseDown,
-    handleLeftStripMouseDown,
-    handleRightStripMouseDown,
   } = useTimelineInteraction({
     timelineRef,
     regionRefs,
@@ -539,22 +540,6 @@ export function Timeline({
     onScrubStart: capturePlaybackForScrub,
     onScrubEnd: releaseScrubAfterSeek,
   })
-
-  const handleCutMoveOnlyMouseDown = useCallback(
-    (
-      event: React.MouseEvent<HTMLDivElement>,
-      region: TimelineRegion,
-      type: 'move' | 'resize-left' | 'resize-right',
-    ) => {
-      if (type !== 'move') {
-        event.preventDefault()
-        event.stopPropagation()
-        return
-      }
-      handleRegionMouseDown(event, region, type)
-    },
-    [handleRegionMouseDown],
-  )
 
   const rulerTicks = useMemo(() => {
     if (duration <= 0 || pixelsPerSecond <= 0) return []
@@ -621,30 +606,36 @@ export function Timeline({
     fallbackLaneId,
   ])
 
-  const cutInteractionByRegionId = useMemo(() => {
-    const cuts = Object.values(cutRegions)
-    const interactions = new Map<string, 'blocked' | 'move-only'>()
-    if (cuts.length === 0) return interactions
-
-    allRegionsToRender.forEach((region) => {
-      if (region.type === 'cut') return
-
-      const overlappingCuts = cuts.filter(
-        (cut) => region.startTime < cut.startTime + cut.duration && cut.startTime < region.startTime + region.duration,
-      )
-      if (overlappingCuts.length === 0) return
-
-      interactions.set(region.id, overlappingCuts.some((cut) => cut.laneId === region.laneId) ? 'blocked' : 'move-only')
-    })
-
-    return interactions
-  }, [allRegionsToRender, cutRegions])
-
-  useEffect(() => {
-    if (selectedRegionId && cutInteractionByRegionId.get(selectedRegionId) === 'blocked') {
-      setSelectedRegionId(null)
+  const maxRegionEnd = useMemo(() => {
+    let maxEnd = 0
+    const maps = [
+      zoomRegions,
+      cutRegions,
+      speedRegions,
+      blurRegions,
+      swapRegions,
+      mediaAudioRegions,
+      changeSoundRegions,
+      floatingMonitorRegions,
+    ]
+    for (const map of maps) {
+      for (const region of Object.values(map)) {
+        maxEnd = Math.max(maxEnd, region.startTime + region.duration)
+      }
     }
-  }, [cutInteractionByRegionId, selectedRegionId, setSelectedRegionId])
+    return maxEnd
+  }, [
+    zoomRegions,
+    cutRegions,
+    speedRegions,
+    blurRegions,
+    swapRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
+    floatingMonitorRegions,
+  ])
+
+  const trackDuration = Math.max(duration + TIMELINE_END_BUFFER_SECONDS, maxRegionEnd)
 
   const movePreviewRegion = useMemo(() => {
     if (!dragMovePreview || dragMovePreview.laneId === dragMovePreview.sourceLaneId) return null
@@ -702,19 +693,33 @@ export function Timeline({
     return map
   }, [allRegionsToRender, sortedLanes, fallbackLaneId])
 
+  const visibleSortedLanes = useMemo(
+    () =>
+      sortedLanes.filter(
+        (lane) => !lane.isContentRootLane || (regionsByLane.get(lane.id)?.length ?? 0) > 0,
+      ),
+    [sortedLanes, regionsByLane],
+  )
+
   const lanesContentHeight = useMemo(
-    () => sortedLanes.length * LANE_HEIGHT_PX + Math.max(0, sortedLanes.length - 1) * LANE_GAP_PX,
-    [sortedLanes.length],
+    () =>
+      visibleSortedLanes.reduce(
+        (total, lane) => total + (lane.isContentRootLane ? CONTENT_ROOT_LANE_HEIGHT_PX : LANE_HEIGHT_PX),
+        0,
+      ) + Math.max(0, visibleSortedLanes.length - 1) * LANE_GAP_PX,
+    [visibleSortedLanes],
   )
   const timelineContentHeight = RULER_HEIGHT_PX + lanesContentHeight
   const minTimelineViewportHeight =
     RULER_HEIGHT_PX +
+    CONTENT_ROOT_LANE_HEIGHT_PX +
     TIMELINE_MIN_VISIBLE_LANES * LANE_HEIGHT_PX +
-    Math.max(0, TIMELINE_MIN_VISIBLE_LANES - 1) * LANE_GAP_PX
+    TIMELINE_MIN_VISIBLE_LANES * LANE_GAP_PX
   const maxTimelineViewportHeight =
     RULER_HEIGHT_PX +
+    CONTENT_ROOT_LANE_HEIGHT_PX +
     TIMELINE_MAX_VISIBLE_LANES * LANE_HEIGHT_PX +
-    Math.max(0, TIMELINE_MAX_VISIBLE_LANES - 1) * LANE_GAP_PX
+    TIMELINE_MAX_VISIBLE_LANES * LANE_GAP_PX
   const timelineViewportHeight =
     Math.min(maxTimelineViewportHeight, Math.max(minTimelineViewportHeight, timelineContentHeight)) + 14 // Adds buffer for horizontal scrollbar to prevent vertical scrolling for 2 lanes
   const laneActionMenuLaneIndex = laneActionMenu
@@ -755,11 +760,12 @@ export function Timeline({
   )
 
   const handleMediaAssetDragOver = useCallback(
-    (event: React.DragEvent<HTMLDivElement>, laneId: string) => {
+    (event: React.DragEvent<HTMLDivElement>, laneId: string, allowChangeSoundOnly = false) => {
       const isMediaAudioDrag = event.dataTransfer.types.includes(MEDIA_AUDIO_DRAG_TYPE)
       const isChangeSoundDrag = event.dataTransfer.types.includes(CHANGE_SOUND_DRAG_TYPE)
-      if (!isMediaAudioDrag && !isChangeSoundDrag) return
       if (isMediaAudioDrag && !mediaAudioClip) return
+      if (!isMediaAudioDrag && !isChangeSoundDrag) return
+      if (allowChangeSoundOnly && (isMediaAudioDrag || !isChangeSoundDrag)) return
       event.preventDefault()
       setMediaAssetDropLaneId(laneId)
     },
@@ -767,14 +773,14 @@ export function Timeline({
   )
 
   const handleMediaAssetDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>, laneId: string) => {
+    (event: React.DragEvent<HTMLDivElement>, laneId: string, allowChangeSoundOnly = false) => {
       const laneRect = event.currentTarget.getBoundingClientRect()
       const dropX = event.clientX - laneRect.left
       const dropTime = trackPxToTime(Math.max(0, dropX))
       const clipId = event.dataTransfer.getData(MEDIA_AUDIO_DRAG_TYPE)
       const isChangeSoundDrag = event.dataTransfer.types.includes(CHANGE_SOUND_DRAG_TYPE)
 
-      if (clipId && mediaAudioClip && clipId === mediaAudioClip.id) {
+      if (clipId && mediaAudioClip && clipId === mediaAudioClip.id && !allowChangeSoundOnly) {
         event.preventDefault()
         addMediaAudioRegion({ startTime: dropTime, laneId })
       } else if (isChangeSoundDrag) {
@@ -812,38 +818,46 @@ export function Timeline({
   )
 
   return (
-    <div className="flex flex-col bg-background/50 p-3 transition-all duration-300 ease-in-out">
-      <div className="mb-2 flex items-center gap-3 px-1">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Timeline lanes</span>
-        <button
-          type="button"
-          data-lane-control
-          onClick={(e) => {
-            e.stopPropagation()
-            addTimelineLane()
-          }}
-          className="rounded-md border border-border/60 bg-card/80 px-2 py-1 text-xs text-foreground hover:bg-accent/50"
-        >
-          + lane
-        </button>
-      </div>
-
+    <div className="flex flex-col bg-background/50 px-3 pb-3 pt-1 transition-all duration-300 ease-in-out">
       <div
         className="flex flex-row overflow-hidden rounded-xl border border-border bg-card shadow-xl"
         style={{ height: `${timelineViewportHeight}px`, maxHeight: '40vh' }}
       >
         <div
-          className="w-8 shrink-0 h-full bg-gradient-to-b from-card to-muted/30 flex items-center justify-center transition-all duration-200 cursor-ew-resize select-none border-r border-border hover:bg-accent/40 active:bg-accent/60 group"
-          onMouseDown={handleLeftStripMouseDown}
+          className="flex shrink-0 flex-col items-center border-r border-border/60 bg-card/95"
+          style={{ width: `${LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX}px` }}
         >
-          <Scissors size={16} className="text-muted-foreground group-hover:text-foreground transition-colors" />
+          <SimpleTooltip content="Add new lane">
+            <button
+              type="button"
+              data-lane-control
+              aria-label="Add new lane"
+              onClick={(e) => {
+                e.stopPropagation()
+                addTimelineLane()
+              }}
+              className="mt-2 flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-card/90 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </SimpleTooltip>
         </div>
-
         <div
           ref={containerRef}
           className="timeline-scrollbar stable-scrollbar flex-1 overflow-x-auto overflow-y-auto bg-gradient-to-b from-background/30 to-background/10"
           onScroll={(e) => {
             setTimelineScrollLeft((e.currentTarget as HTMLDivElement).scrollLeft)
+          }}
+          onWheel={(e) => {
+            if (!e.ctrlKey) return
+            e.preventDefault()
+            const delta = -e.deltaY
+            const step = delta > 0 ? TIMELINE.VIEW_ZOOM.STEP : -TIMELINE.VIEW_ZOOM.STEP
+            const next = Math.max(
+              TIMELINE.VIEW_ZOOM.MIN,
+              Math.min(TIMELINE.VIEW_ZOOM.MAX, useEditorStore.getState().timelineZoom + step),
+            )
+            useEditorStore.getState().setTimelineZoom(next)
           }}
           onMouseDown={(e) => {
             if (
@@ -859,7 +873,7 @@ export function Timeline({
           <div
             ref={timelineRef}
             className="relative min-w-full overflow-visible"
-            style={{ width: `${timelineStartOffsetPx + timeToPx(duration)}px`, height: `${timelineContentHeight}px` }}
+            style={{ width: `${timelineStartOffsetPx + timeToPx(trackDuration)}px`, height: `${timelineContentHeight}px` }}
           >
             <Ruler
               ticks={rulerTicks}
@@ -873,7 +887,11 @@ export function Timeline({
               className="absolute left-0 w-full"
               style={{ top: `${RULER_HEIGHT_PX}px`, height: `${lanesContentHeight}px` }}
             >
-              {sortedLanes.map((lane, laneIndex) => {
+              {visibleSortedLanes.map((lane, laneIndex) => {
+                const isContentRootLane = !!lane.isContentRootLane
+                const isLegacySpecialLane = !!lane.isCutLane || !!lane.isChangeSoundLane
+                const isSpecialLane = isContentRootLane || isLegacySpecialLane
+                const laneHeightPx = isContentRootLane ? CONTENT_ROOT_LANE_HEIGHT_PX : LANE_HEIGHT_PX
                 const laneRegions = regionsByLane.get(lane.id) ?? []
                 const laneMovePreviewRegion =
                   movePreviewRegion && movePreviewRegion.laneId === lane.id ? movePreviewRegion : null
@@ -884,23 +902,30 @@ export function Timeline({
                     ref={(el) => laneRefs.current.set(lane.id, el)}
                     className={cn(
                       'relative overflow-hidden rounded-lg border bg-background/20',
-                      (activeDropLaneId === lane.id && draggingRegionId) || mediaAssetDropLaneId === lane.id
-                        ? 'border-primary/70 bg-primary/10'
-                        : 'border-border/40',
+                      !isSpecialLane &&
+                        ((activeDropLaneId === lane.id && draggingRegionId) || mediaAssetDropLaneId === lane.id
+                          ? 'border-primary/70 bg-primary/10'
+                          : 'border-border/40'),
+                      isContentRootLane && 'border-border/40 bg-muted dark:bg-white/10',
+                      isLegacySpecialLane && !isContentRootLane && 'border-border/40',
                     )}
                     style={{
-                      height: `${LANE_HEIGHT_PX}px`,
-                      marginBottom: laneIndex === sortedLanes.length - 1 ? 0 : `${LANE_GAP_PX}px`,
+                      height: `${laneHeightPx}px`,
+                      marginBottom: laneIndex === visibleSortedLanes.length - 1 ? 0 : `${LANE_GAP_PX}px`,
                     }}
-                    onDragOver={(event) => handleMediaAssetDragOver(event, lane.id)}
-                    onDragLeave={() => {
-                      if (mediaAssetDropLaneId === lane.id) {
-                        setMediaAssetDropLaneId(null)
-                      }
-                    }}
-                    onDrop={(event) => handleMediaAssetDrop(event, lane.id)}
+                    onDragOver={isSpecialLane ? (event) => handleMediaAssetDragOver(event, lane.id, true) : (event) => handleMediaAssetDragOver(event, lane.id)}
+                    onDragLeave={
+                      isSpecialLane
+                        ? undefined
+                        : () => {
+                            if (mediaAssetDropLaneId === lane.id) {
+                              setMediaAssetDropLaneId(null)
+                            }
+                          }
+                    }
+                    onDrop={isSpecialLane ? (event) => handleMediaAssetDrop(event, lane.id, true) : (event) => handleMediaAssetDrop(event, lane.id)}
                   >
-                    {showLaneActionButtons && (
+                    {showLaneActionButtons && !isSpecialLane && (
                       <div
                         className="pointer-events-none absolute top-0 z-[130] h-full border-r border-border/60 bg-gradient-to-r from-card/95 to-card/65"
                         style={{
@@ -923,31 +948,24 @@ export function Timeline({
 
                     <div
                       className={cn(
-                        'absolute top-1 z-[120] rounded bg-card/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground/80',
-                        showLaneActionButtons ? 'left-[34px]' : 'left-2',
+                        'absolute top-1 z-0 rounded bg-card/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70',
+                        'left-[34px]',
                       )}
                     >
                       {lane.name}
                     </div>
 
                     {laneRegions.map((region) => {
-                      const cutInteraction = cutInteractionByRegionId.get(region.id)
-                      const isCutObscured = !!cutInteraction
-                      const isCutBlocked = cutInteraction === 'blocked'
-                      const isCutMoveOnly = cutInteraction === 'move-only'
-                      const isSelected = selectedRegionId === region.id && !isCutBlocked
+                      const isSelected = selectedRegionId === region.id
                       const zIndex = region.type === 'cut' ? 200 : isSelected ? 100 : (region.zIndex ?? 1)
 
                       const regionStyle: React.CSSProperties = {
                         left: `${timeToTrackPx(region.startTime)}px`,
                         width: `${timeToPx(region.duration)}px`,
                         zIndex,
-                        opacity:
-                          movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : isCutObscured ? 0.28 : 1,
-                        filter: isCutObscured ? 'grayscale(1)' : undefined,
-                        pointerEvents: isCutBlocked ? 'none' : undefined,
+                        opacity: movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : 1,
                       }
-                      const onMouseDown = isCutMoveOnly ? handleCutMoveOnlyMouseDown : handleRegionMouseDown
+                      const onMouseDown = handleRegionMouseDown
 
                       if (region.type === 'zoom') {
                         return (
@@ -1036,7 +1054,7 @@ export function Timeline({
 
                       if (region.type === 'change-sound') {
                         return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
+                          <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
                             <ChangeSoundRegionBlock
                               region={region}
                               isSelected={isSelected}
@@ -1249,13 +1267,6 @@ export function Timeline({
               <span>Remove lane</span>
             </ContextMenuItem>
           </ContextMenu>
-        </div>
-
-        <div
-          className="w-8 shrink-0 h-full bg-gradient-to-b from-card to-muted/30 flex items-center justify-center transition-all duration-200 cursor-ew-resize select-none border-l border-border hover:bg-accent/40 active:bg-accent/60 group"
-          onMouseDown={handleRightStripMouseDown}
-        >
-          <FlipScissorsIcon size={16} className="text-muted-foreground group-hover:text-foreground transition-colors" />
         </div>
       </div>
     </div>

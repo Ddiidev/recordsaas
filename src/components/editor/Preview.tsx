@@ -13,8 +13,10 @@ import {
 } from '@icons'
 import { useShallow } from 'zustand/react/shallow'
 import { formatTime } from '../../lib/utils'
+import { calcRealDuration } from '../../lib/real-duration'
 import { Slider } from '../ui/slider'
 import { Button } from '../ui/button'
+import { SimpleTooltip } from '../ui/tooltip'
 import { drawScene } from '../../lib/renderer'
 import { cn } from '../../lib/utils'
 import { toMediaUrl } from '../../lib/media-url'
@@ -138,6 +140,7 @@ const syncResolvedAudioElement = (
   playbackRate: number,
   shouldPlay: boolean,
   maxDrift: number,
+  timeOffsetSec = 0,
 ) => {
   if (!element) return
 
@@ -147,8 +150,9 @@ const syncResolvedAudioElement = (
     return
   }
 
-  if (element.readyState > 0 && Math.abs(element.currentTime - resolved.sourceTime) > maxDrift) {
-    queueMediaSeek(element, resolved.sourceTime, maxDrift)
+  const targetTime = resolved.sourceTime + timeOffsetSec
+  if (element.readyState > 0 && Math.abs(element.currentTime - targetTime) > maxDrift) {
+    queueMediaSeek(element, targetTime, maxDrift)
   }
   element.volume = Math.max(0, Math.min(1, nextVolume))
   element.playbackRate = playbackRate
@@ -239,6 +243,8 @@ export const Preview = memo(
       systemAudioUrl,
       systemAudioVolume,
       systemAudioMuted,
+      recordingSyncOffsetMs,
+      systemAudioSyncOffsetMs,
       mediaAudioClip,
       mediaAudioRegions,
       floatingMonitors,
@@ -280,6 +286,8 @@ export const Preview = memo(
         systemAudioUrl: state.systemAudioUrl,
         systemAudioVolume: state.systemAudioVolume,
         systemAudioMuted: state.systemAudioMuted,
+        recordingSyncOffsetMs: state.recordingSyncOffsetMs,
+        systemAudioSyncOffsetMs: state.systemAudioSyncOffsetMs,
         mediaAudioClip: state.mediaAudioClip,
         mediaAudioRegions: state.mediaAudioRegions,
         floatingMonitors: state.floatingMonitors,
@@ -320,6 +328,11 @@ export const Preview = memo(
     const { setPlaying, setDuration, setVideoDimensions, setHasAudioTrack, setMediaAudioDuration } =
       useEditorStore.getState()
     const isPlaying = useEditorStore((state) => state.isPlaying)
+
+    const realDuration = useMemo(
+      () => calcRealDuration(duration, cutRegions, speedRegions),
+      [duration, cutRegions, speedRegions],
+    )
 
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -469,6 +482,7 @@ export const Preview = memo(
           video?.playbackRate ?? 1,
           resumePlayback,
           audioMaxDrift,
+          recordingSyncOffsetMs / 1000,
         )
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
         syncResolvedAudioElement(
@@ -478,6 +492,7 @@ export const Preview = memo(
           video?.playbackRate ?? 1,
           resumePlayback,
           audioMaxDrift,
+          systemAudioSyncOffsetMs / 1000,
         )
 
         const resolvedMedia = resolveMediaForTime(playbackTime)
@@ -516,6 +531,8 @@ export const Preview = memo(
         systemAudioVolume,
         videoRef,
         volume,
+        recordingSyncOffsetMs,
+        systemAudioSyncOffsetMs,
         floatingMonitors,
         floatingMonitorRegions,
       ],
@@ -965,6 +982,7 @@ export const Preview = memo(
         video.playbackRate,
         shouldPlayAudio,
         0.1,
+        recordingSyncOffsetMs / 1000,
       )
       const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
       syncResolvedAudioElement(
@@ -974,6 +992,7 @@ export const Preview = memo(
         video.playbackRate,
         shouldPlayAudio,
         0.1,
+        systemAudioSyncOffsetMs / 1000,
       )
       const resolvedMedia = resolveMediaForTime(playbackTime)
       syncResolvedAudioElement(
@@ -1079,9 +1098,10 @@ export const Preview = memo(
           video.playbackRate,
           !video.paused,
           0,
+          recordingSyncOffsetMs / 1000,
         )
       }
-    }, [resolveRecordingForTime, videoRef, volume])
+    }, [resolveRecordingForTime, videoRef, volume, recordingSyncOffsetMs])
 
     const handleSystemAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
@@ -1099,9 +1119,10 @@ export const Preview = memo(
           video.playbackRate,
           !video.paused,
           0,
+          systemAudioSyncOffsetMs / 1000,
         )
       }
-    }, [resolveSystemAudioForTime, videoRef, systemAudioVolume, systemAudioMuted])
+    }, [resolveSystemAudioForTime, videoRef, systemAudioVolume, systemAudioMuted, systemAudioSyncOffsetMs])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
@@ -1447,11 +1468,20 @@ export const Preview = memo(
                 <PlayerSkipForward className="w-4 h-4" />
               </Button>
 
-              <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4">
-                <span className="text-foreground font-semibold">{formatTime(previewTime, true)}</span>
-                <span className="text-muted-foreground/50">/</span>
-                <span className="text-muted-foreground">{formatTime(duration, true)}</span>
-              </div>
+              <SimpleTooltip
+                content={
+                  realDuration < duration
+                    ? `Tempo real pós-render: ${formatTime(realDuration, true)}`
+                    : 'Sem cortes aplicados'
+                }
+              >
+                <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4 cursor-help">
+                  <span className="text-foreground font-semibold">{formatTime(previewTime, true)}</span>
+                  <span className="text-muted-foreground/50">/</span>
+                  <span className="text-muted-foreground">{formatTime(duration, true)}</span>
+                  {realDuration < duration && <span className="text-primary/80">{formatTime(realDuration, true)}</span>}
+                </div>
+              </SimpleTooltip>
               <Slider
                 min={0}
                 max={duration}

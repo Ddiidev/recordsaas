@@ -23,7 +23,7 @@ import { BLUR_REGION, DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
 import { initialFrameState, recalculateCanvasDimensions } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
 import { prepareCursorBitmaps } from '../../lib/utils'
-import { createDefaultTimelineLane, getFallbackLaneId } from '../../lib/timeline-lanes'
+import { createDefaultTimelineLane, getFallbackLaneId, ensureContentRootLane, CONTENT_ROOT_LANE_ID } from '../../lib/timeline-lanes'
 import { isWebcamShape, normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
 import { normalizeMediaPath, toMediaUrl } from '../../lib/media-url'
 import { findEditedMonitorClone, normalizeAssetTimelineMonitorRegions } from '../../lib/floating-monitor'
@@ -38,6 +38,8 @@ export const initialProjectState: ProjectState = {
   systemAudioUrl: null,
   systemAudioVolume: 1,
   systemAudioMuted: false,
+  recordingSyncOffsetMs: 0,
+  systemAudioSyncOffsetMs: 0,
   mediaAudioClip: null,
   floatingMonitors: {},
   assetTimelineEditing: null,
@@ -69,6 +71,9 @@ const fallbackNameFromPath = (filePath: string): string => {
 
 const clampAudioVolume = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : 1
+
+const clampSyncOffsetMs = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.max(-10000, Math.min(value, 10000))) : 0
 
 const cloneSerializable = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -152,10 +157,16 @@ const parseAssetTimeline = (
   if (!value || typeof value !== 'object') return fallback
   const timeline = value as Partial<AssetTimelineState>
   const mediaAudioClip = parseMediaAudioClip(timeline.mediaAudioClip)
-  const timelineLanes =
+  const rawLanes =
     Array.isArray(timeline.timelineLanes) && timeline.timelineLanes.length > 0
       ? timeline.timelineLanes
       : fallback.timelineLanes
+  const cutRegions = timeline.cutRegions || {}
+  const hasCutContent = Object.keys(cutRegions).length > 0
+  const timelineLanes = hasCutContent ? ensureContentRootLane(rawLanes) : rawLanes.filter((lane) => !lane.isContentRootLane)
+  Object.values(cutRegions).forEach((region) => {
+    region.laneId = CONTENT_ROOT_LANE_ID
+  })
   return {
     ...fallback,
     duration:
@@ -172,7 +183,7 @@ const parseAssetTimeline = (
     aspectRatio: timeline.aspectRatio || fallback.aspectRatio,
     timelineLanes,
     zoomRegions: timeline.zoomRegions || {},
-    cutRegions: timeline.cutRegions || {},
+    cutRegions,
     speedRegions: timeline.speedRegions || {},
     blurRegions: timeline.blurRegions || {},
     swapRegions: parseSwapRegions(
@@ -507,7 +518,7 @@ const parseMediaAudioRegions = (
   return { [legacyRegion.id]: legacyRegion }
 }
 
-const parseChangeSoundRegion = (value: unknown, fallbackLaneId: string): ChangeSoundRegion | null => {
+const parseChangeSoundRegion = (value: unknown): ChangeSoundRegion | null => {
   if (!value || typeof value !== 'object') return null
   const region = value as Partial<ChangeSoundRegion>
 
@@ -533,7 +544,7 @@ const parseChangeSoundRegion = (value: unknown, fallbackLaneId: string): ChangeS
   return {
     id: typeof region.id === 'string' && region.id.length > 0 ? region.id : `change-sound-${Date.now()}`,
     type: 'change-sound',
-    laneId: typeof region.laneId === 'string' && region.laneId.length > 0 ? region.laneId : fallbackLaneId,
+    laneId: CONTENT_ROOT_LANE_ID,
     startTime,
     duration,
     sourceKey,
@@ -545,12 +556,12 @@ const parseChangeSoundRegion = (value: unknown, fallbackLaneId: string): ChangeS
   }
 }
 
-const parseChangeSoundRegions = (value: unknown, fallbackLaneId: string): Record<string, ChangeSoundRegion> => {
+const parseChangeSoundRegions = (value: unknown): Record<string, ChangeSoundRegion> => {
   if (!value || typeof value !== 'object') return {}
 
   return Object.entries(value as Record<string, unknown>).reduce(
     (acc, [regionId, rawValue]) => {
-      const parsedRegion = parseChangeSoundRegion(rawValue, fallbackLaneId)
+      const parsedRegion = parseChangeSoundRegion(rawValue)
       if (!parsedRegion) return acc
       parsedRegion.id = regionId || parsedRegion.id
       acc[parsedRegion.id] = parsedRegion
@@ -964,6 +975,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioUrl = systemAudioUrl
       state.systemAudioVolume = 1
       state.systemAudioMuted = false
+      state.recordingSyncOffsetMs = 0
+      state.systemAudioSyncOffsetMs = 0
       state.hasAudioTrack = !!audioUrl || !!systemAudioUrl
       state.mediaAudioClip = null
       state.mediaAudioRegions = {}
@@ -1014,6 +1027,18 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.speedRegions = (parsedData.speedRegions as typeof state.speedRegions) || {}
         state.blurRegions = (parsedData.blurRegions as typeof state.blurRegions) || {}
         state.timelineLanes = (parsedData.timelineLanes as typeof state.timelineLanes) || [createDefaultTimelineLane()]
+        const hasCutOrChangeSoundContent =
+          (!!parsedData.cutRegions && Object.keys(parsedData.cutRegions).length > 0) ||
+          (!!parsedData.changeSoundRegions && Object.keys(parsedData.changeSoundRegions).length > 0)
+        state.timelineLanes = hasCutOrChangeSoundContent
+          ? ensureContentRootLane(state.timelineLanes)
+          : state.timelineLanes.filter((lane) => !lane.isContentRootLane)
+        Object.values(state.cutRegions).forEach((region) => {
+          region.laneId = CONTENT_ROOT_LANE_ID
+        })
+        Object.values(state.changeSoundRegions).forEach((region) => {
+          region.laneId = CONTENT_ROOT_LANE_ID
+        })
         const fallbackTimelineLaneId = getFallbackLaneId(state.timelineLanes)
         state.swapRegions = parseSwapRegions(
           parsedData.swapRegions,
@@ -1033,6 +1058,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         }
         state.systemAudioVolume = clampAudioVolume(parsedData.systemAudioVolume)
         state.systemAudioMuted = parsedData.systemAudioMuted === true
+        state.recordingSyncOffsetMs = clampSyncOffsetMs(parsedData.recordingSyncOffsetMs)
+        state.systemAudioSyncOffsetMs = clampSyncOffsetMs(parsedData.systemAudioSyncOffsetMs)
         state.hasAudioTrack = !!state.audioUrl || !!state.systemAudioUrl || !!state.mediaAudioClip
         const fallbackMediaLaneId = fallbackTimelineLaneId
         state.mediaAudioRegions = parseMediaAudioRegions(
@@ -1045,7 +1072,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           parsedFloatingMonitors,
           fallbackTimelineLaneId,
         )
-        state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions, fallbackMediaLaneId)
+        state.changeSoundRegions = parseChangeSoundRegions(parsedData.changeSoundRegions)
         if ('webcamLayout' in parsedData) {
           state.webcamLayout = parseWebcamLayout(parsedData.webcamLayout)
         }
@@ -1339,6 +1366,18 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       }
     })
   },
+  setRecordingSyncOffsetMs: (offsetMs) => {
+    set((state) => {
+      if (state.assetTimelineEditing) return
+      state.recordingSyncOffsetMs = clampSyncOffsetMs(offsetMs)
+    })
+  },
+  setSystemAudioSyncOffsetMs: (offsetMs) => {
+    set((state) => {
+      if (state.assetTimelineEditing) return
+      state.systemAudioSyncOffsetMs = clampSyncOffsetMs(offsetMs)
+    })
+  },
   setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {
     set((state) => {
       const normalizedPath = normalizeMediaPath(path)
@@ -1540,6 +1579,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           systemAudioUrl: state.systemAudioUrl,
           systemAudioVolume: state.systemAudioVolume,
           systemAudioMuted: state.systemAudioMuted,
+          recordingSyncOffsetMs: state.recordingSyncOffsetMs,
+          systemAudioSyncOffsetMs: state.systemAudioSyncOffsetMs,
           volume: state.volume,
           isMuted: state.isMuted,
           mediaAudioClip: cloneSerializable(state.mediaAudioClip),
@@ -1579,6 +1620,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioUrl = null
       state.systemAudioVolume = 1
       state.systemAudioMuted = false
+      state.recordingSyncOffsetMs = 0
+      state.systemAudioSyncOffsetMs = 0
       state.volume = 1
       state.isMuted = false
       state.webcamVideoPath = null
@@ -1644,6 +1687,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioUrl = main.systemAudioUrl
       state.systemAudioVolume = main.systemAudioVolume
       state.systemAudioMuted = main.systemAudioMuted
+      state.recordingSyncOffsetMs = main.recordingSyncOffsetMs ?? 0
+      state.systemAudioSyncOffsetMs = main.systemAudioSyncOffsetMs ?? 0
       state.volume = main.volume
       state.isMuted = main.isMuted
       state.mediaAudioClip = main.mediaAudioClip

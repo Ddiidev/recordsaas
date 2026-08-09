@@ -20,8 +20,12 @@ import {
   createDefaultTimelineLane,
   getFallbackLaneId,
   sortTimelineLanes,
+  ensureContentRootLane,
+  removeContentRootLaneIfEmpty,
+  CONTENT_ROOT_LANE_ID,
 } from '../../lib/timeline-lanes'
 import { resolveMonitorForAssetTimeline } from '../../lib/floating-monitor'
+import { applyMediaAudioCutAdaptation } from '../../lib/media-audio-cuts'
 
 export const initialTimelineState: TimelineState = {
   timelineLanes: [createDefaultTimelineLane()],
@@ -121,6 +125,33 @@ const getAllRegions = (state: {
   ...Object.values(state.changeSoundRegions),
   ...Object.values(state.floatingMonitorRegions),
 ]
+
+const nextContentRootRegionStart = (
+  cutRegions: Record<string, CutRegion>,
+  changeSoundRegions: Record<string, ChangeSoundRegion>,
+  startTime: number,
+): number => {
+  let next = Number.POSITIVE_INFINITY
+  for (const region of Object.values(cutRegions)) {
+    if (region.startTime > startTime && region.startTime < next) next = region.startTime
+  }
+  for (const region of Object.values(changeSoundRegions)) {
+    if (region.startTime > startTime && region.startTime < next) next = region.startTime
+  }
+  return next
+}
+
+const defaultContentRootDuration = (
+  duration: number,
+  startTime: number,
+  nextRegionStart: number,
+): number => {
+  const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+  return Math.max(
+    TIMELINE.MINIMUM_REGION_DURATION,
+    Math.min(duration * 0.1, Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - startTime)),
+  )
+}
 
 const getRegionById = (
   state: {
@@ -274,7 +305,16 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   removeTimelineLane: (laneId) => {
     set((state) => {
       const normalizedLanes = normalizeTimelineLanes(state.timelineLanes)
-      if (normalizedLanes.length <= 1 || !normalizedLanes.some((lane) => lane.id === laneId)) return
+      const targetLane = normalizedLanes.find((lane) => lane.id === laneId)
+      if (
+        normalizedLanes.length <= 1 ||
+        !targetLane ||
+        targetLane.isContentRootLane ||
+        targetLane.isCutLane ||
+        targetLane.isChangeSoundLane
+      ) {
+        return
+      }
 
       const laneIndex = normalizedLanes.findIndex((lane) => lane.id === laneId)
       const fallbackLane = normalizedLanes[laneIndex - 1] || normalizedLanes[laneIndex + 1]
@@ -295,9 +335,16 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       const sorted = sortTimelineLanes(normalizeTimelineLanes(state.timelineLanes))
       const index = sorted.findIndex((lane) => lane.id === laneId)
       if (index === -1) return
+      if (sorted[index].isContentRootLane || sorted[index].isCutLane || sorted[index].isChangeSoundLane) return
 
       const targetIndex = direction === 'up' ? index - 1 : index + 1
       if (targetIndex < 0 || targetIndex >= sorted.length) return
+      if (
+        sorted[targetIndex].isContentRootLane ||
+        sorted[targetIndex].isCutLane ||
+        sorted[targetIndex].isChangeSoundLane
+      )
+        return
 
       const reordered = [...sorted]
       const [lane] = reordered.splice(index, 1)
@@ -315,7 +362,14 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   },
   moveRegionToLane: (regionId, laneId) => {
     set((state) => {
-      if (!state.timelineLanes.some((lane) => lane.id === laneId)) return
+      const targetLane = state.timelineLanes.find((lane) => lane.id === laneId)
+      if (
+        !targetLane ||
+        targetLane.isContentRootLane ||
+        targetLane.isCutLane ||
+        targetLane.isChangeSoundLane
+      )
+        return
       const region = getRegionById(state, regionId)
       if (!region) return
       region.laneId = laneId
@@ -389,26 +443,28 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const { currentTime, duration } = get()
     if (duration === 0) return
 
-    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
-    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
+    const startTime = currentTime
+    const nextRegionStart = nextContentRootRegionStart(get().cutRegions, get().changeSoundRegions, startTime)
+    const defaultDuration = defaultContentRootDuration(duration, startTime, nextRegionStart)
 
     const id = `cut-${Date.now()}`
     const newRegion: CutRegion = {
       id,
       type: 'cut',
-      laneId: preferredLaneId,
-      startTime: currentTime,
-      duration: 2,
+      laneId: CONTENT_ROOT_LANE_ID,
+      startTime,
+      duration: defaultDuration,
       zIndex: 0,
       ...regionData,
     }
 
-    if (newRegion.startTime + newRegion.duration > duration) {
-      newRegion.duration = Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - newRegion.startTime)
+    const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+    if (newRegion.startTime + newRegion.duration > maxEnd) {
+      newRegion.duration = Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - newRegion.startTime)
     }
 
     set((state) => {
+      state.timelineLanes = ensureContentRootLane(state.timelineLanes)
       state.cutRegions[id] = newRegion
       state.selectedRegionId = id
       recalculateZIndices(state)
@@ -599,7 +655,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = params?.laneId || selectedRegion?.laneId || fallbackLaneId
+    const selectedLane = selectedRegion
+      ? get().timelineLanes.find((lane) => lane.id === selectedRegion.laneId)
+      : null
+    const preferredLaneId =
+      params?.laneId ||
+      (selectedLane && !selectedLane.isContentRootLane && !selectedLane.isCutLane && !selectedLane.isChangeSoundLane
+        ? selectedLane.id
+        : null) ||
+      fallbackLaneId
 
     const requestedStart = params?.startTime ?? 0
     const sourceStart = Math.max(0, params?.sourceStart ?? 0)
@@ -612,7 +676,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const clampedStartTime = Math.max(0, Math.min(requestedStart, duration))
     const clampedDuration = Math.max(
       TIMELINE.MINIMUM_REGION_DURATION,
-      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - clampedStartTime)),
+      Math.min(requestedDuration, availableSourceDuration),
     )
 
     const id = `media-audio-${Date.now()}`
@@ -668,24 +732,23 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const { duration } = get()
     if (duration <= 0) return
 
-    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
-    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = params?.laneId || selectedRegion?.laneId || fallbackLaneId
-
     const requestedStart = params?.startTime ?? 0
-    const requestedDuration = params?.duration ?? Math.min(3, duration)
-
     const clampedStartTime = Math.max(0, Math.min(requestedStart, duration))
+    const nextRegionStart = nextContentRootRegionStart(get().cutRegions, get().changeSoundRegions, clampedStartTime)
+    const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+    const requestedDuration =
+      params?.duration ?? defaultContentRootDuration(duration, clampedStartTime, nextRegionStart)
+
     const clampedDuration = Math.max(
       TIMELINE.MINIMUM_REGION_DURATION,
-      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - clampedStartTime)),
+      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - clampedStartTime)),
     )
 
     const id = `change-sound-${Date.now()}`
     const newRegion: ChangeSoundRegion = {
       id,
       type: 'change-sound',
-      laneId: preferredLaneId,
+      laneId: CONTENT_ROOT_LANE_ID,
       startTime: clampedStartTime,
       duration: clampedDuration,
       sourceKey: 'recording-mic',
@@ -697,33 +760,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     }
 
     set((state) => {
-      const allRegs = getAllRegions(state)
-      const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) =>
-        allRegs.some(
-          (region) =>
-            region.laneId === laneId &&
-            region.startTime < endTime &&
-            region.startTime + region.duration > newRegion.startTime,
-        )
-
-      let resolvedLaneId = newRegion.laneId
-      if (isOccupied(resolvedLaneId)) {
-        const freeLane = state.timelineLanes.find((lane) => !isOccupied(lane.id))
-        if (freeLane) {
-          resolvedLaneId = freeLane.id
-        } else {
-          const normalizedLanes = normalizeTimelineLanes(state.timelineLanes)
-          const nextOrder = normalizedLanes.length
-          resolvedLaneId = `lane-${Date.now()}`
-          state.timelineLanes = [
-            ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
-          ]
-        }
-      }
-
-      newRegion.laneId = resolvedLaneId
+      state.timelineLanes = ensureContentRootLane(state.timelineLanes)
       state.changeSoundRegions[id] = newRegion
       state.selectedRegionId = id
       recalculateZIndices(state)
@@ -741,6 +778,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
+    const selectedLane = selectedRegion
+      ? get().timelineLanes.find((lane) => lane.id === selectedRegion.laneId)
+      : null
+    const preferredLaneId =
+      params?.laneId ||
+      (selectedLane && !selectedLane.isContentRootLane && !selectedLane.isCutLane && !selectedLane.isChangeSoundLane
+        ? selectedLane.id
+        : null) ||
+      fallbackLaneId
     const startTime = Math.max(0, Math.min(params?.startTime ?? get().currentTime, duration))
     const regionDuration = Math.max(
       TIMELINE.MINIMUM_REGION_DURATION,
@@ -753,7 +799,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         id,
         type: 'floating-monitor',
         monitorId: monitor.id,
-        laneId: params?.laneId || selectedRegion?.laneId || fallbackLaneId,
+        laneId: preferredLaneId,
         startTime,
         duration: regionDuration,
         sourceStart: monitor.timelineStart,
@@ -813,6 +859,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       recalculateZIndices(state)
     })
   },
+  adaptMediaAudioToCuts: (regionId) => {
+    set((state) => {
+      if (!state.mediaAudioRegions[regionId]) return
+      const firstRegionId = applyMediaAudioCutAdaptation(state.cutRegions, state.mediaAudioRegions)
+      if (!firstRegionId) return
+      state.selectedRegionId = firstRegionId
+      recalculateZIndices(state)
+    })
+  },
   splitChangeSoundRegion: (regionId, splitTime) => {
     set((state) => {
       const region = state.changeSoundRegions[regionId]
@@ -843,6 +898,36 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
         duration: secondDuration,
         fadeInDuration: 0,
         fadeOutDuration: Math.min(previousFadeOut, secondDuration),
+      }
+
+      state.selectedRegionId = nextRegionId
+      recalculateZIndices(state)
+    })
+  },
+  splitFloatingMonitorRegion: (regionId, splitTime) => {
+    set((state) => {
+      const region = state.floatingMonitorRegions[regionId]
+      if (!region) return
+
+      const regionStart = region.startTime
+      const regionEnd = region.startTime + region.duration
+      const clampedSplitTime = Math.max(regionStart, Math.min(splitTime, regionEnd))
+
+      const firstDuration = clampedSplitTime - regionStart
+      const secondDuration = regionEnd - clampedSplitTime
+      if (firstDuration < TIMELINE.MINIMUM_REGION_DURATION || secondDuration < TIMELINE.MINIMUM_REGION_DURATION) {
+        return
+      }
+
+      region.duration = firstDuration
+
+      const nextRegionId = `floating-monitor-${Date.now()}`
+      state.floatingMonitorRegions[nextRegionId] = {
+        ...region,
+        id: nextRegionId,
+        startTime: clampedSplitTime,
+        duration: secondDuration,
+        sourceStart: region.sourceStart + firstDuration,
       }
 
       state.selectedRegionId = nextRegionId
@@ -980,6 +1065,11 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       if (state.selectedRegionId === id) {
         state.selectedRegionId = null
       }
+      state.timelineLanes = removeContentRootLaneIfEmpty(
+        state.timelineLanes,
+        Object.keys(state.cutRegions).length > 0,
+        Object.keys(state.changeSoundRegions).length > 0,
+      )
       recalculateZIndices(state)
     })
   },
