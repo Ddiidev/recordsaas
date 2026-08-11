@@ -119,6 +119,7 @@ export function CameraSettings() {
     useShallow((state) => ({
       webcamVideoUrl: state.webcamVideoUrl,
       currentTime: state.currentTime,
+      captureSourceOffsetsMs: state.captureSourceOffsetsMs,
       isWebcamVisible: state.isWebcamVisible,
       webcamLayout: state.webcamLayout,
       webcamPosition: state.webcamPosition,
@@ -133,6 +134,7 @@ export function CameraSettings() {
   const {
     webcamVideoUrl,
     currentTime,
+    captureSourceOffsetsMs,
     isWebcamVisible,
     webcamLayout,
     webcamPosition,
@@ -146,6 +148,7 @@ export function CameraSettings() {
   const isOverlayLayout = webcamLayout.mode === 'overlay'
   const isCircle = webcamStyles.shape === 'circle'
   const screenWidthPercent = 100 - webcamLayout.webcamWidthPercent
+  const webcamSourceTime = currentTime + Math.max(0, captureSourceOffsetsMs?.webcam || 0) / 1000
 
   const { hex: shadowHex, alpha: shadowAlpha } = useMemo(
     () => rgbaToHexAlpha(webcamStyles.shadowColor),
@@ -503,7 +506,7 @@ export function CameraSettings() {
           <div className="space-y-6">
             <WebcamCropEditor
               sourceUrl={webcamVideoUrl}
-              currentTime={currentTime}
+              currentTime={webcamSourceTime}
               crop={webcamStyles.crop}
               onUpdateCrop={updateCrop}
             />

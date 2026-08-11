@@ -22,6 +22,8 @@ import type {
   TakeSourceRef,
   TakeTransition,
   TimelineLane,
+  CaptureSourceOffsetsMs,
+  AudioWaveformVisibility,
 } from '../../types'
 import type { MetaDataItem, ZoomRegion, CursorFrame } from '../../types'
 import { BLUR_REGION, DEFAULTS, SWAP_REGION, ZOOM } from '../../lib/constants'
@@ -64,6 +66,8 @@ export const initialProjectState: ProjectState = {
   systemAudioMuted: false,
   recordingSyncOffsetMs: 0,
   systemAudioSyncOffsetMs: 0,
+  captureSourceOffsetsMs: { screen: 0, webcam: 0, recording: 0, systemAudio: 0 },
+  audioWaveformVisibility: { recording: true, systemAudio: true },
   mediaAudioClip: null,
   floatingMonitors: {},
   assetTimelineEditing: null,
@@ -103,6 +107,24 @@ const clampAudioVolume = (value: unknown): number =>
 
 const clampSyncOffsetMs = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.max(-10000, Math.min(value, 10000))) : 0
+
+const parseCaptureSourceOffsetsMs = (value: unknown): CaptureSourceOffsetsMs => {
+  const source = value && typeof value === 'object' ? (value as Partial<CaptureSourceOffsetsMs>) : {}
+  return {
+    screen: clampSyncOffsetMs(source.screen),
+    webcam: clampSyncOffsetMs(source.webcam),
+    recording: clampSyncOffsetMs(source.recording),
+    systemAudio: clampSyncOffsetMs(source.systemAudio),
+  }
+}
+
+const parseAudioWaveformVisibility = (value: unknown): AudioWaveformVisibility => {
+  const source = value && typeof value === 'object' ? (value as Partial<AudioWaveformVisibility>) : {}
+  return {
+    recording: source.recording !== false,
+    systemAudio: source.systemAudio !== false,
+  }
+}
 
 const cloneSerializable = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
@@ -1053,6 +1075,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioMuted = false
       state.recordingSyncOffsetMs = 0
       state.systemAudioSyncOffsetMs = 0
+      state.captureSourceOffsetsMs = { screen: 0, webcam: 0, recording: 0, systemAudio: 0 }
+      state.audioWaveformVisibility = { recording: true, systemAudio: true }
       state.hasAudioTrack = !!audioUrl || !!systemAudioUrl
       state.mediaAudioClip = null
       state.mediaAudioRegions = {}
@@ -1163,6 +1187,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         state.systemAudioMuted = parsedData.systemAudioMuted === true
         state.recordingSyncOffsetMs = clampSyncOffsetMs(parsedData.recordingSyncOffsetMs)
         state.systemAudioSyncOffsetMs = clampSyncOffsetMs(parsedData.systemAudioSyncOffsetMs)
+        state.captureSourceOffsetsMs = parseCaptureSourceOffsetsMs(parsedData.captureSourceOffsetsMs)
+        state.audioWaveformVisibility = parseAudioWaveformVisibility(parsedData.audioWaveformVisibility)
         state.hasAudioTrack = !!state.audioUrl || !!state.systemAudioUrl || !!state.mediaAudioClip
         const fallbackMediaLaneId = fallbackTimelineLaneId
         state.mediaAudioRegions = parseMediaAudioRegions(
@@ -1500,6 +1526,12 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioSyncOffsetMs = clampSyncOffsetMs(offsetMs)
     })
   },
+  setAudioWaveformVisible: (source, visible) => {
+    set((state) => {
+      if (state.assetTimelineEditing) return
+      state.audioWaveformVisibility[source] = visible
+    })
+  },
   setMediaAudioClip: ({ path, name, startTime = 0, duration = 0 }) => {
     set((state) => {
       const normalizedPath = normalizeMediaPath(path)
@@ -1714,6 +1746,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
           systemAudioMuted: state.systemAudioMuted,
           recordingSyncOffsetMs: state.recordingSyncOffsetMs,
           systemAudioSyncOffsetMs: state.systemAudioSyncOffsetMs,
+          captureSourceOffsetsMs: cloneSerializable(state.captureSourceOffsetsMs),
+          audioWaveformVisibility: cloneSerializable(state.audioWaveformVisibility),
           volume: state.volume,
           isMuted: state.isMuted,
           mediaAudioClip: cloneSerializable(state.mediaAudioClip),
@@ -1760,6 +1794,8 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioMuted = false
       state.recordingSyncOffsetMs = 0
       state.systemAudioSyncOffsetMs = 0
+      state.captureSourceOffsetsMs = { screen: 0, webcam: 0, recording: 0, systemAudio: 0 }
+      state.audioWaveformVisibility = { recording: true, systemAudio: true }
       state.volume = 1
       state.isMuted = false
       state.webcamVideoPath = null
@@ -1832,6 +1868,13 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.systemAudioMuted = main.systemAudioMuted
       state.recordingSyncOffsetMs = main.recordingSyncOffsetMs ?? 0
       state.systemAudioSyncOffsetMs = main.systemAudioSyncOffsetMs ?? 0
+      state.captureSourceOffsetsMs = main.captureSourceOffsetsMs ?? {
+        screen: 0,
+        webcam: 0,
+        recording: 0,
+        systemAudio: 0,
+      }
+      state.audioWaveformVisibility = main.audioWaveformVisibility ?? { recording: true, systemAudio: true }
       state.volume = clampAudioVolume(main.volume)
       state.isMuted = main.isMuted
       state.mediaAudioClip = main.mediaAudioClip

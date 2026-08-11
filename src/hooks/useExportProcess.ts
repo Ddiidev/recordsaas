@@ -114,6 +114,7 @@ export const useExportProcess = () => {
       systemAudioMuted: fullState.systemAudioMuted,
       recordingSyncOffsetMs: fullState.recordingSyncOffsetMs,
       systemAudioSyncOffsetMs: fullState.systemAudioSyncOffsetMs,
+      captureSourceOffsetsMs: fullState.captureSourceOffsetsMs,
       mediaAudioClip: fullState.mediaAudioClip,
       mediaAudioRegions: fullState.mediaAudioRegions,
       changeSoundRegions: fullState.changeSoundRegions,

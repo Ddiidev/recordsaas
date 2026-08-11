@@ -230,6 +230,7 @@ export const electronAPI = {
   getComputerAudioSupport: (): Promise<{ supported: boolean; reason?: string }> =>
     ipcRenderer.invoke('recording:get-computer-audio-support'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
+  toggleRecordingTimer: (): void => ipcRenderer.send('recording:toggle-timer'),
   onTakeMarked: (callback: (payload: { takeNumber: number; timestamp: number }) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { takeNumber: number; timestamp: number }) =>
       callback(payload)
@@ -478,6 +479,8 @@ export const electronAPI = {
   getPlatform: (): Promise<NodeJS.Platform> => ipcRenderer.invoke('app:getPlatform'),
   getVideoFrame: (options: { videoPath: string; time: number }): Promise<string> =>
     ipcRenderer.invoke('video:get-frame', options),
+  getAudioWaveform: (filePath: string): Promise<{ peaks: number[]; peaksPerSecond: number }> =>
+    ipcRenderer.invoke('audio:build-waveform', filePath),
 }
 
 // Expose API safely

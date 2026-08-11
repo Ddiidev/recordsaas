@@ -414,6 +414,8 @@ export interface AssetTimelineEditing {
     systemAudioMuted: boolean
     recordingSyncOffsetMs: number
     systemAudioSyncOffsetMs: number
+    captureSourceOffsetsMs: CaptureSourceOffsetsMs
+    audioWaveformVisibility: AudioWaveformVisibility
     volume: number
     isMuted: boolean
     mediaAudioClip: MediaAudioClip | null
@@ -452,6 +454,19 @@ export interface AssetTimelineEditing {
 
 // --- Slice State & Actions Types ---
 
+export interface CaptureSourceOffsetsMs {
+  /** Source-local timestamp that corresponds to project timeline zero. */
+  screen: number
+  webcam: number
+  recording: number
+  systemAudio: number
+}
+
+export interface AudioWaveformVisibility {
+  recording: boolean
+  systemAudio: boolean
+}
+
 export interface ProjectState {
   videoPath: string | null
   metadataPath: string | null
@@ -464,6 +479,8 @@ export interface ProjectState {
   systemAudioMuted: boolean
   recordingSyncOffsetMs: number
   systemAudioSyncOffsetMs: number
+  captureSourceOffsetsMs: CaptureSourceOffsetsMs
+  audioWaveformVisibility: AudioWaveformVisibility
   mediaAudioClip: MediaAudioClip | null
   floatingMonitors: Record<string, FloatingMonitor>
   assetTimelineEditing: AssetTimelineEditing | null
@@ -505,6 +522,7 @@ export interface ProjectActions {
   updateSystemAudioSettings: (settings: { volume?: number; isMuted?: boolean }) => void
   setRecordingSyncOffsetMs: (offsetMs: number) => void
   setSystemAudioSyncOffsetMs: (offsetMs: number) => void
+  setAudioWaveformVisible: (source: keyof AudioWaveformVisibility, visible: boolean) => void
   setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void

@@ -59,9 +59,9 @@ const SyncOffsetControl = ({
     </div>
     <p className="text-xs text-muted-foreground">
       {offsetMs > 0
-        ? 'Áudio começa mais tarde no vídeo.'
+        ? 'Áudio começa mais cedo no vídeo.'
         : offsetMs < 0
-          ? 'Áudio começa mais cedo no vídeo.'
+          ? 'Áudio começa mais tarde no vídeo.'
           : 'Sem deslocamento de tempo.'}
     </p>
   </div>

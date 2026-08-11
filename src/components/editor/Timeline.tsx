@@ -21,6 +21,11 @@ import { SimpleTooltip } from '../ui/tooltip'
 import type { TimelineRegion } from '../../types'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../lib/media-assets'
 import { TakeTrack, TAKE_TRACK_HEIGHT } from './timeline/TakeTrack'
+import {
+  AudioWaveformTrack,
+  AUDIO_WAVEFORM_TRACK_COLLAPSED_HEIGHT,
+  AUDIO_WAVEFORM_TRACK_HEIGHT,
+} from './timeline/AudioWaveformTrack'
 
 const LANE_HEIGHT_PX = 72
 const CONTENT_ROOT_LANE_HEIGHT_PX = 30
@@ -150,6 +155,10 @@ export function Timeline({
     mediaAudioClip,
     takeModeEnabled,
     assetTimelineEditing,
+    captureSourceOffsetsMs,
+    audioPath,
+    systemAudioPath,
+    audioWaveformVisibility,
   } = useEditorStore(
     useShallow((state) => ({
       duration: state.duration,
@@ -160,6 +169,10 @@ export function Timeline({
       mediaAudioClip: state.mediaAudioClip,
       takeModeEnabled: state.takeModeEnabled,
       assetTimelineEditing: state.assetTimelineEditing,
+      captureSourceOffsetsMs: state.captureSourceOffsetsMs,
+      audioPath: state.audioPath,
+      systemAudioPath: state.systemAudioPath,
+      audioWaveformVisibility: state.audioWaveformVisibility,
     })),
   )
 
@@ -173,6 +186,7 @@ export function Timeline({
     removeTimelineLane,
     addMediaAudioRegion,
     addChangeSoundRegion,
+    setAudioWaveformVisible,
   } = useEditorStore(
     useShallow((state) => ({
       setCurrentTime: state.setCurrentTime,
@@ -184,6 +198,7 @@ export function Timeline({
       removeTimelineLane: state.removeTimelineLane,
       addMediaAudioRegion: state.addMediaAudioRegion,
       addChangeSoundRegion: state.addChangeSoundRegion,
+      setAudioWaveformVisible: state.setAudioWaveformVisible,
     })),
   )
 
@@ -192,6 +207,31 @@ export function Timeline({
   const showLaneActionButtons = sortedLanes.length > 1
   const timelineStartOffsetPx = LANE_ACTION_STRIP_WIDTH_PX + LANE_ACTION_GUTTER_PX
   const takeTrackHeight = takeModeEnabled && !assetTimelineEditing ? TAKE_TRACK_HEIGHT : 0
+  const screenCaptureOffsetSeconds = Math.max(0, captureSourceOffsetsMs?.screen || 0) / 1000
+  const audioWaveformTracks = useMemo(
+    () =>
+      [
+        audioPath
+          ? {
+              id: 'recording' as const,
+              audioPath,
+              label: 'Microfone',
+              sourceOffsetMs: captureSourceOffsetsMs?.recording || 0,
+              visible: audioWaveformVisibility?.recording !== false,
+            }
+          : null,
+        systemAudioPath
+          ? {
+              id: 'systemAudio' as const,
+              audioPath: systemAudioPath,
+              label: 'Áudio do sistema',
+              sourceOffsetMs: captureSourceOffsetsMs?.systemAudio || 0,
+              visible: audioWaveformVisibility?.systemAudio !== false,
+            }
+          : null,
+      ].filter((track): track is NonNullable<typeof track> => track !== null),
+    [audioPath, audioWaveformVisibility, captureSourceOffsetsMs, systemAudioPath],
+  )
 
   const containerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -263,7 +303,7 @@ export function Timeline({
       const playheadTime = editorState.takeModeEnabled
         ? editorState.currentTime
         : editorState.isPlaying
-          ? (videoRef.current?.currentTime ?? editorState.currentTime)
+          ? Math.max(0, (videoRef.current?.currentTime ?? editorState.currentTime) - screenCaptureOffsetSeconds)
           : editorState.currentTime
       const previousPlayheadViewportX =
         timelineStartOffsetPx + playheadTime * previousPixelsPerSecond - container.scrollLeft
@@ -280,7 +320,7 @@ export function Timeline({
 
     previousTimelineZoomRef.current = timelineZoom
     previousPixelsPerSecondRef.current = pixelsPerSecond
-  }, [pixelsPerSecond, timelineStartOffsetPx, timelineZoom, videoRef])
+  }, [pixelsPerSecond, screenCaptureOffsetSeconds, timelineStartOffsetPx, timelineZoom, videoRef])
 
   const updateVideoTime = useCallback(
     (time: number) => {
@@ -308,11 +348,12 @@ export function Timeline({
         }
 
         if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-          video.currentTime = nextTime
+          video.currentTime = nextTime + screenCaptureOffsetSeconds
           return
         }
 
-        if (!video.seeking && Math.abs(video.currentTime - nextTime) < 0.001) {
+        const nextSourceTime = nextTime + screenCaptureOffsetSeconds
+        if (!video.seeking && Math.abs(video.currentTime - nextSourceTime) < 0.001) {
           drainPendingSeek()
           return
         }
@@ -345,7 +386,7 @@ export function Timeline({
         video.addEventListener('error', handleSeekFailure, { once: true })
         videoSeekFallbackTimerRef.current = window.setTimeout(handleSeekFailure, 1500)
         try {
-          video.currentTime = nextTime
+          video.currentTime = nextSourceTime
         } catch {
           handleSeekFailure()
         }
@@ -353,7 +394,7 @@ export function Timeline({
 
       drainPendingSeek()
     },
-    [duration, setCurrentTime, takeModeEnabled, videoRef],
+    [duration, screenCaptureOffsetSeconds, setCurrentTime, takeModeEnabled, videoRef],
   )
 
   const applyRulerTime = useCallback(
@@ -722,14 +763,33 @@ export function Timeline({
     [sortedLanes, regionsByLane],
   )
 
+  const waveformInsertAfterLaneIndex = useMemo(() => {
+    const lastSpecialLaneIndex = visibleSortedLanes.reduce(
+      (lastIndex, lane, index) =>
+        lane.isContentRootLane || lane.isCutLane || lane.isChangeSoundLane ? index : lastIndex,
+      -1,
+    )
+    return lastSpecialLaneIndex
+  }, [visibleSortedLanes])
+
+  const audioWaveformContentHeight = useMemo(
+    () =>
+      audioWaveformTracks.reduce(
+        (total, track) => total + (track.visible ? AUDIO_WAVEFORM_TRACK_HEIGHT : AUDIO_WAVEFORM_TRACK_COLLAPSED_HEIGHT),
+        0,
+      ),
+    [audioWaveformTracks],
+  )
+
   const lanesContentHeight = useMemo(
     () =>
       visibleSortedLanes.reduce(
         (total, lane) => total + (lane.isContentRootLane ? CONTENT_ROOT_LANE_HEIGHT_PX : LANE_HEIGHT_PX),
         0,
       ) +
-      Math.max(0, visibleSortedLanes.length - 1) * LANE_GAP_PX,
-    [visibleSortedLanes],
+      audioWaveformContentHeight +
+      Math.max(0, visibleSortedLanes.length + audioWaveformTracks.length - 1) * LANE_GAP_PX,
+    [audioWaveformContentHeight, audioWaveformTracks.length, visibleSortedLanes],
   )
   const timelineContentHeight = takeTrackHeight + RULER_HEIGHT_PX + lanesContentHeight
   const minTimelineViewportHeight =
@@ -841,6 +901,31 @@ export function Timeline({
     ],
   )
 
+  const audioWaveformNodes = audioWaveformTracks.map((track, index) => (
+    <div
+      key={track.id}
+      style={{
+        marginBottom:
+          index === audioWaveformTracks.length - 1 && waveformInsertAfterLaneIndex >= visibleSortedLanes.length - 1
+            ? 0
+            : `${LANE_GAP_PX}px`,
+      }}
+    >
+      <AudioWaveformTrack
+        audioPath={track.audioPath}
+        label={track.label}
+        sourceOffsetMs={track.sourceOffsetMs}
+        visible={track.visible}
+        onVisibilityChange={(visible) => setAudioWaveformVisible(track.id, visible)}
+        pixelsPerSecond={pixelsPerSecond}
+        timelineStartOffsetPx={timelineStartOffsetPx}
+        timelineScrollLeft={timelineScrollLeft}
+        viewportWidth={containerWidth}
+        duration={duration}
+      />
+    </div>
+  ))
+
   return (
     <div className="flex flex-col bg-background/50 px-3 pb-3 pt-1 transition-all duration-300 ease-in-out">
       <div
@@ -912,11 +997,7 @@ export function Timeline({
               topOffset={0}
             />
             {takeTrackHeight > 0 && (
-              <TakeTrack
-                timeToTrackPx={timeToTrackPx}
-                pixelsPerSecond={pixelsPerSecond}
-                topOffset={RULER_HEIGHT_PX}
-              />
+              <TakeTrack timeToTrackPx={timeToTrackPx} pixelsPerSecond={pixelsPerSecond} topOffset={RULER_HEIGHT_PX} />
             )}
 
             <div
@@ -924,6 +1005,7 @@ export function Timeline({
               className="absolute left-0 w-full"
               style={{ top: `${RULER_HEIGHT_PX + takeTrackHeight}px`, height: `${lanesContentHeight}px` }}
             >
+              {waveformInsertAfterLaneIndex < 0 && audioWaveformNodes}
               {visibleSortedLanes.map((lane, laneIndex) => {
                 const isContentRootLane = !!lane.isContentRootLane
                 const isLegacySpecialLane = !!lane.isCutLane || !!lane.isChangeSoundLane
@@ -933,338 +1015,345 @@ export function Timeline({
                 const laneMovePreviewRegion =
                   movePreviewRegion && movePreviewRegion.laneId === lane.id ? movePreviewRegion : null
 
+                const appendWaveformsAfterLane = laneIndex === waveformInsertAfterLaneIndex
+
                 return (
-                  <div
-                    key={lane.id}
-                    ref={(el) => laneRefs.current.set(lane.id, el)}
-                    className={cn(
-                      'relative overflow-hidden rounded-lg border bg-background/20',
-                      !isSpecialLane &&
-                        ((activeDropLaneId === lane.id && draggingRegionId) || mediaAssetDropLaneId === lane.id
-                          ? 'border-primary/70 bg-primary/10'
-                          : 'border-border/40'),
-                      isContentRootLane && 'border-border/40 bg-muted dark:bg-white/10',
-                      isLegacySpecialLane && !isContentRootLane && 'border-border/40',
-                    )}
-                    style={{
-                      height: `${laneHeightPx}px`,
-                      marginBottom: laneIndex === visibleSortedLanes.length - 1 ? 0 : `${LANE_GAP_PX}px`,
-                    }}
-                    onDragOver={
-                      isSpecialLane
-                        ? (event) => handleMediaAssetDragOver(event, lane.id, true)
-                        : (event) => handleMediaAssetDragOver(event, lane.id)
-                    }
-                    onDragLeave={
-                      isSpecialLane
-                        ? undefined
-                        : () => {
-                            if (mediaAssetDropLaneId === lane.id) {
-                              setMediaAssetDropLaneId(null)
-                            }
-                          }
-                    }
-                    onDrop={
-                      isSpecialLane
-                        ? (event) => handleMediaAssetDrop(event, lane.id, true)
-                        : (event) => handleMediaAssetDrop(event, lane.id)
-                    }
-                  >
-                    {showLaneActionButtons && !isSpecialLane && (
-                      <div
-                        className="pointer-events-none absolute top-0 z-[130] h-full border-r border-border/60 bg-gradient-to-r from-card/95 to-card/65"
-                        style={{
-                          left: 0,
-                          width: `${LANE_ACTION_STRIP_WIDTH_PX}px`,
-                          transform: `translateX(${timelineScrollLeft}px)`,
-                        }}
-                      >
-                        <button
-                          type="button"
-                          data-lane-control
-                          aria-label={`Open actions menu for ${lane.name}`}
-                          onClick={(e) => openLaneActionMenu(e, lane.id)}
-                          className="pointer-events-auto absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border/60 bg-card/90 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-                        >
-                          <DotsVertical className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-
+                  <React.Fragment key={lane.id}>
                     <div
+                      ref={(el) => laneRefs.current.set(lane.id, el)}
                       className={cn(
-                        'absolute top-1 z-0 rounded bg-card/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70',
-                        'left-[34px]',
+                        'relative overflow-hidden rounded-lg border bg-background/20',
+                        !isSpecialLane &&
+                          ((activeDropLaneId === lane.id && draggingRegionId) || mediaAssetDropLaneId === lane.id
+                            ? 'border-primary/70 bg-primary/10'
+                            : 'border-border/40'),
+                        isContentRootLane && 'border-border/40 bg-muted dark:bg-white/10',
+                        isLegacySpecialLane && !isContentRootLane && 'border-border/40',
                       )}
+                      style={{
+                        height: `${laneHeightPx}px`,
+                        marginBottom:
+                          laneIndex === visibleSortedLanes.length - 1 && !appendWaveformsAfterLane
+                            ? 0
+                            : `${LANE_GAP_PX}px`,
+                      }}
+                      onDragOver={
+                        isSpecialLane
+                          ? (event) => handleMediaAssetDragOver(event, lane.id, true)
+                          : (event) => handleMediaAssetDragOver(event, lane.id)
+                      }
+                      onDragLeave={
+                        isSpecialLane
+                          ? undefined
+                          : () => {
+                              if (mediaAssetDropLaneId === lane.id) {
+                                setMediaAssetDropLaneId(null)
+                              }
+                            }
+                      }
+                      onDrop={
+                        isSpecialLane
+                          ? (event) => handleMediaAssetDrop(event, lane.id, true)
+                          : (event) => handleMediaAssetDrop(event, lane.id)
+                      }
                     >
-                      {lane.name}
-                    </div>
+                      {showLaneActionButtons && !isSpecialLane && (
+                        <div
+                          className="pointer-events-none absolute top-0 z-[130] h-full border-r border-border/60 bg-gradient-to-r from-card/95 to-card/65"
+                          style={{
+                            left: 0,
+                            width: `${LANE_ACTION_STRIP_WIDTH_PX}px`,
+                            transform: `translateX(${timelineScrollLeft}px)`,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            data-lane-control
+                            aria-label={`Open actions menu for ${lane.name}`}
+                            onClick={(e) => openLaneActionMenu(e, lane.id)}
+                            className="pointer-events-auto absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border/60 bg-card/90 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                          >
+                            <DotsVertical className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
 
-                    {laneRegions.map((region) => {
-                      const isSelected = selectedRegionId === region.id
-                      const zIndex = region.type === 'cut' ? 200 : isSelected ? 100 : (region.zIndex ?? 1)
+                      <div
+                        className={cn(
+                          'absolute top-1 z-0 rounded bg-card/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70',
+                          'left-[34px]',
+                        )}
+                      >
+                        {lane.name}
+                      </div>
 
-                      const regionStyle: React.CSSProperties = {
-                        left: `${timeToTrackPx(region.startTime)}px`,
-                        width: `${timeToPx(region.duration)}px`,
-                        zIndex,
-                        opacity: movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : 1,
-                      }
-                      const onMouseDown = handleRegionMouseDown
+                      {laneRegions.map((region) => {
+                        const isSelected = selectedRegionId === region.id
+                        const zIndex = region.type === 'cut' ? 200 : isSelected ? 100 : (region.zIndex ?? 1)
 
-                      if (region.type === 'zoom') {
-                        return (
-                          <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
-                            <ZoomRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'cut') {
-                        return (
-                          <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
-                            <CutRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isDraggable={region.id !== previewCutRegion?.id}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'speed') {
-                        return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
-                            <SpeedRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'blur') {
-                        return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
-                            <BlurRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'swap') {
-                        return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
-                            <SwapRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'media-audio') {
-                        return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
-                            <MediaAudioRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'change-sound') {
-                        return (
-                          <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
-                            <ChangeSoundRegionBlock
-                              region={region}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      if (region.type === 'floating-monitor') {
-                        return (
-                          <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
-                            <FloatingMonitorRegionBlock
-                              region={region}
-                              name={floatingMonitors[region.monitorId]?.name || 'Floating monitor'}
-                              isSelected={isSelected}
-                              isBeingDragged={draggingRegionId === region.id}
-                              onMouseDown={onMouseDown}
-                              setRef={(el) => regionRefs.current.set(region.id, el)}
-                            />
-                          </div>
-                        )
-                      }
-
-                      return null
-                    })}
-
-                    {laneMovePreviewRegion &&
-                      (() => {
-                        const previewStyle: React.CSSProperties = {
-                          left: `${timeToTrackPx(laneMovePreviewRegion.startTime)}px`,
-                          width: `${timeToPx(laneMovePreviewRegion.duration)}px`,
-                          zIndex: 180,
-                          opacity: 0.96,
-                          pointerEvents: 'none',
+                        const regionStyle: React.CSSProperties = {
+                          left: `${timeToTrackPx(region.startTime)}px`,
+                          width: `${timeToPx(region.duration)}px`,
+                          zIndex,
+                          opacity: movePreviewRegion && region.id === movePreviewRegion.id ? 0.18 : 1,
                         }
+                        const onMouseDown = handleRegionMouseDown
 
-                        if (laneMovePreviewRegion.type === 'zoom') {
+                        if (region.type === 'zoom') {
                           return (
-                            <div className="absolute inset-y-0" style={previewStyle}>
+                            <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
                               <ZoomRegionBlock
-                                region={laneMovePreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'cut') {
+                        if (region.type === 'cut') {
                           return (
-                            <div className="absolute inset-y-0" style={previewStyle}>
+                            <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
                               <CutRegionBlock
-                                region={laneMovePreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isDraggable={false}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isDraggable={region.id !== previewCutRegion?.id}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'speed') {
+                        if (region.type === 'speed') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
                               <SpeedRegionBlock
-                                region={laneMovePreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'blur') {
+                        if (region.type === 'blur') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
                               <BlurRegionBlock
-                                region={laneMovePreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'swap') {
-                          const swapPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'swap' }>
+                        if (region.type === 'swap') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
                               <SwapRegionBlock
-                                region={swapPreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'media-audio') {
-                          const mediaAudioPreviewRegion = laneMovePreviewRegion as Extract<
-                            TimelineRegion,
-                            { type: 'media-audio' }
-                          >
+                        if (region.type === 'media-audio') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
                               <MediaAudioRegionBlock
-                                region={mediaAudioPreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'change-sound') {
-                          const changeSoundPreviewRegion = laneMovePreviewRegion as Extract<
-                            TimelineRegion,
-                            { type: 'change-sound' }
-                          >
+                        if (region.type === 'change-sound') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute inset-y-0" style={regionStyle}>
                               <ChangeSoundRegionBlock
-                                region={changeSoundPreviewRegion}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
-                        if (laneMovePreviewRegion.type === 'floating-monitor') {
+                        if (region.type === 'floating-monitor') {
                           return (
-                            <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                            <div key={region.id} className="absolute h-12 top-1/2 -translate-y-1/2" style={regionStyle}>
                               <FloatingMonitorRegionBlock
-                                region={laneMovePreviewRegion}
-                                name={floatingMonitors[laneMovePreviewRegion.monitorId]?.name || 'Floating monitor'}
-                                isSelected={selectedRegionId === laneMovePreviewRegion.id}
-                                isBeingDragged
-                                onMouseDown={noopRegionMouseDown}
-                                setRef={noopSetRegionRef}
+                                region={region}
+                                name={floatingMonitors[region.monitorId]?.name || 'Floating monitor'}
+                                isSelected={isSelected}
+                                isBeingDragged={draggingRegionId === region.id}
+                                onMouseDown={onMouseDown}
+                                setRef={(el) => regionRefs.current.set(region.id, el)}
                               />
                             </div>
                           )
                         }
 
                         return null
-                      })()}
-                  </div>
+                      })}
+
+                      {laneMovePreviewRegion &&
+                        (() => {
+                          const previewStyle: React.CSSProperties = {
+                            left: `${timeToTrackPx(laneMovePreviewRegion.startTime)}px`,
+                            width: `${timeToPx(laneMovePreviewRegion.duration)}px`,
+                            zIndex: 180,
+                            opacity: 0.96,
+                            pointerEvents: 'none',
+                          }
+
+                          if (laneMovePreviewRegion.type === 'zoom') {
+                            return (
+                              <div className="absolute inset-y-0" style={previewStyle}>
+                                <ZoomRegionBlock
+                                  region={laneMovePreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'cut') {
+                            return (
+                              <div className="absolute inset-y-0" style={previewStyle}>
+                                <CutRegionBlock
+                                  region={laneMovePreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isDraggable={false}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'speed') {
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <SpeedRegionBlock
+                                  region={laneMovePreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'blur') {
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <BlurRegionBlock
+                                  region={laneMovePreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'swap') {
+                            const swapPreviewRegion = laneMovePreviewRegion as Extract<TimelineRegion, { type: 'swap' }>
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <SwapRegionBlock
+                                  region={swapPreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'media-audio') {
+                            const mediaAudioPreviewRegion = laneMovePreviewRegion as Extract<
+                              TimelineRegion,
+                              { type: 'media-audio' }
+                            >
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <MediaAudioRegionBlock
+                                  region={mediaAudioPreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'change-sound') {
+                            const changeSoundPreviewRegion = laneMovePreviewRegion as Extract<
+                              TimelineRegion,
+                              { type: 'change-sound' }
+                            >
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <ChangeSoundRegionBlock
+                                  region={changeSoundPreviewRegion}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          if (laneMovePreviewRegion.type === 'floating-monitor') {
+                            return (
+                              <div className="absolute h-12 top-1/2 -translate-y-1/2" style={previewStyle}>
+                                <FloatingMonitorRegionBlock
+                                  region={laneMovePreviewRegion}
+                                  name={floatingMonitors[laneMovePreviewRegion.monitorId]?.name || 'Floating monitor'}
+                                  isSelected={selectedRegionId === laneMovePreviewRegion.id}
+                                  isBeingDragged
+                                  onMouseDown={noopRegionMouseDown}
+                                  setRef={noopSetRegionRef}
+                                />
+                              </div>
+                            )
+                          }
+
+                          return null
+                        })()}
+                    </div>
+                    {appendWaveformsAfterLane && audioWaveformNodes}
+                  </React.Fragment>
                 )
               })}
             </div>

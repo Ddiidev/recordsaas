@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import * as appHandlers from './handlers/app'
+import * as audioWaveformHandlers from './handlers/audio-waveform'
 import * as authHandlers from './handlers/auth'
 import * as desktopHandlers from './handlers/desktop'
 import * as exportHandlers from './handlers/export'
@@ -38,6 +39,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('dialog:showSaveDialog', desktopHandlers.showSaveDialog)
   ipcMain.handle('dialog:showOpenDialog', desktopHandlers.showOpenDialog)
   ipcMain.handle('video:get-frame', desktopHandlers.getVideoFrame)
+  ipcMain.handle('audio:build-waveform', audioWaveformHandlers.handleBuildAudioWaveform)
 
   ipcMain.handle('desktop:get-cursor-themes', desktopHandlers.getCursorThemes)
   ipcMain.handle('desktop:load-cursor-theme', desktopHandlers.loadCursorTheme)
@@ -50,6 +52,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('recording:get-screen-encoder-status', recordingHandlers.handleGetScreenEncoderStatus)
   ipcMain.handle('recording:select-area', recordingHandlers.handleSelectArea)
   ipcMain.on('recording:stop', recordingHandlers.handleStopRecording)
+  ipcMain.on('recording:toggle-timer', recordingHandlers.handleToggleRecordingTimer)
   ipcMain.handle('recording:load-from-file', recordingHandlers.handleLoadVideoFromFile)
   ipcMain.handle('recording:import-project', recordingHandlers.handleImportProject)
   ipcMain.handle('recording:import-project-file', recordingHandlers.handleImportProjectFile)

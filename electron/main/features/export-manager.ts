@@ -707,32 +707,30 @@ const renderProcessedAudioFile = async (
 }
 
 /**
- * Applies a constant audio sync offset to a prepared track.
- * Positive offset delays the audio (it starts later in the video);
- * negative offset advances it (it starts earlier).
- * Returns a new temp path or the original when offset is zero.
+ * `sourceTimeOffsetMs` is the source-local timestamp at project timeline zero.
+ * Positive values advance the source (trim its pre-roll); negative values delay it.
  */
 const applyAudioSyncOffset = async (
   sourcePath: string,
-  offsetMs: number,
+  sourceTimeOffsetMs: number,
   runFFmpeg: RunFFmpeg,
   totalDurationSec: number,
 ): Promise<string> => {
-  if (Math.abs(offsetMs) < 1) return sourcePath
+  if (Math.abs(sourceTimeOffsetMs) < 1) return sourcePath
 
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-sync-'))
   const outPath = path.join(tmpDir, 'sync.m4a')
-  const delayMs = Math.round(Math.abs(offsetMs))
+  const offsetMs = Math.round(Math.abs(sourceTimeOffsetMs))
 
   try {
     const filter =
-      offsetMs > 0
-        ? `adelay=${delayMs}:all=1`
-        : `atrim=start=${(delayMs / 1000).toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${totalDurationSec.toFixed(6)}`
+      sourceTimeOffsetMs > 0
+        ? `atrim=start=${(offsetMs / 1000).toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${totalDurationSec.toFixed(6)}`
+        : `adelay=${offsetMs}:all=1,apad=whole_dur=${totalDurationSec.toFixed(6)}`
 
     await runFFmpeg(
       ['-y', '-i', sourcePath, '-af', filter, '-c:a', 'aac', '-b:a', '192k', outPath],
-      `audio-sync:${Math.round(offsetMs)}ms`,
+      `audio-sync:${Math.round(sourceTimeOffsetMs)}ms`,
     )
 
     return outPath
@@ -787,6 +785,7 @@ const buildTakeAudioParts = (
   takes: TakeLike[],
   transitions: TakeTransitionLike[],
   resolvePath: (take: TakeLike) => string | null,
+  sourceTimeOffsetSeconds = 0,
 ): { parts: TakeAudioPart[]; duration: number } => {
   const transitionMap = new Map(
     transitions.map((transition) => [`${transition.fromTakeId}\0${transition.toTakeId}`, transition]),
@@ -808,7 +807,11 @@ const buildTakeAudioParts = (
       const crossfade = transition?.audioMode === 'crossfade' ? overlap : 0
       parts.push({
         path,
-        sourceStart: Math.max(0, Number(take.audioMode === 'session' ? take.sessionAudioStart : take.sourceStart) || 0),
+        sourceStart: Math.max(
+          0,
+          (Number(take.audioMode === 'session' ? take.sessionAudioStart : take.sourceStart) || 0) +
+            sourceTimeOffsetSeconds,
+        ),
         targetStart: start,
         duration: takeDuration,
         volume: Math.max(
@@ -1620,6 +1623,16 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       Number.isFinite(projectStateRecord.systemAudioSyncOffsetMs)
         ? Math.round(Math.max(-10000, Math.min(projectStateRecord.systemAudioSyncOffsetMs, 10000)))
         : 0
+    const rawCaptureSourceOffsets =
+      projectStateRecord.captureSourceOffsetsMs && typeof projectStateRecord.captureSourceOffsetsMs === 'object'
+        ? (projectStateRecord.captureSourceOffsetsMs as Record<string, unknown>)
+        : {}
+    const captureSourceOffsetMs = (source: 'screen' | 'webcam' | 'recording' | 'systemAudio'): number => {
+      const value = rawCaptureSourceOffsets[source]
+      return typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.max(0, Math.min(value, 10000))) : 0
+    }
+    const recordingCaptureOffsetMs = captureSourceOffsetMs('recording')
+    const systemAudioCaptureOffsetMs = captureSourceOffsetMs('systemAudio')
     const mediaClip = (projectStateRecord.mediaAudioClip || null) as MediaAudioClipLike | null
     const mediaPath = normalizeMediaPath(mediaClip?.path)
     const timelineLanes = Array.isArray(projectStateRecord.timelineLanes)
@@ -1646,8 +1659,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
     if (takeModeEnabled && takes.length > 0) {
       if (recordingPath) {
-        const composition = buildTakeAudioParts(takes, takeTransitions, (take) =>
-          take.audioMode === 'session' ? recordingPath : null,
+        const composition = buildTakeAudioParts(
+          takes,
+          takeTransitions,
+          (take) => (take.audioMode === 'session' ? recordingPath : null),
+          recordingCaptureOffsetMs / 1000,
         )
         const composed = await renderTakeAudioComposition(
           composition.parts,
@@ -1663,8 +1679,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         }
       }
       if (systemAudioPath) {
-        const composition = buildTakeAudioParts(takes, takeTransitions, (take) =>
-          take.audioMode === 'session' ? systemAudioPath : null,
+        const composition = buildTakeAudioParts(
+          takes,
+          takeTransitions,
+          (take) => (take.audioMode === 'session' ? systemAudioPath : null),
+          systemAudioCaptureOffsetMs / 1000,
         )
         const composed = await renderTakeAudioComposition(
           composition.parts,
@@ -1708,6 +1727,34 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         processedAudioTempRoots.add(path.dirname(embeddedCompositionPath))
         if (!embeddedTakeAudioPath) throw new Error('Failed to process embedded take audio')
         processedAudioTempRoots.add(path.dirname(embeddedTakeAudioPath))
+      }
+    }
+
+    // Non-take sessions are normalized before timeline edits. This keeps Cut,
+    // Change Sound and speed regions anchored to the same shared capture origin
+    // used by the preview instead of applying a shift after those edits.
+    if (!takeModeEnabled && recordingPath && recordingCaptureOffsetMs !== 0) {
+      const normalizedRecordingPath = await applyAudioSyncOffset(
+        recordingPath,
+        recordingCaptureOffsetMs,
+        runAuxiliaryFFmpeg,
+        duration,
+      )
+      if (normalizedRecordingPath !== recordingPath) {
+        processedAudioTempRoots.add(path.dirname(normalizedRecordingPath))
+        recordingPath = normalizedRecordingPath
+      }
+    }
+    if (!takeModeEnabled && systemAudioPath && systemAudioCaptureOffsetMs !== 0) {
+      const normalizedSystemAudioPath = await applyAudioSyncOffset(
+        systemAudioPath,
+        systemAudioCaptureOffsetMs,
+        runAuxiliaryFFmpeg,
+        duration,
+      )
+      if (normalizedSystemAudioPath !== systemAudioPath) {
+        processedAudioTempRoots.add(path.dirname(normalizedSystemAudioPath))
+        systemAudioPath = normalizedSystemAudioPath
       }
     }
     const cutRegions = Object.values(projectState.cutRegions || {}) as CutLike[]
