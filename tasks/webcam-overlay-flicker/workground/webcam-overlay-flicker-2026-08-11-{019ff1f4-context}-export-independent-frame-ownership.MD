@@ -43,7 +43,7 @@ Arquivo: [RendererPage.tsx](../../../src/pages/RendererPage.tsx)
 
 ## Commits
 
-- `2f03b9b` - `fix(export): isolate decoded frames per source`
+- `6aedef6` - `fix(export): isolate decoded frames per source`
 - Push/PR: nao realizado.
 
 ## Proximo Teste
