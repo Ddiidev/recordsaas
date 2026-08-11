@@ -180,6 +180,9 @@ if (!hasSingleInstanceLock) {
       if (appState.recorderWin.isMinimized()) {
         appState.recorderWin.restore()
       }
+      if (!appState.recorderWin.isVisible()) {
+        appState.recorderWin.show()
+      }
       appState.recorderWin.focus()
     } else {
       createRecorderWindow()

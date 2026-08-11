@@ -34,6 +34,14 @@ export interface RecordingSession {
   takeLastPtsSeconds?: number
   takeLastPtsMonotonicMs?: number
   takeRecordingReadyMonotonicMs?: number
+  /** Shared post-start marker. Each value maps project timeline zero to the local source timestamp. */
+  captureOriginMonotonicMs?: number
+  captureSourceOffsetsMs?: {
+    screen: number
+    webcam: number
+    recording: number
+    systemAudio: number
+  }
   takeShortcut?: string
 }
 
@@ -41,6 +49,7 @@ interface AppState {
   // Windows
   recorderWin: BrowserWindow | null
   takeToastWin: BrowserWindow | null
+  recordingTimerWin: BrowserWindow | null
   editorWin: BrowserWindow | null
   renderWorker: BrowserWindow | null
   savingWin: BrowserWindow | null
@@ -75,6 +84,7 @@ interface AppState {
 export const appState: AppState = {
   recorderWin: null,
   takeToastWin: null,
+  recordingTimerWin: null,
   editorWin: null,
   renderWorker: null,
   savingWin: null,

@@ -9,6 +9,7 @@ import {
   selectRecordingArea,
   analyzeRecordingCapability,
   getComputerAudioSupport,
+  toggleRecordingTimer,
 } from '../../features/recording-manager'
 import { getScreenEncoderStatus } from '../../features/screen-encoder'
 
@@ -47,4 +48,8 @@ export function handleSelectArea() {
 
 export async function handleStopRecording() {
   await stopRecording()
+}
+
+export function handleToggleRecordingTimer() {
+  toggleRecordingTimer()
 }

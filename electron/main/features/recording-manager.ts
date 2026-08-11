@@ -22,7 +22,7 @@ import {
 import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
-import { VITE_PUBLIC } from '../lib/constants'
+import { PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
@@ -46,6 +46,7 @@ const WINDOWS_SYSTEM_AUDIO_HELPER_PATH =
 const store = new Store()
 const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
 const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
+const RECORDING_TIMER_SETTING_KEY = 'recorder.showTimer'
 
 const normalizeTakeShortcut = (value: unknown): string =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : DEFAULT_TAKE_SHORTCUT
@@ -56,6 +57,12 @@ const TAKE_TOAST_DURATION_MS = 1800
 const TAKE_TOAST_WIDTH = 286
 const TAKE_TOAST_HEIGHT = 72
 const TAKE_TOAST_MARGIN = 24
+const RECORDING_TIMER_SHORTCUT = 'F2'
+const RECORDING_TIMER_COLLAPSED_WIDTH = 44
+const RECORDING_TIMER_EXPANDED_WIDTH = 264
+const RECORDING_TIMER_HEIGHT = 44
+const RECORDING_TIMER_MARGIN = 0
+const RECORDING_TIMER_ANIMATION_MS = 170
 const TAKE_TOAST_HTML = `<!doctype html>
 <html>
   <head>
@@ -90,6 +97,91 @@ const TAKE_TOAST_HTML = `<!doctype html>
 
 let takeToastHideTimer: NodeJS.Timeout | null = null
 let pendingTakeToastNumber: number | null = null
+let recordingTimerExpanded = false
+let recordingTimerAnimation: NodeJS.Timeout | null = null
+let pendingRecordingTimerStartTime: number | null = null
+let pendingRecordingTimerExpanded = false
+let pendingRecordingTimerTakeCount = 0
+let pendingRecordingTimerShow = false
+
+const RECORDING_TIMER_HTML = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light; font-family: Inter, Segoe UI, sans-serif; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+      .timer-shell { box-sizing: border-box; display: flex; width: 100%; height: 100%; overflow: hidden; border: 1px solid hsl(154 60% 42%); border-right: 0; border-radius: 4px 0 0 4px; background: rgba(255, 255, 255, .98); box-shadow: 0 4px 12px rgba(17, 24, 39, .16); }
+      .details { position: relative; min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; overflow: hidden; padding-left: 10px; color: hsl(154 60% 25%); opacity: 0; transform: translateX(8px); transition: opacity 120ms ease, transform 170ms ease; pointer-events: none; white-space: nowrap; }
+      body.expanded .details { opacity: 1; transform: translateX(0); pointer-events: auto; }
+      .label { display: block; color: hsl(154 33% 35%); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+      #elapsed { display: block; color: hsl(154 60% 25%); font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+      kbd { padding: 3px 5px; border: 1px solid hsl(154 35% 78%); border-radius: 3px; color: hsl(154 50% 31%); background: hsl(154 60% 95%); font-family: inherit; font-size: 10px; font-weight: 700; }
+      .take-count { padding-left: 9px; border-left: 1px solid hsl(154 30% 84%); color: hsl(154 40% 31%); font-size: 11px; font-weight: 700; }
+      .toggle, .stop { box-sizing: border-box; border: 0; cursor: pointer; }
+      .toggle { width: 43px; flex: 0 0 43px; display: grid; place-items: center; color: white; background: hsl(154 60% 42%); }
+      .toggle:hover { background: hsl(154 60% 35%); }
+      .toggle:focus-visible, .stop:focus-visible { outline: 2px solid hsl(154 60% 42% / .48); outline-offset: -3px; }
+      .chevron { font-size: 28px; line-height: 1; font-family: Arial, sans-serif; transform: translateY(-1px); transition: transform 170ms ease; }
+      body.expanded .chevron { transform: translateY(-1px) rotate(180deg); }
+      .stop { width: 28px; height: 28px; margin-left: auto; margin-right: 7px; border-radius: 3px; color: white; background: hsl(0 72% 51%); font-size: 13px; line-height: 1; }
+      .stop:hover { background: hsl(0 72% 43%); }
+      .stop:disabled { cursor: wait; opacity: .7; }
+      .stop-tooltip { position: absolute; top: 4px; right: 43px; z-index: 2; padding: 4px 7px; border: 1px solid hsl(154 35% 78%); border-radius: 3px; color: hsl(154 50% 31%); background: hsl(154 60% 95%); box-shadow: 0 3px 8px rgba(17, 24, 39, .14); font-size: 10px; font-weight: 700; opacity: 0; transform: translateY(3px); transition: opacity 100ms ease, transform 120ms ease; pointer-events: none; }
+      .stop:hover + .stop-tooltip, .stop:focus-visible + .stop-tooltip { opacity: 1; transform: translateY(0); }
+      @media (prefers-reduced-motion: reduce) { .details { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="timer-shell">
+      <div class="details" aria-live="polite">
+        <span><span class="label">Recording</span><span id="elapsed">00:00:00</span></span>
+        <kbd>F2</kbd>
+        <span id="take-count" class="take-count" hidden></span>
+        <button id="stop" class="stop" type="button" aria-label="Stop recording" aria-describedby="stop-tooltip">■</button>
+        <span id="stop-tooltip" class="stop-tooltip" role="tooltip">Stop recording</span>
+      </div>
+      <button id="toggle" class="toggle" type="button" aria-label="Expand recording controls" aria-expanded="false"><span class="chevron" aria-hidden="true">‹</span></button>
+    </div>
+    <script>
+      const button = document.getElementById('toggle');
+      const stopButton = document.getElementById('stop');
+      const elapsed = document.getElementById('elapsed');
+      const takeCount = document.getElementById('take-count');
+      let startedAt = 0;
+      let timerId = null;
+      const formatElapsed = (milliseconds) => {
+        const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+        const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+        const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+        const seconds = String(totalSeconds % 60).padStart(2, '0');
+        return hours + ':' + minutes + ':' + seconds;
+      };
+      const renderElapsed = () => { elapsed.textContent = formatElapsed(Date.now() - startedAt); };
+      window.setRecordingTimer = (value) => {
+        startedAt = Number(value) || Date.now();
+        renderElapsed();
+        if (timerId !== null) window.clearInterval(timerId);
+        timerId = window.setInterval(renderElapsed, 250);
+      };
+      window.setRecordingTimerExpanded = (expanded) => {
+        document.body.classList.toggle('expanded', Boolean(expanded));
+        button.setAttribute('aria-expanded', String(Boolean(expanded)));
+        button.setAttribute('aria-label', expanded ? 'Collapse recording controls' : 'Expand recording controls');
+      };
+      window.setRecordingTimerTakeCount = (count) => {
+        const normalizedCount = Math.max(0, Number(count) || 0);
+        takeCount.hidden = normalizedCount === 0;
+        takeCount.textContent = normalizedCount + (normalizedCount === 1 ? ' take' : ' takes');
+      };
+      button.addEventListener('click', () => window.electronAPI?.toggleRecordingTimer?.());
+      stopButton.addEventListener('click', () => {
+        stopButton.disabled = true;
+        window.electronAPI?.stopRecording?.();
+      });
+    </script>
+  </body>
+</html>`
 
 const positionTakeToast = (toastWindow: BrowserWindow): void => {
   const recorderWindow = appState.recorderWin
@@ -181,6 +273,204 @@ const showTakeToast = (takeNumber: number): void => {
   takeToastHideTimer = setTimeout(closeTakeToast, TAKE_TOAST_DURATION_MS)
 }
 
+const getRecordingTimerWorkArea = () => {
+  const recorderWindow = appState.recorderWin
+  const referenceBounds =
+    recorderWindow && !recorderWindow.isDestroyed() ? recorderWindow.getBounds() : screen.getPrimaryDisplay().bounds
+  return screen.getDisplayMatching(referenceBounds).workArea
+}
+
+const isRecordingTimerEnabled = (): boolean => store.get(RECORDING_TIMER_SETTING_KEY, true) !== false
+
+const getRecordingTimerBounds = (expanded: boolean) => {
+  const workArea = getRecordingTimerWorkArea()
+  const width = expanded ? RECORDING_TIMER_EXPANDED_WIDTH : RECORDING_TIMER_COLLAPSED_WIDTH
+  return {
+    x: workArea.x + workArea.width - width - RECORDING_TIMER_MARGIN,
+    y: workArea.y + workArea.height - RECORDING_TIMER_HEIGHT - RECORDING_TIMER_MARGIN,
+    width,
+    height: RECORDING_TIMER_HEIGHT,
+  }
+}
+
+const updateRecordingTimer = (timerWindow: BrowserWindow, startedAt: number): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerStartTime = startedAt
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimer(${JSON.stringify(startedAt)})`, true)
+    .catch((error) => {
+      pendingRecordingTimerStartTime = startedAt
+      log.warn('[RecordingTimer] Failed to update timer:', error)
+    })
+}
+
+const updateRecordingTimerExpanded = (timerWindow: BrowserWindow, expanded: boolean): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerExpanded = expanded
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimerExpanded(${JSON.stringify(expanded)})`, true)
+    .catch((error) => log.warn('[RecordingTimer] Failed to update visibility:', error))
+}
+
+const updateRecordingTimerTakeCount = (timerWindow: BrowserWindow, count: number): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerTakeCount = count
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimerTakeCount(${JSON.stringify(count)})`, true)
+    .catch((error) => {
+      pendingRecordingTimerTakeCount = count
+      log.warn('[RecordingTimer] Failed to update take count:', error)
+    })
+}
+
+const setRecordingTimerBounds = (timerWindow: BrowserWindow, expanded: boolean, animated: boolean): void => {
+  const targetBounds = getRecordingTimerBounds(expanded)
+  if (recordingTimerAnimation) {
+    clearTimeout(recordingTimerAnimation)
+    recordingTimerAnimation = null
+  }
+
+  if (!animated) {
+    timerWindow.setBounds(targetBounds)
+    return
+  }
+
+  const initialBounds = timerWindow.getBounds()
+  const rightEdge = targetBounds.x + targetBounds.width
+  const animationStartedAt = Date.now()
+  const updateBounds = () => {
+    if (timerWindow.isDestroyed()) return
+    const progress = Math.min(1, (Date.now() - animationStartedAt) / RECORDING_TIMER_ANIMATION_MS)
+    const easedProgress = 1 - (1 - progress) ** 3
+    const width = Math.round(initialBounds.width + (targetBounds.width - initialBounds.width) * easedProgress)
+    timerWindow.setBounds({
+      x: rightEdge - width,
+      y: targetBounds.y,
+      width,
+      height: targetBounds.height,
+    })
+    if (progress < 1) {
+      recordingTimerAnimation = setTimeout(updateBounds, 16)
+    } else {
+      recordingTimerAnimation = null
+    }
+  }
+  updateBounds()
+}
+
+const ensureRecordingTimerWindow = (): BrowserWindow => {
+  const existing = appState.recordingTimerWin
+  if (existing && !existing.isDestroyed()) return existing
+
+  const timerWindow = new BrowserWindow({
+    ...getRecordingTimerBounds(false),
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: PRELOAD_SCRIPT,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  timerWindow.setContentProtection(true)
+  timerWindow.setAlwaysOnTop(true, 'floating')
+  timerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  timerWindow.webContents.on('did-finish-load', () => {
+    if (timerWindow.isDestroyed()) return
+    if (pendingRecordingTimerStartTime !== null) {
+      const startedAt = pendingRecordingTimerStartTime
+      pendingRecordingTimerStartTime = null
+      updateRecordingTimer(timerWindow, startedAt)
+    }
+    updateRecordingTimerExpanded(timerWindow, pendingRecordingTimerExpanded)
+    updateRecordingTimerTakeCount(timerWindow, pendingRecordingTimerTakeCount)
+    if (pendingRecordingTimerShow) {
+      pendingRecordingTimerShow = false
+      timerWindow.showInactive()
+    }
+  })
+  timerWindow.on('closed', () => {
+    if (recordingTimerAnimation) {
+      clearTimeout(recordingTimerAnimation)
+      recordingTimerAnimation = null
+    }
+    if (appState.recordingTimerWin === timerWindow) appState.recordingTimerWin = null
+  })
+  appState.recordingTimerWin = timerWindow
+  void timerWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(RECORDING_TIMER_HTML)}`)
+    .catch((error) => log.debug('[RecordingTimer] Timer window closed before loading:', error))
+  return timerWindow
+}
+
+const closeRecordingTimer = (): void => {
+  if (recordingTimerAnimation) {
+    clearTimeout(recordingTimerAnimation)
+    recordingTimerAnimation = null
+  }
+  pendingRecordingTimerStartTime = null
+  pendingRecordingTimerTakeCount = 0
+  pendingRecordingTimerShow = false
+  recordingTimerExpanded = false
+  const timerWindow = appState.recordingTimerWin
+  appState.recordingTimerWin = null
+  if (timerWindow && !timerWindow.isDestroyed()) timerWindow.close()
+}
+
+const showRecordingTimer = (startedAt: number): void => {
+  recordingTimerExpanded = false
+  pendingRecordingTimerStartTime = startedAt
+  pendingRecordingTimerExpanded = false
+  pendingRecordingTimerTakeCount = 0
+  pendingRecordingTimerShow = true
+  const timerWindow = ensureRecordingTimerWindow()
+  setRecordingTimerBounds(timerWindow, false, false)
+  updateRecordingTimer(timerWindow, startedAt)
+  updateRecordingTimerExpanded(timerWindow, false)
+}
+
+export function toggleRecordingTimer(): void {
+  const timerWindow = appState.recordingTimerWin
+  if (!timerWindow || timerWindow.isDestroyed()) return
+
+  recordingTimerExpanded = !recordingTimerExpanded
+  pendingRecordingTimerExpanded = recordingTimerExpanded
+  updateRecordingTimer(timerWindow, appState.recordingStartTime)
+  updateRecordingTimerExpanded(timerWindow, recordingTimerExpanded)
+  setRecordingTimerBounds(timerWindow, recordingTimerExpanded, true)
+}
+
+const registerRecordingTimerShortcut = (): void => {
+  globalShortcut.unregister(RECORDING_TIMER_SHORTCUT)
+  try {
+    if (!globalShortcut.register(RECORDING_TIMER_SHORTCUT, toggleRecordingTimer)) {
+      log.warn(`[RecordingTimer] Could not register ${RECORDING_TIMER_SHORTCUT}. Click the timer chip to toggle it.`)
+    }
+  } catch (error) {
+    log.warn(`[RecordingTimer] Failed to register ${RECORDING_TIMER_SHORTCUT}:`, error)
+  }
+}
+
+const unregisterRecordingTimerShortcut = (): void => {
+  if (globalShortcut.isRegistered(RECORDING_TIMER_SHORTCUT)) globalShortcut.unregister(RECORDING_TIMER_SHORTCUT)
+}
+
 const unregisterTakeShortcut = (): void => {
   const shortcut = appState.currentRecordingSession?.takeShortcut
   if (shortcut && globalShortcut.isRegistered(shortcut)) globalShortcut.unregister(shortcut)
@@ -194,7 +484,8 @@ export function markTake(): { marked: boolean; takeNumber?: number; timestamp?: 
   const now = getMonotonicMilliseconds()
   const basePts = session.takeLastPtsSeconds || 0
   const baseMonotonic = session.takeLastPtsMonotonicMs ?? session.takeRecordingReadyMonotonicMs
-  const timestamp = Math.max(0, basePts + Math.max(0, now - baseMonotonic) / 1000)
+  const screenSourceOffsetSeconds = Math.max(0, session.captureSourceOffsetsMs?.screen || 0) / 1000
+  const timestamp = Math.max(0, basePts + Math.max(0, now - baseMonotonic) / 1000 - screenSourceOffsetSeconds)
   const boundaries = session.takeBoundaries || (session.takeBoundaries = [])
   const lastBoundary = boundaries[boundaries.length - 1] || 0
   const fps = Math.max(1, session.requestedScreenFps || 30)
@@ -206,6 +497,8 @@ export function markTake(): { marked: boolean; takeNumber?: number; timestamp?: 
   appState.tray?.setToolTip(`RecordSaaS is recording — Take ${takeNumber}`)
   appState.recorderWin?.webContents.send('recording:take-marked', { takeNumber, timestamp })
   showTakeToast(takeNumber)
+  const timerWindow = appState.recordingTimerWin
+  if (timerWindow && !timerWindow.isDestroyed()) updateRecordingTimerTakeCount(timerWindow, boundaries.length)
   log.info(`[TakeMode] Marked Take ${takeNumber} at ${timestamp.toFixed(3)}s.`)
   return { marked: true, takeNumber, timestamp }
 }
@@ -1492,21 +1785,6 @@ function resolveImportedLaneId(
 }
 
 /**
- * Uses ffprobe to get the precise creation time of the video file.
- * @param videoPath The path to the video file.
- * @returns A promise that resolves to the creation time as a UNIX timestamp (ms).
- */
-async function getVideoStartTime(videoPath: string): Promise<number> {
-  try {
-    const stats = await fsPromises.stat(videoPath)
-    return stats.birthtimeMs
-  } catch (error) {
-    log.error(`[getVideoStartTime] Error getting file stats for ${videoPath}:`, error)
-    throw error
-  }
-}
-
-/**
  * Validates the generated recording files to ensure they exist and are not empty.
  * @param session - The recording session containing file paths to validate.
  * @returns A promise that resolves to true if files are valid, false otherwise.
@@ -1567,59 +1845,10 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   return true
 }
 
-/**
- * Trims the audio file by removing the specified amount from the beginning.
- * @param audioPath - Path to the audio file to trim
- * @param trimMs - Amount to trim from the beginning in milliseconds (default 1000ms)
- * @returns Promise that resolves to the path of the trimmed audio file
- */
-async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<string> {
-  const ext = path.extname(audioPath) || '.wav'
-  const trimmedPath = audioPath.slice(0, -ext.length) + `-trimmed${ext}`
-  const trimSeconds = trimMs / 1000
-
-  log.info(`[AudioTrim] Trimming ${trimMs}ms from beginning of ${audioPath}`)
-
-  return new Promise((resolve, reject) => {
-    const codecArgs = ext.toLowerCase() === '.wav' ? ['-c:a', 'pcm_s16le'] : ['-c:a', 'copy']
-    const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, ...codecArgs, trimmedPath]
-
-    const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
-
-    ffmpeg.stderr.on('data', (data: any) => {
-      log.info(`[AudioTrim FFmpeg]: ${data.toString()}`)
-    })
-
-    ffmpeg.on('close', async (code: any) => {
-      if (code === 0) {
-        log.info(`[AudioTrim] Successfully trimmed audio, replacing original file`)
-        try {
-          // Replace original file with trimmed version
-          await fsPromises.unlink(audioPath)
-          await fsPromises.rename(trimmedPath, audioPath)
-          resolve(audioPath)
-        } catch (error) {
-          log.error(`[AudioTrim] Error replacing audio file:`, error)
-          reject(error)
-        }
-      } else {
-        log.error(`[AudioTrim] FFmpeg exited with code ${code}`)
-        reject(new Error(`Audio trim failed with code ${code}`))
-      }
-    })
-
-    ffmpeg.on('error', (error: any) => {
-      log.error(`[AudioTrim] FFmpeg error:`, error)
-      reject(error)
-    })
-  })
-}
-
-async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: number = 1000): Promise<void> {
+async function finalizeSystemAudioCapture(session: RecordingSession): Promise<void> {
   if (!session.systemAudioPath) return
 
   if (!session.systemAudioTempPath) {
-    await trimAudioFile(session.systemAudioPath, trimMs)
     return
   }
 
@@ -1630,23 +1859,12 @@ async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: num
     audioBitrateKbps: normalizeRecordingAudioBitrate(session.recordingAudioBitrateKbps, 192),
     audioSampleRate: normalizeRecordingAudioSampleRate(session.recordingAudioSampleRate, 48000),
   }
-  const trimSeconds = trimMs / 1000
-
   log.info(
     `[SystemAudioFinalize] Encoding helper capture ${tempPath} -> ${finalPath} (${config.audioCodec}/${config.audioBitrateKbps}k/${config.audioSampleRate}Hz)`,
   )
 
   await new Promise<void>((resolve, reject) => {
-    const ffmpegArgs = [
-      '-y',
-      '-ss',
-      trimSeconds.toString(),
-      '-i',
-      tempPath,
-      '-vn',
-      ...getRecordedAudioCodecArgs(config),
-      finalPath,
-    ]
+    const ffmpegArgs = ['-y', '-i', tempPath, '-vn', ...getRecordedAudioCodecArgs(config), finalPath]
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
     ffmpeg.stderr.on('data', (data: any) => {
@@ -1747,7 +1965,7 @@ async function startActualRecording(
     })
     return { canceled: true }
   }
-  appState.recorderWin?.minimize()
+  appState.recorderWin?.hide()
 
   // Reset state for the new session
   appState.recordingStartTime = Date.now()
@@ -1780,6 +1998,7 @@ async function startActualRecording(
           x: normalizedX - recordingGeometry.x,
           y: normalizedY - recordingGeometry.y,
           timestamp: data.timestamp,
+          captureMonotonicMs: getMonotonicMilliseconds(),
         }
         appState.recordedMouseEvents.push(absoluteEvent)
       }
@@ -1921,9 +2140,12 @@ async function startActualRecording(
 
     const expectedReadyCount = ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
 
+    const readyMonotonicByRole = new Map<FfmpegProcessRole, number>()
+
     const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
       readyRoles.add(role)
+      readyMonotonicByRole.set(role, getMonotonicMilliseconds())
       log.info(
         `[FFMPEG] Ready signal from ${role}. count=${readyRoles.size}/${expectedReadyCount} roles=${Array.from(readyRoles).join(',')}`,
       )
@@ -1936,9 +2158,35 @@ async function startActualRecording(
         return
       }
 
-      log.info('[FFMPEG] Recording pipeline is ready.')
-      session.takeRecordingReadyMonotonicMs = getMonotonicMilliseconds()
+      // All capture processes were spawned together. Timeline zero is deliberately
+      // set only after every input confirms readiness, so initial device startup is
+      // disposable pre-roll instead of a fixed, guessed audio trim.
+      const captureOriginMonotonicMs = getMonotonicMilliseconds()
+      const offsetFromReady = (role: FfmpegProcessRole, fallback: FfmpegProcessRole = 'main'): number =>
+        Math.max(
+          0,
+          Math.round(
+            captureOriginMonotonicMs -
+              (readyMonotonicByRole.get(role) ?? readyMonotonicByRole.get(fallback) ?? captureOriginMonotonicMs),
+          ),
+        )
+      session.captureOriginMonotonicMs = captureOriginMonotonicMs
+      session.captureSourceOffsetsMs = {
+        screen: offsetFromReady('main'),
+        webcam: offsetFromReady('webcam'),
+        recording: offsetFromReady('main'),
+        systemAudio: offsetFromReady('system-audio'),
+      }
+      log.info(
+        `[FFMPEG] Recording pipeline ready; shared capture origin offsets(ms)=${JSON.stringify(session.captureSourceOffsetsMs)}`,
+      )
+      session.takeRecordingReadyMonotonicMs = captureOriginMonotonicMs
       session.takeLastPtsMonotonicMs = session.takeRecordingReadyMonotonicMs
+      appState.recordingStartTime = Date.now()
+      if (isRecordingTimerEnabled()) {
+        showRecordingTimer(appState.recordingStartTime)
+        registerRecordingTimerShortcut()
+      }
       appState.recorderWin?.webContents.send('recording-started')
       createTray()
       resolveOnce({ canceled: false, ...session })
@@ -2298,6 +2546,17 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(VITE_PUBLIC, 'recordsaas-appicon-tray.png'))
   appState.tray = new Tray(icon)
   const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Open Window',
+      click: () => {
+        const recorderWindow = appState.recorderWin
+        if (!recorderWindow || recorderWindow.isDestroyed()) return
+        if (recorderWindow.isMinimized()) recorderWindow.restore()
+        if (!recorderWindow.isVisible()) recorderWindow.show()
+        recorderWindow.focus()
+      },
+    },
+    { type: 'separator' as const },
     ...(appState.currentRecordingSession?.takeModeEnabled
       ? [
           {
@@ -2857,6 +3116,8 @@ export async function stopRecording() {
   log.info('Stopping recording, preparing to save...')
   unregisterTakeShortcut()
   closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   appState.tray?.destroy()
   appState.tray = null
   createSavingWindow()
@@ -2876,22 +3137,12 @@ export async function stopRecording() {
   // Notify recorder window that the recording has finished, allowing it to reset its UI
   appState.recorderWin?.webContents.send('recording-finished', { canceled: false, ...session })
 
-  // Step 2: Trim audio file if present
-  if (session.audioPath) {
-    try {
-      log.info('[StopRecord] Trimming audio file by 1000ms...')
-      await trimAudioFile(session.audioPath, 1000)
-      log.info('[StopRecord] Audio file trimmed successfully.')
-    } catch (error) {
-      log.error('[StopRecord] Failed to trim audio file:', error)
-      // Continue anyway - audio is trimmed but not critical
-    }
-  }
-
+  // Step 2: Preserve each raw source. Alignment is represented by the shared
+  // capture origin saved in metadata, never by a guessed destructive trim.
   if (session.systemAudioPath) {
     try {
       log.info('[StopRecord] Finalizing computer audio file...')
-      await finalizeSystemAudioCapture(session, 1000)
+      await finalizeSystemAudioCapture(session)
       log.info('[StopRecord] Computer audio file finalized successfully.')
     } catch (error) {
       log.error('[StopRecord] Failed to finalize computer audio file:', error)
@@ -2901,8 +3152,7 @@ export async function stopRecording() {
           await fsPromises.unlink(session.systemAudioPath).catch(() => undefined)
           session.systemAudioPath = session.systemAudioTempPath
           session.systemAudioTempPath = undefined
-          await trimAudioFile(session.systemAudioPath, 1000)
-          log.warn('[StopRecord] Falling back to raw helper WAV for computer audio.')
+          log.warn('[StopRecord] Falling back to raw helper WAV for computer audio without trimming.')
         } catch (fallbackError) {
           log.error('[StopRecord] Failed to recover raw helper WAV after finalize error:', fallbackError)
         }
@@ -2952,6 +3202,8 @@ export async function cancelRecording() {
   log.info('Cancelling recording and deleting files...')
   unregisterTakeShortcut()
   closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   await cleanupAndDiscard()
   appState.recorderWin?.webContents.send('recording-finished', { canceled: true })
   appState.recorderWin?.show()
@@ -3106,19 +3358,29 @@ function getScaledGeometry(geometry: RecordingGeometry, scaleFactor: number): Re
  */
 async function processAndSaveMetadata(session: RecordingSession): Promise<boolean> {
   try {
-    const videoStartTime = await getVideoStartTime(session.screenVideoPath)
-    log.info(`[SYNC] Precise video start time from ffprobe: ${new Date(videoStartTime).toISOString()}`)
+    const captureOriginMonotonicMs = session.captureOriginMonotonicMs
+    const captureSourceOffsetsMs = session.captureSourceOffsetsMs || {
+      screen: 0,
+      webcam: 0,
+      recording: 0,
+      systemAudio: 0,
+    }
 
     const scaleFactor = session.scaleFactor || 1
     const finalEvents = appState.recordedMouseEvents.map((event) => {
       const shouldScaleLinuxEvent = shouldApplyLinuxDisplayScale(scaleFactor)
       const scaledX = shouldScaleLinuxEvent ? event.x * scaleFactor : event.x
       const scaledY = shouldScaleLinuxEvent ? event.y * scaleFactor : event.y
+      const { captureMonotonicMs, ...eventWithoutCaptureClock } = event
+      const relativeTimestamp =
+        typeof captureOriginMonotonicMs === 'number' && typeof captureMonotonicMs === 'number'
+          ? captureMonotonicMs - captureOriginMonotonicMs
+          : 0
       return {
-        ...event,
+        ...eventWithoutCaptureClock,
         x: scaledX,
         y: scaledY,
-        timestamp: Math.max(0, event.timestamp - videoStartTime),
+        timestamp: Math.max(0, relativeTimestamp),
       }
     })
 
@@ -3133,13 +3395,14 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       requestedScreenFps: session.requestedScreenFps,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
+      captureSourceOffsetsMs,
       cursorImages: Object.fromEntries(appState.runtimeCursorImageMap || []),
       events: finalEvents,
       takeModeEnabled: session.takeModeEnabled === true,
-      sourceDuration: Math.max(0, session.takeLastPtsSeconds || 0),
+      sourceDuration: Math.max(0, (session.takeLastPtsSeconds || 0) - captureSourceOffsetsMs.screen / 1000),
       takeBoundaries: (() => {
         if (!session.takeModeEnabled) return []
-        const duration = Math.max(0, session.takeLastPtsSeconds || 0)
+        const duration = Math.max(0, (session.takeLastPtsSeconds || 0) - captureSourceOffsetsMs.screen / 1000)
         const minimumDuration = Math.max(0.1, 2 / Math.max(1, session.requestedScreenFps || 30))
         const boundaries = (session.takeBoundaries || []).filter(
           (boundary, index, values) =>
@@ -3169,8 +3432,17 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       requestedScreenFps: session.requestedScreenFps,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
+      captureSourceOffsetsMs: session.captureSourceOffsetsMs || {
+        screen: 0,
+        webcam: 0,
+        recording: 0,
+        systemAudio: 0,
+      },
       takeModeEnabled: session.takeModeEnabled === true,
-      sourceDuration: Math.max(0, session.takeLastPtsSeconds || 0),
+      sourceDuration: Math.max(
+        0,
+        (session.takeLastPtsSeconds || 0) - (session.captureSourceOffsetsMs?.screen || 0) / 1000,
+      ),
       takeBoundaries: session.takeBoundaries || [],
     }
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(errorMetadata))
@@ -3184,6 +3456,8 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
 export async function cleanupAndDiscard() {
   unregisterTakeShortcut()
   closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   if (!appState.currentRecordingSession) return
   log.warn('[Cleanup] Discarding current recording session.')
   const sessionToDiscard = { ...appState.currentRecordingSession }
@@ -3269,6 +3543,8 @@ export async function cleanupOrphanedRecordings() {
 export async function onAppQuit(event: Electron.Event) {
   unregisterTakeShortcut()
   closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   if (appState.currentRecordingSession && !appState.isCleanupInProgress) {
     log.warn('[AppQuit] Active session detected. Cleaning up before exit...')
     event.preventDefault()

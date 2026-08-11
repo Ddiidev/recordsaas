@@ -363,7 +363,8 @@ export function EditorPage() {
         seekToPreviousFrame()
       }
       if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
-        videoRef.current.currentTime = useEditorStore.getState().currentTime
+        const state = useEditorStore.getState()
+        videoRef.current.currentTime = state.currentTime + Math.max(0, state.captureSourceOffsetsMs?.screen || 0) / 1000
       }
     },
     [seekToNextFrame, seekToPreviousFrame],
@@ -377,7 +378,8 @@ export function EditorPage() {
         seekBackward(Math.abs(seconds))
       }
       if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
-        videoRef.current.currentTime = useEditorStore.getState().currentTime
+        const state = useEditorStore.getState()
+        videoRef.current.currentTime = state.currentTime + Math.max(0, state.captureSourceOffsetsMs?.screen || 0) / 1000
       }
     },
     [seekForward, seekBackward],
