@@ -205,7 +205,7 @@ export const DEFAULTS = {
     },
   },
   AUDIO: {
-    VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    VOLUME: { min: 0, max: 1.5, step: 0.01, defaultValue: 1 },
     MUTED: { defaultValue: false },
   },
   ANIMATION: {

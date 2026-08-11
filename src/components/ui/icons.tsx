@@ -10,6 +10,7 @@ import {
   CloudUpload as CloudUploadIcon,
   Computer as ComputerIcon,
   ControlSlider as ControlSliderIcon,
+  Copy as CopyIcon,
   CursorPointer as CursorPointerIcon,
   Cut as CutIcon,
   Download as DownloadIcon,
@@ -290,6 +291,7 @@ export const Upload = withIconMotion(UploadIcon, 'Upload')
 export const CloudUpload = withIconMotion(CloudUploadIcon, 'CloudUpload')
 export const Plus = withIconMotion(PlusIcon, 'Plus')
 export const Trash = withIconMotion(TrashIcon, 'Trash')
+export const Copy = withIconMotion(CopyIcon, 'Copy')
 export const Lock = withIconMotion(LockIcon, 'Lock')
 export const Rectangle = withIconMotion(RectangleIcon, 'Rectangle')
 export const BoxPadding = withIconMotion(PaddingBoxIcon, 'BoxPadding')

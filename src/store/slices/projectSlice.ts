@@ -99,7 +99,7 @@ const fallbackNameFromPath = (filePath: string): string => {
 }
 
 const clampAudioVolume = (value: unknown): number =>
-  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : 1
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(value, DEFAULTS.AUDIO.VOLUME.max)) : 1
 
 const clampSyncOffsetMs = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.max(-10000, Math.min(value, 10000))) : 0
@@ -1481,7 +1481,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
     set((state) => {
       if (state.assetTimelineEditing) return
       if (typeof volume === 'number' && Number.isFinite(volume)) {
-        state.systemAudioVolume = Math.max(0, Math.min(volume, 1))
+        state.systemAudioVolume = Math.max(0, Math.min(volume, DEFAULTS.AUDIO.VOLUME.max))
       }
       if (typeof isMuted === 'boolean') {
         state.systemAudioMuted = isMuted
@@ -1828,11 +1828,11 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
       state.audioUrl = main.audioUrl
       state.systemAudioPath = main.systemAudioPath
       state.systemAudioUrl = main.systemAudioUrl
-      state.systemAudioVolume = main.systemAudioVolume
+      state.systemAudioVolume = clampAudioVolume(main.systemAudioVolume)
       state.systemAudioMuted = main.systemAudioMuted
       state.recordingSyncOffsetMs = main.recordingSyncOffsetMs ?? 0
       state.systemAudioSyncOffsetMs = main.systemAudioSyncOffsetMs ?? 0
-      state.volume = main.volume
+      state.volume = clampAudioVolume(main.volume)
       state.isMuted = main.isMuted
       state.mediaAudioClip = main.mediaAudioClip
       state.mediaAudioRegions = main.mediaAudioRegions

@@ -8,6 +8,7 @@ import {
   Search,
   Refresh,
   AdjustmentsHorizontal,
+  Copy,
 } from '@icons'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
@@ -32,6 +33,7 @@ export function PreviewControls() {
     timelineZoom,
     setTimelineZoom,
     selectedRegionId,
+    duplicateRegion,
     deleteRegion,
     splitFloatingMonitorRegion,
     splitMediaAudioRegion,
@@ -49,6 +51,12 @@ export function PreviewControls() {
   const handleDelete = () => {
     if (selectedRegionId) {
       deleteRegion(selectedRegionId)
+    }
+  }
+
+  const handleDuplicate = () => {
+    if (selectedRegionId) {
+      duplicateRegion(selectedRegionId)
     }
   }
 
@@ -113,6 +121,14 @@ export function PreviewControls() {
             disabled={!canSplitSelected}
           >
             <Scissors className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton
+            variant="icon"
+            tooltip="Duplicate selected region"
+            onClick={handleDuplicate}
+            disabled={!selectedRegionId}
+          >
+            <Copy className="w-4 h-4" />
           </ToolbarButton>
           <ToolbarButton
             variant="icon"

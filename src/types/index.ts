@@ -601,6 +601,7 @@ export interface TimelineActions {
   adaptMediaAudioToCuts: (regionId: string) => void
   splitChangeSoundRegion: (regionId: string, splitTime: number) => void
   splitFloatingMonitorRegion: (regionId: string, splitTime: number) => void
+  duplicateRegion: (id: string) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void
@@ -663,7 +664,7 @@ export interface UIActions {
 }
 
 export interface AudioState {
-  volume: number // 0 to 1
+  volume: number // 0 to 1.5
   isMuted: boolean
 }
 

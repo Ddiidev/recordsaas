@@ -29,6 +29,7 @@ const FFMPEG_PATH = getFFmpegPath()
 const EXPORT_PROGRESS_INTERVAL_MS = 300
 const EXPORT_PROGRESS_STEP_PERCENT = 2
 const MAX_SUPPORTED_EXPORT_FPS = 60
+const MAX_AUDIO_VOLUME = 1.5
 const POSIX_PRIORITY_CANDIDATES = [-10, -5]
 const WINDOWS_PRIORITY_CANDIDATES = [osConstants.priority.PRIORITY_HIGH, osConstants.priority.PRIORITY_ABOVE_NORMAL]
 const WINDOWS_NORMAL_PRIORITY = osConstants.priority.PRIORITY_NORMAL
@@ -596,7 +597,7 @@ const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
 
   const baseVolume =
     typeof segment.volumeMultiplier === 'number' && Number.isFinite(segment.volumeMultiplier)
-      ? Math.max(0, Math.min(1, segment.volumeMultiplier))
+      ? Math.max(0, Math.min(MAX_AUDIO_VOLUME, segment.volumeMultiplier))
       : 1
   const fadeInDuration = segment.fadeInDuration ?? 0
   const fadeOutDuration = segment.fadeOutDuration ?? 0
@@ -1601,12 +1602,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     let systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
     const recordingVolume =
       typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume)
-        ? Math.max(0, Math.min(projectStateRecord.recordingVolume, 1))
+        ? Math.max(0, Math.min(projectStateRecord.recordingVolume, MAX_AUDIO_VOLUME))
         : 1
     const recordingMuted = projectStateRecord.recordingMuted === true || recordingVolume <= 0
     const systemAudioVolume =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
-        ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, 1))
+        ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, MAX_AUDIO_VOLUME))
         : 1
     const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioVolume <= 0
     const recordingSyncOffsetMs =
@@ -1759,7 +1760,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         timelineLanes,
       ).map((segment) => ({
         ...segment,
-        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * recordingVolume)),
+        volumeMultiplier: Math.max(0, Math.min(MAX_AUDIO_VOLUME, (segment.volumeMultiplier ?? 1) * recordingVolume)),
       }))
       if (recordingSegments.length > 0) {
         if (recordingHasNoTransform && !takeModeEnabled) {
@@ -1800,7 +1801,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         timelineLanes,
       ).map((segment) => ({
         ...segment,
-        volumeMultiplier: Math.max(0, Math.min(1, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
+        volumeMultiplier: Math.max(0, Math.min(MAX_AUDIO_VOLUME, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
       }))
       if (systemSegments.length > 0) {
         if (systemAudioHasNoTransform && !takeModeEnabled) {

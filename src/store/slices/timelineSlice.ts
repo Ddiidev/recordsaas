@@ -176,6 +176,13 @@ const getRegionById = (
   state.floatingMonitorRegions[id] ||
   null
 
+const duplicateTimelineRegion = <T extends TimelineRegion>(region: T, id: string): T => ({
+  ...region,
+  id,
+  startTime: region.startTime + region.duration,
+  zIndex: 0,
+})
+
 const monitorWouldCreateCycle = (
   monitors: Record<string, { timeline?: { floatingMonitorRegions: Record<string, FloatingMonitorRegion> } }>,
   ownerMonitorId: string,
@@ -931,6 +938,43 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       }
 
       state.selectedRegionId = nextRegionId
+      recalculateZIndices(state)
+    })
+  },
+  duplicateRegion: (id) => {
+    set((state) => {
+      const source = getRegionById(state, id)
+      if (!source) return
+
+      const duplicatedId = `${source.type}-${Date.now()}`
+      switch (source.type) {
+        case 'zoom':
+          state.zoomRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'cut':
+          state.cutRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'speed':
+          state.speedRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'blur':
+          state.blurRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'swap':
+          state.swapRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'media-audio':
+          state.mediaAudioRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'change-sound':
+          state.changeSoundRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'floating-monitor':
+          state.floatingMonitorRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+      }
+
+      state.selectedRegionId = duplicatedId
       recalculateZIndices(state)
     })
   },

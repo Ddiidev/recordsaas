@@ -10,6 +10,10 @@ export interface SliderProps {
   disabled?: boolean
   label?: string
   className?: string
+  fillClassName?: string
+  handleClassName?: string
+  snapPoints?: number[]
+  snapThreshold?: number
 }
 
 export const Slider: React.FC<SliderProps> = ({
@@ -22,6 +26,10 @@ export const Slider: React.FC<SliderProps> = ({
   disabled = false,
   label,
   className = '',
+  fillClassName = 'bg-primary',
+  handleClassName = '',
+  snapPoints = [],
+  snapThreshold = 0,
 }) => {
   const [internalValue, setInternalValue] = useState(value ?? defaultValue)
   const [isDragging, setIsDragging] = useState(false)
@@ -34,11 +42,12 @@ export const Slider: React.FC<SliderProps> = ({
     (newValue: number) => {
       const clampedValue = Math.min(Math.max(newValue, min), max)
       const steppedValue = Math.round(clampedValue / step) * step
+      const snappedValue = snapPoints.find((point) => Math.abs(point - steppedValue) <= snapThreshold) ?? steppedValue
 
-      setInternalValue(steppedValue)
-      onChange?.(steppedValue)
+      setInternalValue(snappedValue)
+      onChange?.(snappedValue)
     },
-    [min, max, step, onChange],
+    [min, max, step, onChange, snapPoints, snapThreshold],
   )
 
   const handleMouseDown = useCallback(
@@ -82,16 +91,19 @@ export const Slider: React.FC<SliderProps> = ({
           onMouseDown={handleMouseDown}
         >
           {/* Track Fill */}
-          <div className="absolute top-0 left-0 h-full bg-primary rounded-full" style={{ width: `${percentage}%` }} />
+          <div
+            className={`absolute top-0 left-0 h-full rounded-full ${fillClassName}`}
+            style={{ width: `${percentage}%` }}
+          />
           {/* Handle */}
           <div
-            className={`absolute top-1/2 w-[18px] h-[18px] bg-card rounded-sm border border-primary/40 transform -translate-y-1/2 -translate-x-1/2 transition-transform duration-100 ease-out shadow-md flex items-center justify-center
+            className={`absolute top-1/2 w-[18px] h-[18px] bg-card rounded-sm border border-primary/40 transform -translate-y-1/2 -translate-x-1/2 transition-transform duration-100 ease-out shadow-md flex items-center justify-center ${handleClassName}
               ${isDragging ? 'scale-110 ring-4 ring-primary/20' : 'group-hover:ring-4 group-hover:ring-primary/20'}
               ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
             `}
             style={{ left: `${percentage}%` }}
           >
-            <div className="w-1.5 h-1.5 bg-primary rounded-sm pointer-events-none" />
+            <div className={`w-1.5 h-1.5 rounded-sm pointer-events-none ${fillClassName}`} />
           </div>
         </div>
       </div>

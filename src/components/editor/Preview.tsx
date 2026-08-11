@@ -13,6 +13,7 @@ import {
 } from '@icons'
 import { useShallow } from 'zustand/react/shallow'
 import { formatTime } from '../../lib/utils'
+import { DEFAULTS } from '../../lib/constants'
 import { calcRealDuration } from '../../lib/real-duration'
 import { Slider } from '../ui/slider'
 import { Button } from '../ui/button'
@@ -56,6 +57,37 @@ type PendingMediaSeek = {
 
 const pendingMediaSeekTargets = new WeakMap<HTMLMediaElement, PendingMediaSeek>()
 const mediaSeekListenerAttached = new WeakSet<HTMLMediaElement>()
+const previewAudioGainNodes = new WeakMap<HTMLMediaElement, GainNode>()
+let previewAudioContext: AudioContext | null = null
+
+const setPreviewAudioVolume = (element: HTMLMediaElement, requestedVolume: number) => {
+  const volume = Math.max(0, Math.min(DEFAULTS.AUDIO.VOLUME.max, requestedVolume))
+  element.volume = Math.min(1, volume)
+
+  if (volume <= 1 || typeof window === 'undefined') {
+    const gainNode = previewAudioGainNodes.get(element)
+    if (gainNode) gainNode.gain.value = 1
+    return
+  }
+
+  try {
+    if (!previewAudioContext) {
+      previewAudioContext = new AudioContext()
+    }
+    let gainNode = previewAudioGainNodes.get(element)
+    if (!gainNode) {
+      const source = previewAudioContext.createMediaElementSource(element)
+      gainNode = previewAudioContext.createGain()
+      source.connect(gainNode)
+      gainNode.connect(previewAudioContext.destination)
+      previewAudioGainNodes.set(element, gainNode)
+    }
+    gainNode.gain.value = volume
+    if (previewAudioContext.state === 'suspended') void previewAudioContext.resume()
+  } catch {
+    // Keep native playback available if Web Audio cannot attach to the element.
+  }
+}
 
 const queueMediaSeek = (element: HTMLMediaElement, targetTime: number, maxDrift: number) => {
   if (element.readyState === HTMLMediaElement.HAVE_NOTHING) return
@@ -160,7 +192,7 @@ const syncResolvedAudioElement = (
   if (element.readyState > 0 && Math.abs(element.currentTime - targetTime) > maxDrift) {
     queueMediaSeek(element, targetTime, maxDrift)
   }
-  element.volume = Math.max(0, Math.min(1, nextVolume))
+  setPreviewAudioVolume(element, nextVolume)
   element.playbackRate = playbackRate
 
   requestMediaPlayback(element, shouldPlay)
@@ -1206,26 +1238,26 @@ export const Preview = memo(
           video.muted = true
         } else {
           // No separate audio, use video's own audio
-          video.volume = volume
+          setPreviewAudioVolume(video, volume)
           video.muted = isMuted
         }
       }
       if (recordingAudio) {
         const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedRecording = resolveRecordingForTime(playbackTime)
-        recordingAudio.volume = Math.max(0, Math.min(1, volume * resolvedRecording.volumeMultiplier))
+        setPreviewAudioVolume(recordingAudio, volume * resolvedRecording.volumeMultiplier)
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
         const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
-        systemAudio.volume = Math.max(0, Math.min(1, systemAudioVolume * resolvedSystemAudio.volumeMultiplier))
+        setPreviewAudioVolume(systemAudio, systemAudioVolume * resolvedSystemAudio.volumeMultiplier)
         systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
         const playbackTime = takeModeEnabled ? currentTime : (video?.currentTime ?? currentTime)
         const resolvedMedia = resolveMediaForTime(playbackTime)
-        mediaAudio.volume = Math.max(0, Math.min(1, resolvedMedia.volumeMultiplier))
+        setPreviewAudioVolume(mediaAudio, resolvedMedia.volumeMultiplier)
         mediaAudio.muted = false
       }
     }, [

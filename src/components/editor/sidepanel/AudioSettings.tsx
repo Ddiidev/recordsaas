@@ -186,15 +186,24 @@ export function AudioSettings() {
                         step={DEFAULTS.AUDIO.VOLUME.step}
                         value={isMuted ? 0 : volume}
                         onChange={(value) => setVolume(value)}
+                        fillClassName={volume > 1 ? 'bg-destructive' : 'bg-primary'}
+                        handleClassName={volume > 1 ? 'border-destructive/40' : ''}
+                        snapPoints={[1]}
+                        snapThreshold={0.04}
                         disabled={isMuted}
                       />
                     </div>
-                    <span className="text-xs font-semibold text-primary tabular-nums w-10 text-right">
+                    <span
+                      className={cn(
+                        'text-xs font-semibold tabular-nums w-10 text-right',
+                        volume > 1 ? 'text-destructive' : 'text-primary',
+                      )}
+                    >
                       {Math.round((isMuted ? 0 : volume) * 100)}%
                     </span>
                   </div>
                   <Button
-                    onClick={() => setVolume(1)}
+                    onClick={() => setVolume(DEFAULTS.AUDIO.VOLUME.max)}
                     disabled={isMuted}
                     className={cn(
                       'w-full h-11 font-semibold transition-all duration-300',
@@ -242,15 +251,24 @@ export function AudioSettings() {
                         step={DEFAULTS.AUDIO.VOLUME.step}
                         value={systemAudioMuted ? 0 : systemAudioVolume}
                         onChange={(value) => updateSystemAudioSettings({ volume: value, isMuted: false })}
+                        fillClassName={systemAudioVolume > 1 ? 'bg-destructive' : 'bg-primary'}
+                        handleClassName={systemAudioVolume > 1 ? 'border-destructive/40' : ''}
+                        snapPoints={[1]}
+                        snapThreshold={0.04}
                         disabled={systemAudioMuted}
                       />
                     </div>
-                    <span className="text-xs font-semibold text-primary tabular-nums w-10 text-right">
+                    <span
+                      className={cn(
+                        'text-xs font-semibold tabular-nums w-10 text-right',
+                        systemAudioVolume > 1 ? 'text-destructive' : 'text-primary',
+                      )}
+                    >
                       {Math.round((systemAudioMuted ? 0 : systemAudioVolume) * 100)}%
                     </span>
                   </div>
                   <Button
-                    onClick={() => updateSystemAudioSettings({ volume: 1, isMuted: false })}
+                    onClick={() => updateSystemAudioSettings({ volume: DEFAULTS.AUDIO.VOLUME.max, isMuted: false })}
                     disabled={systemAudioMuted}
                     className={cn(
                       'w-full h-11 font-semibold transition-all duration-300',
