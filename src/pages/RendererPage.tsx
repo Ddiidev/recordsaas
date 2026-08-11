@@ -53,8 +53,8 @@ type VideoFrameProvider = {
   width: number
   height: number
   fps: number | null
-  // The provider retains the returned frame as its nearest decode candidate.
-  // Consumers must draw it before requesting another frame, but must not close it.
+  // Returns a caller-owned snapshot. The provider keeps its decode candidates
+  // private so another source can advance without invalidating this frame.
   getFrameForTime: (timeSec: number) => Promise<VideoFrame | null>
   close: () => void
 }
@@ -625,12 +625,14 @@ async function createVideoFrameProvider(
       throwIfPumpFailed()
     }
 
-    if (!lastFrame) return nextFrame ?? null
-    if (!nextFrame) return lastFrame
+    const cloneFrame = (frame: VideoFrame | null): VideoFrame | null => (frame ? new VideoFrame(frame) : null)
+
+    if (!lastFrame) return cloneFrame(nextFrame)
+    if (!nextFrame) return cloneFrame(lastFrame)
 
     const lastTs = lastFrame.timestamp ?? 0
     const nextTs = nextFrame.timestamp ?? 0
-    return targetUs - lastTs <= nextTs - targetUs ? lastFrame : nextFrame
+    return cloneFrame(targetUs - lastTs <= nextTs - targetUs ? lastFrame : nextFrame)
   }
 
   const close = () => {
@@ -1263,18 +1265,19 @@ export function RendererPage() {
                     : source.take.source.kind === 'recording-webcam'
                       ? toRecordingSourceTime(source.sourceTime, 'webcam')
                       : source.sourceTime
-                const takeFrame = await provider.getFrameForTime(takeSourceTime)
+                const webcamProvider =
+                  source.take.source.kind === 'recording-screen' && hasWebcam
+                    ? await getTakeProvider(
+                        `take:${source.take.id}:webcam`,
+                        projectStateWithCursorBitmaps.webcamVideoPath!,
+                      )
+                    : null
+                const webcamSourceTime = toRecordingSourceTime(source.sourceTime, 'webcam')
+                const [takeFrame, takeWebcamFrame] = await Promise.all([
+                  provider.getFrameForTime(takeSourceTime),
+                  webcamProvider?.getFrameForTime(webcamSourceTime) ?? Promise.resolve(null),
+                ])
                 if (!takeFrame) throw new Error(`No decoded frame available for take ${source.take.id}.`)
-                let takeWebcamFrame: VideoFrame | null = null
-                if (source.take.source.kind === 'recording-screen' && hasWebcam) {
-                  const webcamProvider = await getTakeProvider(
-                    `take:${source.take.id}:webcam`,
-                    projectStateWithCursorBitmaps.webcamVideoPath!,
-                  )
-                  takeWebcamFrame = await webcamProvider.getFrameForTime(
-                    toRecordingSourceTime(source.sourceTime, 'webcam'),
-                  )
-                }
                 const takeCanvas = document.createElement('canvas')
                 takeCanvas.width = outputWidth
                 takeCanvas.height = outputHeight
@@ -1307,27 +1310,29 @@ export function RendererPage() {
                       },
                     }
                   : { ...projectStateWithCursorBitmaps, ...takeEffects }
-                await drawScene(
-                  takeContext,
-                  takeState,
-                  takeFrame,
-                  takeWebcamFrame,
-                  sourceTimestamp,
-                  outputWidth,
-                  outputHeight,
-                  bgImage,
-                  takeWebcamFrame
-                    ? {
-                        width: takeWebcamFrame.displayWidth || takeWebcamFrame.codedWidth,
-                        height: takeWebcamFrame.displayHeight || takeWebcamFrame.codedHeight,
-                      }
-                    : undefined,
-                  exportSettings.quality,
-                  floatingMonitorFrames,
-                )
-                // VideoFrameProvider owns its cached last/next frames. Closing a
-                // returned frame here makes the next take frame intermittently
-                // draw a closed screen or webcam frame.
+                try {
+                  await drawScene(
+                    takeContext,
+                    takeState,
+                    takeFrame,
+                    takeWebcamFrame,
+                    sourceTimestamp,
+                    outputWidth,
+                    outputHeight,
+                    bgImage,
+                    takeWebcamFrame
+                      ? {
+                          width: takeWebcamFrame.displayWidth || takeWebcamFrame.codedWidth,
+                          height: takeWebcamFrame.displayHeight || takeWebcamFrame.codedHeight,
+                        }
+                      : undefined,
+                    exportSettings.quality,
+                    floatingMonitorFrames,
+                  )
+                } finally {
+                  takeFrame.close()
+                  takeWebcamFrame?.close()
+                }
                 return takeCanvas
               }
               const primaryCanvas = await renderTakeSource(takeMapping.primary)
@@ -1377,8 +1382,11 @@ export function RendererPage() {
                 floatingMonitorFrames,
               )
             }
-            // Floating monitor providers use the same cached-frame ownership as
-            // take providers. They are released together in the export cleanup.
+            mainFrame?.close()
+            webcamFrame?.close()
+            Object.values(floatingMonitorFrames).forEach(({ source }) => {
+              if (source instanceof VideoFrame) source.close()
+            })
             perfStats.drawMs += performance.now() - drawStartedAt
 
             if (videoEncoder) {
