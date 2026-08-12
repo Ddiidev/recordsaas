@@ -43,6 +43,7 @@ Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
 - Commits:
   - `b64d5b2` - `chore: checkpoint pending RecordSaaS work` - base da instrumentacao.
   - `6aedef6` - `fix(export): isolate decoded frames per source` - contexto do ownership de frames.
+  - `2ea1924` - `perf: reuse take decoders during export` - otimizacao comparada nesta QA.
 - Push/PR: nao realizado.
 
 ## Validacao
