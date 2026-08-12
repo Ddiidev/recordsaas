@@ -25,12 +25,18 @@ import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from 
 import { normalizeMediaPath } from '../lib/media-url'
 import { createExportProgressWindow } from '../windows/temporary-windows'
 import { authorizeDesktopExport, type ExportSelectionRequest } from './auth-manager'
+import { audioVolumeSettingToGain, MAX_AMPLIFIED_AUDIO_GAIN } from '../../../src/lib/audio-volume'
 
 const FFMPEG_PATH = getFFmpegPath()
 const EXPORT_PROGRESS_INTERVAL_MS = 300
 const EXPORT_PROGRESS_STEP_PERCENT = 2
 const MAX_SUPPORTED_EXPORT_FPS = 60
-const MAX_AUDIO_VOLUME = 1.5
+// Compress boosted material gently before the lookahead limiter so +24 dB does not flatten every transient.
+const AUDIO_PRE_LIMITER_FILTER =
+  'acompressor=threshold=0.25:ratio=8:attack=5:release=250:makeup=1:knee=6:detection=peak:link=maximum:mix=0.5'
+// Keep 5 dB of pre-encode headroom because AAC can create inter-sample peaks above the sample limiter ceiling.
+const AUDIO_LIMITER_FILTER = 'alimiter=limit=0.562341:attack=10:release=250:level=false:latency=true'
+const AUDIO_PEAK_PROTECTION_FILTER = `${AUDIO_PRE_LIMITER_FILTER},${AUDIO_LIMITER_FILTER}`
 const POSIX_PRIORITY_CANDIDATES = [-10, -5]
 const WINDOWS_PRIORITY_CANDIDATES = [osConstants.priority.PRIORITY_HIGH, osConstants.priority.PRIORITY_ABOVE_NORMAL]
 const WINDOWS_NORMAL_PRIORITY = osConstants.priority.PRIORITY_NORMAL
@@ -512,13 +518,6 @@ const buildChangeSoundExportAudioSegments = (
     }
 
     const regionLocalStart = Math.max(0, segment.start - activeRegion.startTime)
-    const safeDuration = Math.max(0.001, activeRegion.duration)
-    const timeFromStart = Math.min(regionLocalStart, safeDuration)
-    const timeToEnd = Math.max(0, safeDuration - timeFromStart)
-    const fadeInGain =
-      activeRegion.fadeInDuration > 0 ? Math.max(0, Math.min(1, timeFromStart / activeRegion.fadeInDuration)) : 1
-    const fadeOutGain =
-      activeRegion.fadeOutDuration > 0 ? Math.max(0, Math.min(1, timeToEnd / activeRegion.fadeOutDuration)) : 1
     const baseGain = activeRegion.isMuted ? 0 : Math.max(0, Math.min(1, activeRegion.volume))
 
     pushExportSegment(outputSegments, {
@@ -526,7 +525,11 @@ const buildChangeSoundExportAudioSegments = (
       sourceStart: segment.start,
       sourceDuration: segment.duration,
       speed: segment.speed,
-      volumeMultiplier: Math.max(0, Math.min(1, baseGain * Math.min(fadeInGain, fadeOutGain))),
+      volumeMultiplier: baseGain,
+      fadeInDuration: activeRegion.fadeInDuration,
+      fadeOutDuration: activeRegion.fadeOutDuration,
+      regionDuration: activeRegion.duration,
+      regionLocalStart,
     })
   })
 
@@ -598,14 +601,14 @@ const buildFadeVolumeFilter = (segment: ExportAudioSegment): string | null => {
 
   const baseVolume =
     typeof segment.volumeMultiplier === 'number' && Number.isFinite(segment.volumeMultiplier)
-      ? Math.max(0, Math.min(MAX_AUDIO_VOLUME, segment.volumeMultiplier))
+      ? Math.max(0, Math.min(MAX_AMPLIFIED_AUDIO_GAIN, segment.volumeMultiplier))
       : 1
   const fadeInDuration = segment.fadeInDuration ?? 0
   const fadeOutDuration = segment.fadeOutDuration ?? 0
   const regionDuration = segment.regionDuration ?? 0
   const regionLocalStart = segment.regionLocalStart ?? 0
   if (fadeInDuration <= 0 && fadeOutDuration <= 0) {
-    return baseVolume < 0.999 ? `volume='${baseVolume.toFixed(6)}'` : null
+    return Math.abs(baseVolume - 1) >= 0.001 ? `volume='${baseVolume.toFixed(6)}'` : null
   }
 
   const speed = segment.speed > 0 ? segment.speed : 1
@@ -659,11 +662,12 @@ const renderProcessedAudioFile = async (
   sourcePath: string,
   segments: ExportAudioSegment[],
   runFFmpeg: RunFFmpeg,
+  limitPeaks = false,
 ): Promise<string | null> => {
   if (segments.length === 0) return null
 
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-'))
-  const finalOut = path.join(tmpDir, 'processed.m4a')
+  const finalOut = path.join(tmpDir, 'processed.flac')
 
   try {
     const filterScriptPath = path.join(tmpDir, 'audio-filter.txt')
@@ -674,24 +678,13 @@ const renderProcessedAudioFile = async (
       )
       return buildAudioFilterChain(segment, '[0:a]', segmentLabels[index])
     })
-    filterLines.push(`${segmentLabels.map((label) => `[${label}]`).join('')}concat=n=${segments.length}:v=0:a=1[aout]`)
+    filterLines.push(
+      `${segmentLabels.map((label) => `[${label}]`).join('')}concat=n=${segments.length}:v=0:a=1${limitPeaks ? `,${AUDIO_PEAK_PROTECTION_FILTER}` : ''}[aout]`,
+    )
     fs.writeFileSync(filterScriptPath, filterLines.join(';\n'), 'utf-8')
 
     await runFFmpeg(
-      [
-        '-y',
-        '-i',
-        sourcePath,
-        '-filter_complex_script',
-        filterScriptPath,
-        '-map',
-        '[aout]',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '192k',
-        finalOut,
-      ],
+      ['-y', '-i', sourcePath, '-filter_complex_script', filterScriptPath, '-map', '[aout]', '-c:a', 'flac', finalOut],
       `audio-process:${escapeFilterValue(path.basename(sourcePath))}`,
     )
 
@@ -720,7 +713,7 @@ const applyAudioSyncOffset = async (
   if (Math.abs(sourceTimeOffsetMs) < 1) return sourcePath
 
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-sync-'))
-  const outPath = path.join(tmpDir, 'sync.m4a')
+  const outPath = path.join(tmpDir, 'sync.flac')
   const offsetMs = Math.round(Math.abs(sourceTimeOffsetMs))
 
   try {
@@ -730,7 +723,7 @@ const applyAudioSyncOffset = async (
         : `adelay=${offsetMs}:all=1,apad=whole_dur=${totalDurationSec.toFixed(6)}`
 
     await runFFmpeg(
-      ['-y', '-i', sourcePath, '-af', filter, '-c:a', 'aac', '-b:a', '192k', outPath],
+      ['-y', '-i', sourcePath, '-af', filter, '-c:a', 'flac', outPath],
       `audio-sync:${Math.round(sourceTimeOffsetMs)}ms`,
     )
 
@@ -746,21 +739,19 @@ const applyAudioSyncOffset = async (
   }
 }
 
-const mixAudioTracks = async (
-  recordingTrackPath: string,
-  mediaTrackPath: string,
-  runFFmpeg: RunFFmpeg,
-): Promise<string | null> => {
+const mixAudioTracks = async (trackPaths: string[], runFFmpeg: RunFFmpeg): Promise<string | null> => {
+  if (trackPaths.length === 0) return null
+  if (trackPaths.length === 1) return trackPaths[0]
+
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-audio-mix-'))
   const outPath = path.join(tmpDir, 'mixed.m4a')
   const args = [
     '-y',
-    '-i',
-    recordingTrackPath,
-    '-i',
-    mediaTrackPath,
+    ...trackPaths.flatMap((trackPath) => ['-i', trackPath]),
     '-filter_complex',
-    'amix=inputs=2:dropout_transition=0',
+    `${trackPaths.map((_, index) => `[${index}:a]`).join('')}amix=inputs=${trackPaths.length}:normalize=0:dropout_transition=0,${AUDIO_LIMITER_FILTER}[aout]`,
+    '-map',
+    '[aout]',
     '-c:a',
     'aac',
     '-b:a',
@@ -772,7 +763,7 @@ const mixAudioTracks = async (
     await runFFmpeg(args, 'audio-mix')
     return outPath
   } catch (error) {
-    log.error('[ExportManager] Failed to mix recording/media tracks:', error)
+    log.error('[ExportManager] Failed to mix audio tracks:', error)
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true })
     } catch {
@@ -848,7 +839,7 @@ const renderTakeAudioComposition = async (
 ): Promise<string | null> => {
   if (parts.length === 0 || duration <= 0) return null
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'recordsaas-take-audio-'))
-  const outPath = path.join(tmpDir, 'take-composition.m4a')
+  const outPath = path.join(tmpDir, 'take-composition.flac')
   const inputIndexes = new Map<string, number>()
   const inputPaths: string[] = []
   for (const part of parts) {
@@ -886,9 +877,7 @@ const renderTakeAudioComposition = async (
         '-map',
         '[aout]',
         '-c:a',
-        'aac',
-        '-b:a',
-        '192k',
+        'flac',
         outPath,
       ],
       label,
@@ -960,7 +949,6 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   let cancellationHandler: () => void = () => {}
   let renderReadyListener: (() => void) | null = null
   let ffmpeg: ChildProcessWithoutNullStreams | null = null
-  let cleanupProcessedAudio: () => void = () => {}
   let cleanupListeners: () => void = () => {
     ipcMain.removeListener('export:cancel', cancellationHandler)
     if (renderReadyListener) {
@@ -969,6 +957,16 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     }
   }
   const processedAudioTempRoots = new Set<string>()
+  const cleanupProcessedAudio = () => {
+    try {
+      processedAudioTempRoots.forEach((tmpDir) => {
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
+      })
+      processedAudioTempRoots.clear()
+    } catch (err) {
+      log.error('[ExportManager] Failed to cleanup processed audio temp:', err)
+    }
+  }
   const auxiliaryFFmpegProcesses = new Set<ChildProcessWithoutNullStreams>()
 
   const safeExportSettings = exportSettings && typeof exportSettings === 'object' ? exportSettings : {}
@@ -1619,16 +1617,24 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     sendProgressUpdate(2, 'Preparing audio...', true, 'audio-prep')
     let recordingPath = normalizeMediaPath(projectStateRecord.audioPath)
     let systemAudioPath = normalizeMediaPath(projectStateRecord.systemAudioPath)
-    const recordingVolume =
-      typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume)
-        ? Math.max(0, Math.min(projectStateRecord.recordingVolume, MAX_AUDIO_VOLUME))
-        : 1
-    const recordingMuted = projectStateRecord.recordingMuted === true || recordingVolume <= 0
-    const systemAudioVolume =
+    const recordingVolumeSetting =
+      typeof projectStateRecord.volume === 'number' && Number.isFinite(projectStateRecord.volume)
+        ? projectStateRecord.volume
+        : typeof projectStateRecord.recordingVolume === 'number' && Number.isFinite(projectStateRecord.recordingVolume)
+          ? projectStateRecord.recordingVolume
+          : 1
+    const recordingGain = audioVolumeSettingToGain(recordingVolumeSetting)
+    const recordingMutedSetting =
+      typeof projectStateRecord.isMuted === 'boolean'
+        ? projectStateRecord.isMuted
+        : projectStateRecord.recordingMuted === true
+    const recordingMuted = recordingMutedSetting || recordingGain <= 0
+    const systemAudioVolumeSetting =
       typeof projectStateRecord.systemAudioVolume === 'number' && Number.isFinite(projectStateRecord.systemAudioVolume)
-        ? Math.max(0, Math.min(projectStateRecord.systemAudioVolume, MAX_AUDIO_VOLUME))
+        ? projectStateRecord.systemAudioVolume
         : 1
-    const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioVolume <= 0
+    const systemAudioGain = audioVolumeSettingToGain(systemAudioVolumeSetting)
+    const systemAudioMuted = projectStateRecord.systemAudioMuted === true || systemAudioGain <= 0
     const recordingSyncOffsetMs =
       typeof projectStateRecord.recordingSyncOffsetMs === 'number' &&
       Number.isFinite(projectStateRecord.recordingSyncOffsetMs)
@@ -1801,14 +1807,14 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       Math.abs(recordingTimelineSegments[0].start) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].duration - duration) < 0.001 &&
       Math.abs(recordingTimelineSegments[0].speed - 1) < 0.01 &&
-      Math.abs(recordingVolume - 1) < 0.001 &&
+      Math.abs(recordingGain - 1) < 0.001 &&
       recordingChangeSoundRegions.length === 0
     const systemAudioHasNoTransform =
       systemAudioTimelineSegments.length === 1 &&
       Math.abs(systemAudioTimelineSegments[0].start) < 0.001 &&
       Math.abs(systemAudioTimelineSegments[0].duration - duration) < 0.001 &&
       Math.abs(systemAudioTimelineSegments[0].speed - 1) < 0.01 &&
-      Math.abs(systemAudioVolume - 1) < 0.001 &&
+      Math.abs(systemAudioGain - 1) < 0.001 &&
       !systemAudioMuted &&
       systemChangeSoundRegions.length === 0
 
@@ -1823,7 +1829,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         timelineLanes,
       ).map((segment) => ({
         ...segment,
-        volumeMultiplier: Math.max(0, Math.min(MAX_AUDIO_VOLUME, (segment.volumeMultiplier ?? 1) * recordingVolume)),
+        volumeMultiplier: Math.max(
+          0,
+          Math.min(MAX_AMPLIFIED_AUDIO_GAIN, (segment.volumeMultiplier ?? 1) * recordingGain),
+        ),
       }))
       if (recordingSegments.length > 0) {
         if (recordingHasNoTransform && !takeModeEnabled) {
@@ -1834,6 +1843,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
             recordingPath,
             recordingSegments,
             runAuxiliaryFFmpeg,
+            recordingGain > 1.001,
           )
           if (!processedRecordingPath) {
             throw new Error('Failed to process recording audio track')
@@ -1864,7 +1874,10 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
         timelineLanes,
       ).map((segment) => ({
         ...segment,
-        volumeMultiplier: Math.max(0, Math.min(MAX_AUDIO_VOLUME, (segment.volumeMultiplier ?? 1) * systemAudioVolume)),
+        volumeMultiplier: Math.max(
+          0,
+          Math.min(MAX_AMPLIFIED_AUDIO_GAIN, (segment.volumeMultiplier ?? 1) * systemAudioGain),
+        ),
       }))
       if (systemSegments.length > 0) {
         if (systemAudioHasNoTransform && !takeModeEnabled) {
@@ -1875,6 +1888,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
             systemAudioPath,
             systemSegments,
             runAuxiliaryFFmpeg,
+            systemAudioGain > 1.001,
           )
           if (!processedSystemPath) {
             throw new Error('Failed to process computer audio track')
@@ -1914,15 +1928,11 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
       (trackPath): trackPath is string => Boolean(trackPath),
     )
     if (audioTracksToMix.length > 1) {
-      let mixedTrackPath = audioTracksToMix[0]
-      for (const nextTrackPath of audioTracksToMix.slice(1)) {
-        const nextMixedTrackPath = await mixAudioTracks(mixedTrackPath, nextTrackPath, runAuxiliaryFFmpeg)
-        if (!nextMixedTrackPath) {
-          throw new Error('Failed to mix export audio tracks')
-        }
-        mixedTrackPath = nextMixedTrackPath
-        processedAudioTempRoots.add(path.dirname(mixedTrackPath))
+      const mixedTrackPath = await mixAudioTracks(audioTracksToMix, runAuxiliaryFFmpeg)
+      if (!mixedTrackPath) {
+        throw new Error('Failed to mix export audio tracks')
       }
+      processedAudioTempRoots.add(path.dirname(mixedTrackPath))
       resolvedAudioInputPath = mixedTrackPath
     } else {
       resolvedAudioInputPath = audioTracksToMix[0] || null
@@ -1950,7 +1960,9 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     // If audio present
     if (resolvedAudioInputPath) {
       // Use input #1 (audio) which is either processed or original
-      const audioCodecArgs = canCopyAudioForMp4(resolvedAudioInputPath) ? ['-c:a', 'copy'] : ['-c:a', 'aac']
+      const audioCodecArgs = canCopyAudioForMp4(resolvedAudioInputPath)
+        ? ['-c:a', 'copy']
+        : ['-c:a', 'aac', '-b:a', '192k']
       log.info('[ExportManager] Using audio stream mode for final mux.', {
         audioInput: resolvedAudioInputPath,
         codecArgs: audioCodecArgs.join(' '),
@@ -1971,17 +1983,6 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   }
 
   activeFFmpeg.stderr.on('data', (data) => log.info(`[FFmpeg stderr]: ${data.toString()}`))
-
-  cleanupProcessedAudio = () => {
-    try {
-      processedAudioTempRoots.forEach((tmpDir) => {
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true })
-      })
-      processedAudioTempRoots.clear()
-    } catch (err) {
-      log.error('[ExportManager] Failed to cleanup processed audio temp:', err)
-    }
-  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const frameListener = (_e: any, { frame, progress }: { frame: Buffer; progress: number }) => {

@@ -109,6 +109,8 @@ export const useExportProcess = () => {
       syncOffset: fullState.syncOffset,
       audioPath: fullState.audioPath,
       audioUrl: fullState.audioUrl,
+      volume: fullState.volume,
+      isMuted: fullState.isMuted,
       systemAudioPath: fullState.systemAudioPath,
       systemAudioVolume: fullState.systemAudioVolume,
       systemAudioMuted: fullState.systemAudioMuted,

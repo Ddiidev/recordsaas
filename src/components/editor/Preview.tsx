@@ -13,7 +13,8 @@ import {
 } from '@icons'
 import { useShallow } from 'zustand/react/shallow'
 import { formatTime } from '../../lib/utils'
-import { DEFAULTS } from '../../lib/constants'
+import { audioVolumeSettingToGain } from '../../lib/audio-volume'
+import { resumePreviewAudioContextFor, setPreviewAudioVolume } from '../../lib/preview-audio'
 import { calcRealDuration } from '../../lib/real-duration'
 import { Slider } from '../ui/slider'
 import { Button } from '../ui/button'
@@ -57,37 +58,6 @@ type PendingMediaSeek = {
 
 const pendingMediaSeekTargets = new WeakMap<HTMLMediaElement, PendingMediaSeek>()
 const mediaSeekListenerAttached = new WeakSet<HTMLMediaElement>()
-const previewAudioGainNodes = new WeakMap<HTMLMediaElement, GainNode>()
-let previewAudioContext: AudioContext | null = null
-
-const setPreviewAudioVolume = (element: HTMLMediaElement, requestedVolume: number) => {
-  const volume = Math.max(0, Math.min(DEFAULTS.AUDIO.VOLUME.max, requestedVolume))
-  element.volume = Math.min(1, volume)
-
-  if (volume <= 1 || typeof window === 'undefined') {
-    const gainNode = previewAudioGainNodes.get(element)
-    if (gainNode) gainNode.gain.value = 1
-    return
-  }
-
-  try {
-    if (!previewAudioContext) {
-      previewAudioContext = new AudioContext()
-    }
-    let gainNode = previewAudioGainNodes.get(element)
-    if (!gainNode) {
-      const source = previewAudioContext.createMediaElementSource(element)
-      gainNode = previewAudioContext.createGain()
-      source.connect(gainNode)
-      gainNode.connect(previewAudioContext.destination)
-      previewAudioGainNodes.set(element, gainNode)
-    }
-    gainNode.gain.value = volume
-    if (previewAudioContext.state === 'suspended') void previewAudioContext.resume()
-  } catch {
-    // Keep native playback available if Web Audio cannot attach to the element.
-  }
-}
 
 const queueMediaSeek = (element: HTMLMediaElement, targetTime: number, maxDrift: number) => {
   if (element.readyState === HTMLMediaElement.HAVE_NOTHING) return
@@ -179,6 +149,7 @@ const syncResolvedAudioElement = (
   shouldPlay: boolean,
   maxDrift: number,
   timeOffsetSec = 0,
+  limitPeaks = false,
 ) => {
   if (!element) return
 
@@ -192,7 +163,7 @@ const syncResolvedAudioElement = (
   if (element.readyState > 0 && Math.abs(element.currentTime - targetTime) > maxDrift) {
     queueMediaSeek(element, targetTime, maxDrift)
   }
-  setPreviewAudioVolume(element, nextVolume)
+  setPreviewAudioVolume(element, nextVolume, limitPeaks)
   element.playbackRate = playbackRate
 
   requestMediaPlayback(element, shouldPlay)
@@ -224,6 +195,7 @@ const requestMediaPlayback = (element: HTMLMediaElement | null, shouldPlay: bool
     element.pause()
     return
   }
+  resumePreviewAudioContextFor(element)
   if (!element.paused || pendingMediaPlayRequests.has(element)) return
 
   pendingMediaPlayRequests.add(element)
@@ -445,6 +417,7 @@ export const Preview = memo(
     const [controlBarWidth, setControlBarWidth] = useState(0)
     const [previewStageSize, setPreviewStageSize] = useState({ width: 0, height: 0 })
     const hasSeparateAudioTracks = !!audioUrl || !!systemAudioUrl || !!mediaAudioClip?.url
+    const shouldLimitPreviewAudio = (!isMuted && volume > 1) || (!systemAudioMuted && systemAudioVolume > 1)
     const previewRaster = useMemo(() => {
       const canonicalWidth = Math.max(1, canvasDimensions.width)
       const canonicalHeight = Math.max(1, canvasDimensions.height)
@@ -559,21 +532,23 @@ export const Preview = memo(
         syncResolvedAudioElement(
           recordingAudio,
           resolvedRecording,
-          volume * resolvedRecording.volumeMultiplier,
+          audioVolumeSettingToGain(volume) * resolvedRecording.volumeMultiplier,
           video?.playbackRate ?? 1,
           resumePlayback,
           audioMaxDrift,
           captureSourceOffsetSeconds('recording') + recordingSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
         syncResolvedAudioElement(
           systemAudio,
           resolvedSystemAudio,
-          systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+          audioVolumeSettingToGain(systemAudioVolume) * resolvedSystemAudio.volumeMultiplier,
           video?.playbackRate ?? 1,
           resumePlayback,
           audioMaxDrift,
           captureSourceOffsetSeconds('systemAudio') + systemAudioSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
 
         const resolvedMedia = resolveMediaForTime(playbackTime)
@@ -584,6 +559,8 @@ export const Preview = memo(
           video?.playbackRate ?? 1,
           resumePlayback,
           audioMaxDrift,
+          0,
+          shouldLimitPreviewAudio,
         )
 
         const activeInstances = collectFloatingMonitorSourceInstances(
@@ -610,6 +587,7 @@ export const Preview = memo(
         resolveRecordingForTime,
         resolveSystemAudioForTime,
         systemAudioVolume,
+        shouldLimitPreviewAudio,
         videoRef,
         volume,
         recordingSyncOffsetMs,
@@ -665,7 +643,13 @@ export const Preview = memo(
           const embeddedAudioActive =
             source.take.source.kind === 'imported-video' && source.take.audioMode === 'source' && !source.take.isMuted
           element.muted = !embeddedAudioActive
-          element.volume = embeddedAudioActive ? Math.max(0, Math.min(1, source.take.volume * source.weight)) : 0
+          if (source.take.source.kind === 'imported-video') {
+            setPreviewAudioVolume(
+              element,
+              embeddedAudioActive ? source.take.volume * source.weight : 0,
+              shouldLimitPreviewAudio,
+            )
+          }
           requestMediaPlayback(element, resumePlayback)
         })
         if (webcamVideo && webcamSource?.take.source.kind === 'recording-screen') {
@@ -699,21 +683,23 @@ export const Preview = memo(
             isActive: sessionEnabled && resolvedRecording.isActive,
             sourceTime: sessionAudioTime,
           },
-          volume * resolvedRecording.volumeMultiplier * sessionGain,
+          audioVolumeSettingToGain(volume) * resolvedRecording.volumeMultiplier * sessionGain,
           1,
           resumePlayback && sessionEnabled,
           AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
           captureSourceOffsetSeconds('recording') + recordingSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
         const resolvedSystem = resolveSystemAudioForTime(compositionTime)
         syncResolvedAudioElement(
           systemAudioRef.current,
           { ...resolvedSystem, isActive: sessionEnabled && resolvedSystem.isActive, sourceTime: sessionAudioTime },
-          systemAudioVolume * resolvedSystem.volumeMultiplier * sessionGain,
+          audioVolumeSettingToGain(systemAudioVolume) * resolvedSystem.volumeMultiplier * sessionGain,
           1,
           resumePlayback && sessionEnabled,
           AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
           captureSourceOffsetSeconds('systemAudio') + systemAudioSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
         const resolvedMedia = resolveMediaForTime(compositionTime)
         syncResolvedAudioElement(
@@ -723,6 +709,8 @@ export const Preview = memo(
           1,
           resumePlayback,
           AUDIO_PLAYBACK_RESYNC_DRIFT_SECS,
+          0,
+          shouldLimitPreviewAudio,
         )
 
         const activeInstances = collectFloatingMonitorSourceInstances(
@@ -750,6 +738,7 @@ export const Preview = memo(
         resolveMediaForTime,
         resolveRecordingForTime,
         resolveSystemAudioForTime,
+        shouldLimitPreviewAudio,
         systemAudioSyncOffsetMs,
         systemAudioVolume,
         toScreenSourceTime,
@@ -1293,26 +1282,34 @@ export const Preview = memo(
           video.muted = true
         } else {
           // No separate audio, use video's own audio
-          setPreviewAudioVolume(video, volume)
+          setPreviewAudioVolume(video, audioVolumeSettingToGain(volume), shouldLimitPreviewAudio)
           video.muted = isMuted
         }
       }
       if (recordingAudio) {
         const playbackTime = takeModeEnabled ? currentTime : toTimelineTime(video?.currentTime ?? currentTime)
         const resolvedRecording = resolveRecordingForTime(playbackTime)
-        setPreviewAudioVolume(recordingAudio, volume * resolvedRecording.volumeMultiplier)
+        setPreviewAudioVolume(
+          recordingAudio,
+          audioVolumeSettingToGain(volume) * resolvedRecording.volumeMultiplier,
+          shouldLimitPreviewAudio,
+        )
         recordingAudio.muted = isMuted
       }
       if (systemAudio) {
         const playbackTime = takeModeEnabled ? currentTime : toTimelineTime(video?.currentTime ?? currentTime)
         const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
-        setPreviewAudioVolume(systemAudio, systemAudioVolume * resolvedSystemAudio.volumeMultiplier)
+        setPreviewAudioVolume(
+          systemAudio,
+          audioVolumeSettingToGain(systemAudioVolume) * resolvedSystemAudio.volumeMultiplier,
+          shouldLimitPreviewAudio,
+        )
         systemAudio.muted = systemAudioMuted
       }
       if (mediaAudio) {
         const playbackTime = takeModeEnabled ? currentTime : toTimelineTime(video?.currentTime ?? currentTime)
         const resolvedMedia = resolveMediaForTime(playbackTime)
-        setPreviewAudioVolume(mediaAudio, resolvedMedia.volumeMultiplier)
+        setPreviewAudioVolume(mediaAudio, resolvedMedia.volumeMultiplier, shouldLimitPreviewAudio)
         mediaAudio.muted = false
       }
     }, [
@@ -1325,6 +1322,7 @@ export const Preview = memo(
       resolveMediaForTime,
       systemAudioVolume,
       systemAudioMuted,
+      shouldLimitPreviewAudio,
       takeModeEnabled,
       currentTime,
       toTimelineTime,
@@ -1380,21 +1378,23 @@ export const Preview = memo(
       syncResolvedAudioElement(
         recordingAudio,
         resolvedRecording,
-        volume * resolvedRecording.volumeMultiplier,
+        audioVolumeSettingToGain(volume) * resolvedRecording.volumeMultiplier,
         video.playbackRate,
         shouldPlayAudio,
         0.1,
         captureSourceOffsetSeconds('recording') + recordingSyncOffsetMs / 1000,
+        shouldLimitPreviewAudio,
       )
       const resolvedSystemAudio = resolveSystemAudioForTime(playbackTime)
       syncResolvedAudioElement(
         systemAudio,
         resolvedSystemAudio,
-        systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+        audioVolumeSettingToGain(systemAudioVolume) * resolvedSystemAudio.volumeMultiplier,
         video.playbackRate,
         shouldPlayAudio,
         0.1,
         captureSourceOffsetSeconds('systemAudio') + systemAudioSyncOffsetMs / 1000,
+        shouldLimitPreviewAudio,
       )
       const resolvedMedia = resolveMediaForTime(playbackTime)
       syncResolvedAudioElement(
@@ -1404,6 +1404,8 @@ export const Preview = memo(
         video.playbackRate,
         shouldPlayAudio,
         0.1,
+        0,
+        shouldLimitPreviewAudio,
       )
 
       if (isPlaying) {
@@ -1502,14 +1504,23 @@ export const Preview = memo(
         syncResolvedAudioElement(
           recordingAudio,
           resolvedRecording,
-          volume * resolvedRecording.volumeMultiplier,
+          audioVolumeSettingToGain(volume) * resolvedRecording.volumeMultiplier,
           video.playbackRate,
           !video.paused,
           0,
           captureSourceOffsetSeconds('recording') + recordingSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
       }
-    }, [captureSourceOffsetSeconds, resolveRecordingForTime, toTimelineTime, videoRef, volume, recordingSyncOffsetMs])
+    }, [
+      captureSourceOffsetSeconds,
+      recordingSyncOffsetMs,
+      resolveRecordingForTime,
+      shouldLimitPreviewAudio,
+      toTimelineTime,
+      videoRef,
+      volume,
+    ])
 
     const handleSystemAudioLoadedMetadata = useCallback(() => {
       const video = videoRef.current
@@ -1523,11 +1534,12 @@ export const Preview = memo(
         syncResolvedAudioElement(
           systemAudio,
           resolvedSystemAudio,
-          systemAudioVolume * resolvedSystemAudio.volumeMultiplier,
+          audioVolumeSettingToGain(systemAudioVolume) * resolvedSystemAudio.volumeMultiplier,
           video.playbackRate,
           !video.paused,
           0,
           captureSourceOffsetSeconds('systemAudio') + systemAudioSyncOffsetMs / 1000,
+          shouldLimitPreviewAudio,
         )
       }
     }, [
@@ -1538,6 +1550,7 @@ export const Preview = memo(
       systemAudioVolume,
       systemAudioMuted,
       systemAudioSyncOffsetMs,
+      shouldLimitPreviewAudio,
     ])
 
     const handleMediaAudioLoadedMetadata = useCallback(() => {
@@ -1558,9 +1571,11 @@ export const Preview = memo(
           video.playbackRate,
           !video.paused,
           0,
+          0,
+          shouldLimitPreviewAudio,
         )
       }
-    }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, toTimelineTime, videoRef])
+    }, [mediaAudioClip, resolveMediaForTime, setMediaAudioDuration, shouldLimitPreviewAudio, toTimelineTime, videoRef])
 
     const handleVideoPlay = useCallback(() => {
       if (takeModeEnabled) return
@@ -1784,6 +1799,7 @@ export const Preview = memo(
         ) : (
           <video
             ref={videoRef}
+            crossOrigin="anonymous"
             src={videoUrl || undefined}
             onTimeUpdate={handleTimeUpdate}
             onSeeking={handleVideoSeeking}
@@ -1799,6 +1815,7 @@ export const Preview = memo(
         {audioUrl && (
           <audio
             ref={recordingAudioRef}
+            crossOrigin="anonymous"
             src={audioUrl}
             onLoadedMetadata={handleRecordingAudioLoadedMetadata}
             onError={handleRecordingAudioError}
@@ -1808,6 +1825,7 @@ export const Preview = memo(
         {systemAudioUrl && (
           <audio
             ref={systemAudioRef}
+            crossOrigin="anonymous"
             src={systemAudioUrl}
             onLoadedMetadata={handleSystemAudioLoadedMetadata}
             onError={handleSystemAudioError}
@@ -1817,6 +1835,7 @@ export const Preview = memo(
         {mediaAudioClip?.url && (
           <audio
             ref={mediaAudioRef}
+            crossOrigin="anonymous"
             src={mediaAudioClip.url}
             onLoadedMetadata={handleMediaAudioLoadedMetadata}
             onError={handleMediaAudioError}
@@ -1842,6 +1861,7 @@ export const Preview = memo(
               if (element) takeVideoRefs.current.set(takeId, element)
               else takeVideoRefs.current.delete(takeId)
             }}
+            crossOrigin="anonymous"
             src={monitor.url}
             muted
             playsInline

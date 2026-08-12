@@ -14,6 +14,7 @@ import { Slider } from '../../ui/slider'
 import { Button } from '../../ui/button'
 import { cn } from '../../../lib/utils'
 import { DEFAULTS } from '../../../lib/constants'
+import { audioVolumeSettingToBoostDb } from '../../../lib/audio-volume'
 
 const SYNC_OFFSET = { min: -2000, max: 2000, step: 10, defaultValue: 0 }
 
@@ -84,6 +85,23 @@ const DisabledPanelPlaceholder = ({
     <p className="text-sm text-muted-foreground mt-1 max-w-xs">{message}</p>
   </div>
 )
+
+const AudioVolumeValue = ({ volume, isMuted }: { volume: number; isMuted: boolean }) => {
+  const effectiveVolume = isMuted ? 0 : volume
+  const boostDb = audioVolumeSettingToBoostDb(effectiveVolume)
+
+  return (
+    <span
+      className={cn(
+        'text-xs font-semibold tabular-nums w-16 flex-shrink-0 text-right leading-4',
+        effectiveVolume > 1 ? 'text-destructive' : 'text-primary',
+      )}
+    >
+      <span className="block">{Math.round(effectiveVolume * 100)}%</span>
+      {boostDb > 0 && <span className="block text-[10px]">+{boostDb.toFixed(1)} dB</span>}
+    </span>
+  )
+}
 
 export function AudioSettings() {
   const {
@@ -193,14 +211,7 @@ export function AudioSettings() {
                         disabled={isMuted}
                       />
                     </div>
-                    <span
-                      className={cn(
-                        'text-xs font-semibold tabular-nums w-10 text-right',
-                        volume > 1 ? 'text-destructive' : 'text-primary',
-                      )}
-                    >
-                      {Math.round((isMuted ? 0 : volume) * 100)}%
-                    </span>
+                    <AudioVolumeValue volume={volume} isMuted={isMuted} />
                   </div>
                   <Button
                     onClick={() => setVolume(DEFAULTS.AUDIO.VOLUME.max)}
@@ -211,7 +222,7 @@ export function AudioSettings() {
                     )}
                   >
                     <MaxVolume className="w-4 h-4 mr-2" />
-                    Set to Max Volume
+                    Boost to +24 dB
                   </Button>
                 </div>
                 <div className="pt-2 border-t border-border/60">
@@ -258,14 +269,7 @@ export function AudioSettings() {
                         disabled={systemAudioMuted}
                       />
                     </div>
-                    <span
-                      className={cn(
-                        'text-xs font-semibold tabular-nums w-10 text-right',
-                        systemAudioVolume > 1 ? 'text-destructive' : 'text-primary',
-                      )}
-                    >
-                      {Math.round((systemAudioMuted ? 0 : systemAudioVolume) * 100)}%
-                    </span>
+                    <AudioVolumeValue volume={systemAudioVolume} isMuted={systemAudioMuted} />
                   </div>
                   <Button
                     onClick={() => updateSystemAudioSettings({ volume: DEFAULTS.AUDIO.VOLUME.max, isMuted: false })}
@@ -276,7 +280,7 @@ export function AudioSettings() {
                     )}
                   >
                     <MaxVolume className="w-4 h-4 mr-2" />
-                    Set to Max Volume
+                    Boost to +24 dB
                   </Button>
                 </div>
                 <div className="pt-2 border-t border-border/60">

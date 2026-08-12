@@ -27,6 +27,7 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       supportFetchAPI: true,
+      corsEnabled: true,
       stream: true,
     },
   },
@@ -136,6 +137,8 @@ const createFileResponse = (request: Request, filePath: string): Response => {
     return new Response(null, {
       status: 416,
       headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
         'Accept-Ranges': 'bytes',
         'Content-Range': `bytes */${fileSize}`,
       },
@@ -151,6 +154,8 @@ const createFileResponse = (request: Request, filePath: string): Response => {
       : (Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>)
 
   const headers: Record<string, string> = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
     'Accept-Ranges': 'bytes',
     'Content-Length': String(contentLength),
     'Content-Type': contentType,
