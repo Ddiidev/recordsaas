@@ -146,7 +146,7 @@ Non-negotiable: token-driven colors; reuse `src/components/ui/*`; light/dark par
 
 Integration points: `handlers/auth.ts`, `ipc/index.ts`, `handlers/shell.ts`. Affected by: token shape, billing/entitlement, URL/env contracts. Treat `recordsaas-api` as external dependency boundary.
 
-Release CI: `.github/workflows/release.yml`. Windows = `windows-2022` (node-gyp@10 VS2022). Semantic-release creates tag first, build matrix uploads to that release. `ensure-binaries.mjs`: direct GitHub download (API fallback). Never `dotnet publish` native helper. Public assets: `RecordSaaSSetup-{mac,linux,windows}-v<version>.{zip,zip,exe}`.
+Release CI: `.github/workflows/release.yml`. Windows = `windows-2022` (node-gyp@10 VS2022) and installs the .NET 11 preview SDK explicitly for the Windows system-audio helper. Semantic-release creates tag first, build matrix uploads to that release. `ensure-binaries.mjs`: direct GitHub download (API fallback). Never `dotnet publish` native helper. Public assets: `RecordSaaSSetup-{mac,linux,windows}-v<version>.{zip,zip,exe}`.
 
 ## 8. Heatmap + Workflow
 

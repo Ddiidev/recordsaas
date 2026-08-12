@@ -91,6 +91,13 @@ jobs:
         if: runner.os == 'Windows'
         run: npm install -g node-gyp
 
+      - name: Setup .NET 11 preview (Windows system-audio helper)
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '11.0.x'
+          dotnet-quality: preview
+
       - name: Install all dependencies
         run: npm ci
 
