@@ -1,3 +1,10 @@
+## [2.7.4](https://github.com/Ddiidev/recordsaas/compare/v2.7.3...v2.7.4) (2026-08-12)
+
+
+### Bug Fixes
+
+* **ci:** validate Windows audio helper without hardware ([d6621f4](https://github.com/Ddiidev/recordsaas/commit/d6621f40c494607baf20286cb9652c2cc55e4507))
+
 ## [2.7.3](https://github.com/Ddiidev/recordsaas/compare/v2.7.2...v2.7.3) (2026-08-12)
 
 
