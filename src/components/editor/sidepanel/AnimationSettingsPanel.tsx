@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useEditorStore } from '../../../store/editorStore'
 import { Route, Wand, Check } from '@icons'
 import { ZOOM, DEFAULTS } from '../../../lib/constants'
@@ -14,12 +14,23 @@ const easingOptions = Object.keys(EASING_MAP)
 
 export function AnimationSettingsPanel() {
   const { applyAnimationSettingsToAll } = useEditorStore.getState()
+  const savedZoomLevel = useEditorStore((state) => {
+    const zoomLevels = Object.values(state.zoomRegions).map((region) => region.zoomLevel)
+    if (zoomLevels.length === 0 || zoomLevels.some((zoomLevel) => zoomLevel !== zoomLevels[0])) {
+      return DEFAULTS.ANIMATION.ZOOM_LEVEL.defaultValue
+    }
+    return zoomLevels[0]
+  })
 
   // Local state
   const [speed, setSpeed] = useState(DEFAULTS.ANIMATION.SPEED.defaultValue)
   const [easing, setEasing] = useState(DEFAULTS.ANIMATION.EASING.defaultValue)
-  const [zoomLevel, setZoomLevel] = useState(DEFAULTS.ANIMATION.ZOOM_LEVEL.defaultValue)
+  const [zoomLevel, setZoomLevel] = useState(savedZoomLevel)
   const [applyStatus, setApplyStatus] = useState<'idle' | 'applied'>('idle')
+
+  useEffect(() => {
+    setZoomLevel(savedZoomLevel)
+  }, [savedZoomLevel])
 
   const handleApplyToAll = () => {
     if (applyStatus !== 'idle') return
