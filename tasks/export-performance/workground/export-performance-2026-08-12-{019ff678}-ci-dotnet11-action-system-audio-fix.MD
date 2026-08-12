@@ -42,8 +42,9 @@ Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
 
 - Branch: `al-branch-1`
 - Base/destino: `origin/main`.
-- `8628a93` - `fix(ci): install .NET 11 preview for system audio helper` - 2026-08-12 - instala o SDK .NET 11 preview no job Windows e protege o contrato no verificador de startup.
-- Push/PR: commit publicado em `origin/al-branch-1`; PR existente pode ser atualizada pela branch.
+- `13ea7c6` - `fix(ci): install .NET 11 preview for system audio helper` - 2026-08-12 - cherry-pick da correção na `main`; instala o SDK .NET 11 preview no job Windows e protege o contrato no verificador de startup.
+- `7d7b556` - `docs(ci): record .NET 11 preview workflow fix` - 2026-08-12 - registra a publicação direta na `main`.
+- Push/PR: publicado diretamente em `origin/main` após o merge da PR anterior.
 
 ## Validacao
 
