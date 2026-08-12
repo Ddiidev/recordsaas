@@ -14,17 +14,25 @@ interface PresetModalProps {
 }
 
 export function PresetModal({ isOpen, onClose }: PresetModalProps) {
-  const { presets, activePresetId, applyPreset, saveCurrentStyleAsPreset, deletePreset, updatePresetName } =
-    useEditorStore(
-      useShallow((state) => ({
-        presets: state.presets,
-        activePresetId: state.activePresetId,
-        applyPreset: state.applyPreset,
-        saveCurrentStyleAsPreset: state.saveCurrentStyleAsPreset,
-        deletePreset: state.deletePreset,
-        updatePresetName: state.updatePresetName,
-      })),
-    )
+  const {
+    presets,
+    activePresetId,
+    assetTimelineEditing,
+    applyPreset,
+    saveCurrentStyleAsPreset,
+    deletePreset,
+    updatePresetName,
+  } = useEditorStore(
+    useShallow((state) => ({
+      presets: state.presets,
+      activePresetId: state.activePresetId,
+      assetTimelineEditing: state.assetTimelineEditing,
+      applyPreset: state.applyPreset,
+      saveCurrentStyleAsPreset: state.saveCurrentStyleAsPreset,
+      deletePreset: state.deletePreset,
+      updatePresetName: state.updatePresetName,
+    })),
+  )
 
   const [previewId, setPreviewId] = useState<string | null>(activePresetId)
   const [newPresetName, setNewPresetName] = useState('')
@@ -126,7 +134,9 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
           )}
           <h2 className="text-xl font-bold text-foreground mb-1">Manage Presets</h2>
           <p className="text-sm text-muted-foreground">
-            Select, create, or delete presets for frame, webcam, blur, and swap defaults.
+            {assetTimelineEditing
+              ? 'Use a preset as a local template. It does not change the preset library or camera.'
+              : 'Select, create, or delete presets for frame, webcam, blur, and swap defaults.'}
           </p>
         </div>
 
@@ -152,7 +162,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
                   <button
                     key={p.id}
                     onClick={() => setPreviewId(p.id)}
-                    onDoubleClick={() => handleDoubleClick(p)}
+                    onDoubleClick={() => !assetTimelineEditing && handleDoubleClick(p)}
                     className={cn(
                       'w-full text-left px-4 py-3 rounded-lg flex items-center justify-between transition-all duration-200',
                       previewId === p.id
@@ -172,6 +182,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
             <div className="pt-4 border-t border-border mt-3 space-y-2">
               <Input
                 value={newPresetName}
+                disabled={!!assetTimelineEditing}
                 onChange={(e) => setNewPresetName(e.target.value)}
                 placeholder="New preset name..."
                 className="h-10"
@@ -182,7 +193,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
               <Button
                 size="sm"
                 onClick={handleSaveNew}
-                disabled={!newPresetName.trim()}
+                disabled={!!assetTimelineEditing || !newPresetName.trim()}
                 className="w-full h-10 font-medium shadow-sm"
               >
                 <Plus className="w-4 h-4 mr-2" /> Save Current Preset
@@ -198,7 +209,7 @@ export function PresetModal({ isOpen, onClose }: PresetModalProps) {
                     {previewPreset.name}
                     {previewPreset.isDefault && <Lock className="w-4 h-4 text-muted-foreground" />}
                   </h3>
-                  {!previewPreset.isDefault && (
+                  {!assetTimelineEditing && !previewPreset.isDefault && (
                     <Button
                       variant="destructive"
                       size="sm"

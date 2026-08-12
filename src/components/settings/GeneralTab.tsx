@@ -28,6 +28,7 @@ export function GeneralTab() {
   const [platform, setPlatform] = useState<NodeJS.Platform | null>(null)
   const [linuxCursorScale, setLinuxCursorScale] = useState<number>(1)
   const [playExportCompletionSound, setPlayExportCompletionSound] = useState(true)
+  const [showRecordingTimer, setShowRecordingTimer] = useState(true)
   const [recordSaaSRootPath, setRecordSaaSRootPath] = useState('')
   const [defaultRecordSaaSRootPath, setDefaultRecordSaaSRootPath] = useState('')
 
@@ -39,6 +40,7 @@ export function GeneralTab() {
         const [
           savedCountdown,
           savedPlayExportCompletionSound,
+          savedShowRecordingTimer,
           currentPlatform,
           savedCursorScale,
           configuredRecordSaaSRootPath,
@@ -46,6 +48,7 @@ export function GeneralTab() {
         ] = await Promise.all([
           window.electronAPI.getSetting<number>('recorder.preparationCountdownSeconds'),
           window.electronAPI.getSetting<boolean>('general.playExportCompletionSound'),
+          window.electronAPI.getSetting<boolean>('recorder.showTimer'),
           window.electronAPI.getPlatform(),
           window.electronAPI.getSetting<number>('recorder.cursorScale'),
           window.electronAPI.getRecordSaaSRootPath(),
@@ -70,6 +73,7 @@ export function GeneralTab() {
           setPlayExportCompletionSound(
             typeof savedPlayExportCompletionSound === 'boolean' ? savedPlayExportCompletionSound : true,
           )
+          setShowRecordingTimer(typeof savedShowRecordingTimer === 'boolean' ? savedShowRecordingTimer : true)
           setRecordSaaSRootPath(configuredRecordSaaSRootPath || defaultRootPath || '')
           setDefaultRecordSaaSRootPath(defaultRootPath || '')
         }
@@ -105,6 +109,11 @@ export function GeneralTab() {
   const handlePlayExportCompletionSoundChange = (checked: boolean) => {
     setPlayExportCompletionSound(checked)
     window.electronAPI.setSetting('general.playExportCompletionSound', checked)
+  }
+
+  const handleShowRecordingTimerChange = (checked: boolean) => {
+    setShowRecordingTimer(checked)
+    window.electronAPI.setSetting('recorder.showTimer', checked)
   }
 
   const persistRecordSaaSRootPath = (pathValue: string) => {
@@ -169,6 +178,14 @@ export function GeneralTab() {
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-border">
+          <div>
+            <h3 className="font-medium text-foreground">Recording Timer</h3>
+            <p className="text-sm text-muted-foreground">Show the floating elapsed-time window while recording.</p>
+          </div>
+          <Switch checked={showRecordingTimer} onCheckedChange={handleShowRecordingTimerChange} />
         </div>
 
         {platform === 'linux' && (

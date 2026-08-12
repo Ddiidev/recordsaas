@@ -412,18 +412,18 @@
   }
 
   .context-menu-panel {
-    @apply absolute min-w-[180px] rounded-lg border border-white/20 bg-neutral-800/60 p-1.5 text-sm font-medium text-neutral-100 shadow-2xl backdrop-blur-2xl;
+    @apply absolute min-w-[180px] rounded-lg border border-border bg-popover/95 p-1.5 text-sm font-medium text-popover-foreground shadow-2xl backdrop-blur-2xl;
     animation: scaleIn 0.1s ease-out;
   }
 
   .context-menu-item {
     @apply relative flex w-full cursor-default select-none items-center rounded-[5px] px-2.5 py-1.5 outline-none transition-colors duration-150;
-    @apply focus:bg-blue-500 focus:text-white data-[disabled]:pointer-events-none data-[disabled]:opacity-50;
-    @apply hover:bg-blue-500 hover:text-white; /* Dành cho tương tác chuột */
+    @apply focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50;
+    @apply hover:bg-accent hover:text-accent-foreground; /* Dành cho tương tác chuột */
   }
 
   .context-menu-divider {
-    @apply -mx-1.5 my-1.5 h-px bg-white/15;
+    @apply -mx-1.5 my-1.5 h-px bg-border;
   }
 }
 
@@ -467,6 +467,7 @@
 
 /* Ocean Blue Dark - Premium Editor Style */
 [data-theme='ocean-blue'].dark {
+  color-scheme: dark;
   --background: hsl(215 16% 16%);
   --foreground: hsl(210 20% 98%);
   --card: hsl(215 16% 18%);
@@ -497,6 +498,13 @@
   --color-picker-input-border: hsl(220 20% 36%);
   --timeline-tick: hsl(210 18% 76%);
   --speed-accent: hsl(154 60% 50%);
+}
+
+[data-theme='ocean-blue'].dark input:not([type='color']),
+[data-theme='ocean-blue'].dark textarea,
+[data-theme='ocean-blue'].dark select {
+  color: var(--foreground);
+  caret-color: var(--foreground);
 }
 
 @theme inline {

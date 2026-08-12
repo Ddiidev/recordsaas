@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, RefObject, MouseEvent as ReactMouseEvent } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useEditorStore } from '../store/editorStore'
 import { TimelineRegion, CutRegion } from '../types'
 import { TIMELINE } from '../lib/constants'
-import { getTopRegionByPredicate } from '../lib/timeline-lanes'
 
 interface UseTimelineInteractionProps {
   timelineRef: RefObject<HTMLDivElement>
@@ -14,6 +14,9 @@ interface UseTimelineInteractionProps {
   defaultLaneId: string
   resolveLaneIdFromClientY: (clientY: number) => string | null
   timelineStartOffsetPx: number
+  onScrubStateChange?: (isScrubbing: boolean) => void
+  onScrubStart?: () => void
+  onScrubEnd?: () => void
 }
 
 type DragMovePreview = {
@@ -51,16 +54,38 @@ export const useTimelineInteraction = ({
   defaultLaneId,
   resolveLaneIdFromClientY,
   timelineStartOffsetPx,
+  onScrubStateChange,
+  onScrubStart,
+  onScrubEnd,
 }: UseTimelineInteractionProps) => {
-  const { addCutRegion, deleteRegion, setPreviewCutRegion, updateRegion, setCurrentTime, setSelectedRegionId } =
-    useEditorStore()
+  const {
+    addCutRegion,
+    deleteRegion,
+    setPreviewCutRegion,
+    updateRegion,
+    setCurrentTime,
+    setPlaying,
+    setSelectedRegionId,
+  } = useEditorStore(
+    useShallow((state) => ({
+      addCutRegion: state.addCutRegion,
+      deleteRegion: state.deleteRegion,
+      setPreviewCutRegion: state.setPreviewCutRegion,
+      updateRegion: state.updateRegion,
+      setCurrentTime: state.setCurrentTime,
+      setPlaying: state.setPlaying,
+      setSelectedRegionId: state.setSelectedRegionId,
+    })),
+  )
   const draggedLaneIdRef = useRef<string | null>(null)
+  const playheadAnimationFrameRef = useRef<number | null>(null)
+  const pendingPlayheadTimeRef = useRef<number | null>(null)
+  const isPlayheadScrubbingRef = useRef(false)
+  const cleanupPlayheadScrubListenersRef = useRef<(() => void) | null>(null)
 
   const [draggingRegion, setDraggingRegion] = useState<DraggingRegionState | null>(null)
   const [activeDropLaneId, setActiveDropLaneId] = useState<string | null>(null)
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false)
-  const [isDraggingLeftStrip, setIsDraggingLeftStrip] = useState(false)
-  const [isDraggingRightStrip, setIsDraggingRightStrip] = useState(false)
   const [isRegionHidden, setIsRegionHidden] = useState(false)
   const [dragMovePreview, setDragMovePreview] = useState<DragMovePreview | null>(null)
 
@@ -69,12 +94,6 @@ export const useTimelineInteraction = ({
       e.stopPropagation()
       setIsRegionHidden(false)
       setSelectedRegionId(region.id)
-
-      if (type === 'resize-left') {
-        updateVideoTime(region.startTime)
-      } else if (type === 'resize-right') {
-        updateVideoTime(region.startTime + region.duration)
-      }
 
       const isTrimRegion = (region as CutRegion).trimType !== undefined
       if (isTrimRegion && type === 'move') {
@@ -92,23 +111,115 @@ export const useTimelineInteraction = ({
         initialX: e.clientX,
         initialStartTime: region.startTime,
         initialDuration: region.duration,
-        initialSourceStart: region.type === 'media-audio' ? region.sourceStart : null,
+        initialSourceStart:
+          region.type === 'media-audio' ||
+          (region.type === 'floating-monitor' &&
+            useEditorStore.getState().floatingMonitors[region.monitorId]?.kind !== 'image')
+            ? region.sourceStart
+            : null,
         initialLaneId,
         isCut: region.type === 'cut',
       })
       setDragMovePreview(null)
     },
-    [setSelectedRegionId, updateVideoTime, defaultLaneId],
+    [setSelectedRegionId, defaultLaneId],
+  )
+
+  const queuePlayheadTime = useCallback(
+    (time: number) => {
+      pendingPlayheadTimeRef.current = time
+      if (playheadAnimationFrameRef.current !== null) return
+
+      playheadAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        playheadAnimationFrameRef.current = null
+        const pendingTime = pendingPlayheadTimeRef.current
+        pendingPlayheadTimeRef.current = null
+        if (pendingTime !== null) updateVideoTime(pendingTime)
+      })
+    },
+    [updateVideoTime],
+  )
+
+  const flushPlayheadTime = useCallback(
+    (time: number) => {
+      if (playheadAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(playheadAnimationFrameRef.current)
+        playheadAnimationFrameRef.current = null
+      }
+      pendingPlayheadTimeRef.current = null
+      updateVideoTime(time)
+    },
+    [updateVideoTime],
+  )
+
+  const finishPlayheadScrub = useCallback(
+    (clientX: number) => {
+      if (!isPlayheadScrubbingRef.current) return
+
+      isPlayheadScrubbingRef.current = false
+      cleanupPlayheadScrubListenersRef.current?.()
+      cleanupPlayheadScrubListenersRef.current = null
+      document.body.style.cursor = 'default'
+
+      const rect = timelineRef.current?.getBoundingClientRect()
+      const finalTime = rect ? pxToTime(Math.max(0, clientX - rect.left - timelineStartOffsetPx)) : null
+      onScrubEnd?.()
+      if (finalTime !== null) flushPlayheadTime(finalTime)
+      setIsDraggingPlayhead(false)
+    },
+    [flushPlayheadTime, onScrubEnd, pxToTime, timelineRef, timelineStartOffsetPx],
+  )
+
+  const startPlayheadScrubListeners = useCallback(() => {
+    cleanupPlayheadScrubListenersRef.current?.()
+    isPlayheadScrubbingRef.current = true
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = timelineRef.current?.getBoundingClientRect()
+      if (!rect) return
+      queuePlayheadTime(pxToTime(Math.max(0, event.clientX - rect.left - timelineStartOffsetPx)))
+    }
+    const handleMouseUp = (event: MouseEvent) => {
+      finishPlayheadScrub(event.clientX)
+    }
+    const cleanup = () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      if (cleanupPlayheadScrubListenersRef.current === cleanup) {
+        cleanupPlayheadScrubListenersRef.current = null
+      }
+    }
+
+    cleanupPlayheadScrubListenersRef.current = cleanup
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }, [finishPlayheadScrub, pxToTime, queuePlayheadTime, timelineRef, timelineStartOffsetPx])
+
+  const handlePlayheadMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.stopPropagation()
+      onScrubStart?.()
+      setPlaying(false)
+      onScrubStateChange?.(true)
+      startPlayheadScrubListeners()
+      setIsDraggingPlayhead(true)
+      document.body.style.cursor = 'ew-resize'
+    },
+    [onScrubStart, onScrubStateChange, setPlaying, startPlayheadScrubListeners],
   )
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingPlayhead && timelineRef.current) {
-        const rect = timelineRef.current.getBoundingClientRect()
-        updateVideoTime(pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx)))
-        return
+    return () => {
+      if (playheadAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(playheadAnimationFrameRef.current)
       }
+      cleanupPlayheadScrubListenersRef.current?.()
+      isPlayheadScrubbingRef.current = false
+    }
+  }, [])
 
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
       if (draggingRegion) {
         const element = regionRefs.current?.get(draggingRegion.id)
         if (!element) return
@@ -287,66 +398,34 @@ export const useTimelineInteraction = ({
           if (intendedDuration < TIMELINE.REGION_DELETE_THRESHOLD) {
             element.style.display = 'none'
             setIsRegionHidden(true)
-            updateVideoTime(draggingRegion.initialStartTime)
           } else {
             const newDuration = Math.min(intendedDuration, maxDuration)
             element.style.display = 'block'
             setIsRegionHidden(false)
             element.style.width = `${timeToPx(newDuration)}px`
-            updateVideoTime(draggingRegion.initialStartTime + newDuration)
           }
         } else if (draggingRegion.type === 'resize-left') {
           const { newStartTime, newDuration } = calcResizeLeft(draggingRegion, deltaTime)
           if (newDuration < TIMELINE.REGION_DELETE_THRESHOLD) {
             element.style.display = 'none'
             setIsRegionHidden(true)
-            updateVideoTime(draggingRegion.initialStartTime + draggingRegion.initialDuration)
           } else {
             element.style.display = 'block'
             setIsRegionHidden(false)
             element.style.width = `${timeToPx(newDuration)}px`
             element.style.transform = `translateX(${timeToPx(newStartTime - draggingRegion.initialStartTime)}px)`
-            updateVideoTime(newStartTime)
           }
         }
-      }
-
-      if ((isDraggingLeftStrip || isDraggingRightStrip) && timelineRef.current) {
-        document.body.style.cursor = 'grabbing'
-        const rect = timelineRef.current.getBoundingClientRect()
-        const timeAtMouse = pxToTime(Math.max(0, e.clientX - rect.left - timelineStartOffsetPx))
-        let newPreview: CutRegion | null = null
-        if (isDraggingLeftStrip) {
-          const duration = Math.min(timeAtMouse, useEditorStore.getState().duration)
-          newPreview = {
-            id: 'preview-cut-left',
-            type: 'cut',
-            laneId: defaultLaneId,
-            startTime: 0,
-            duration,
-            trimType: 'start',
-            zIndex: 0,
-          }
-        } else {
-          const startTime = Math.max(0, timeAtMouse)
-          const duration = useEditorStore.getState().duration - startTime
-          newPreview = {
-            id: 'preview-cut-right',
-            type: 'cut',
-            laneId: defaultLaneId,
-            startTime,
-            duration,
-            trimType: 'end',
-            zIndex: 0,
-          }
-        }
-        setPreviewCutRegion(newPreview.duration >= TIMELINE.MINIMUM_REGION_DURATION ? newPreview : null)
       }
     }
 
     const handleMouseUp = (e: MouseEvent) => {
       document.body.style.cursor = 'default'
-      setIsDraggingPlayhead(false)
+      if (isPlayheadScrubbingRef.current) {
+        finishPlayheadScrub(e.clientX)
+      } else if (isDraggingPlayhead) {
+        setIsDraggingPlayhead(false)
+      }
 
       if (draggingRegion) {
         const element = regionRefs.current?.get(draggingRegion.id)
@@ -454,6 +533,15 @@ export const useTimelineInteraction = ({
                 )
               }
             }
+            if (dragRegion.regionType === 'floating-monitor' && dragRegion.initialSourceStart !== null) {
+              const monitor = state.floatingMonitors[state.floatingMonitorRegions[dragRegion.id]?.monitorId]
+              if (monitor?.kind !== 'image' && monitor?.duration) {
+                maxDuration = Math.min(
+                  maxDuration,
+                  Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - dragRegion.initialSourceStart),
+                )
+              }
+            }
             const intendedDuration = dragRegion.initialDuration + dTime
             return { intendedDuration, maxDuration }
           }
@@ -484,7 +572,10 @@ export const useTimelineInteraction = ({
                 minStartTime = prevObs.startTime + prevObs.duration
               }
             }
-            if (dragRegion.regionType === 'media-audio' && dragRegion.initialSourceStart !== null) {
+            if (
+              (dragRegion.regionType === 'media-audio' || dragRegion.regionType === 'floating-monitor') &&
+              dragRegion.initialSourceStart !== null
+            ) {
               const sourceBoundStart = dragRegion.initialStartTime - dragRegion.initialSourceStart
               minStartTime = Math.max(minStartTime, sourceBoundStart)
             }
@@ -516,7 +607,10 @@ export const useTimelineInteraction = ({
             }
             finalUpdates.duration = newDuration
             finalUpdates.startTime = newStartTime
-            if (draggingRegion.regionType === 'media-audio' && draggingRegion.initialSourceStart !== null) {
+            if (
+              (draggingRegion.regionType === 'media-audio' || draggingRegion.regionType === 'floating-monitor') &&
+              draggingRegion.initialSourceStart !== null
+            ) {
               const sourceDelta = newStartTime - draggingRegion.initialStartTime
               finalUpdates.sourceStart = Math.max(0, draggingRegion.initialSourceStart + sourceDelta)
             }
@@ -536,20 +630,6 @@ export const useTimelineInteraction = ({
         setIsRegionHidden(false)
       }
 
-      if (isDraggingLeftStrip || isDraggingRightStrip) {
-        const finalPreview = useEditorStore.getState().previewCutRegion
-        if (finalPreview) {
-          addCutRegion({
-            startTime: finalPreview.startTime,
-            duration: finalPreview.duration,
-            laneId: defaultLaneId,
-            trimType: isDraggingLeftStrip ? 'start' : 'end',
-          })
-        }
-      }
-
-      setIsDraggingLeftStrip(false)
-      setIsDraggingRightStrip(false)
       setActiveDropLaneId(null)
       setDragMovePreview(null)
       setPreviewCutRegion(null)
@@ -564,11 +644,11 @@ export const useTimelineInteraction = ({
   }, [
     draggingRegion,
     isDraggingPlayhead,
-    isDraggingLeftStrip,
-    isDraggingRightStrip,
     pxToTime,
     timeToPx,
     updateVideoTime,
+    flushPlayheadTime,
+    finishPlayheadScrub,
     updateRegion,
     addCutRegion,
     setPreviewCutRegion,
@@ -589,30 +669,6 @@ export const useTimelineInteraction = ({
     activeDropLaneId,
     isDraggingPlayhead,
     handleRegionMouseDown,
-    handlePlayheadMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
-      e.stopPropagation()
-      setIsDraggingPlayhead(true)
-      document.body.style.cursor = 'ew-resize'
-    },
-    handleLeftStripMouseDown: () => {
-      const state = useEditorStore.getState()
-      const existingTrim = getTopRegionByPredicate(
-        Object.values(state.cutRegions),
-        state.timelineLanes,
-        (r) => r.trimType === 'start',
-      )
-      if (existingTrim) deleteRegion(existingTrim.id)
-      setIsDraggingLeftStrip(true)
-    },
-    handleRightStripMouseDown: () => {
-      const state = useEditorStore.getState()
-      const existingTrim = getTopRegionByPredicate(
-        Object.values(state.cutRegions),
-        state.timelineLanes,
-        (r) => r.trimType === 'end',
-      )
-      if (existingTrim) deleteRegion(existingTrim.id)
-      setIsDraggingRightStrip(true)
-    },
+    handlePlayheadMouseDown,
   }
 }

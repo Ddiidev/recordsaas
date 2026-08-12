@@ -4,6 +4,7 @@ import type { ChangeSoundRegion, TimelineRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { useEditorStore } from '../../../store/editorStore'
 import { ContextMenu, ContextMenuItem, ContextMenuDivider, ContextMenuLabel } from '../../ui/context-menu'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface ChangeSoundRegionBlockProps {
   region: ChangeSoundRegion
@@ -29,11 +30,6 @@ export const ChangeSoundRegionBlock = memo(
       return localOffset > 0.1 && localOffset < region.duration - 0.1
     }, [currentTime, region.duration, region.startTime])
 
-    const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>, type: 'resize-left' | 'resize-right') => {
-      e.stopPropagation()
-      onMouseDown(e, region, type)
-    }
-
     const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault()
       e.stopPropagation()
@@ -57,45 +53,39 @@ export const ChangeSoundRegionBlock = memo(
           ref={setRef}
           data-region-id={region.id}
           className={cn(
-            'absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+            'group/region absolute inset-y-0 left-0 w-full flex items-center justify-center rounded-md cursor-grab border-2 backdrop-blur-sm',
             !isBeingDragged && 'transition-all duration-200 ease-out',
             isSelected
-              ? 'bg-card/90 border-sky-500 transform -translate-y-[2px] shadow-sm shadow-sky-500/20'
+              ? 'bg-card/90 border-sky-500 shadow-sm shadow-sky-500/20'
               : 'bg-card/70 border-sky-500/60 hover:border-sky-500 hover:bg-card/80 hover:shadow-md hover:shadow-sky-500/10',
           )}
           style={{ willChange: 'transform, width' }}
           onMouseDown={(e) => onMouseDown(e, region, 'move')}
           onContextMenu={handleContextMenu}
         >
-          <div
-            className="absolute left-0 top-0 w-5 h-full cursor-ew-resize rounded-l-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-left')}
-          >
-            <div className="w-1 h-6 bg-sky-500/60 rounded-full group-hover:bg-sky-500 group-hover:h-8 transition-all duration-150" />
+          <RegionResizeHandles
+            isSelected={isSelected}
+            indicatorClassName="bg-sky-500/60 group-hover/resize-handle:bg-sky-500"
+            onMouseDown={(event, side) => {
+              event.stopPropagation()
+              onMouseDown(event, region, side)
+            }}
+          />
+
+          <div className="pointer-events-none flex items-center gap-1.5 overflow-hidden px-2">
+            <AdjustmentsHorizontal
+              className={cn('h-3.5 w-3.5 shrink-0 transition-colors text-sky-500', !isSelected && 'opacity-70')}
+            />
+            <span
+              className={cn(
+                'text-[10px] font-bold tracking-wide select-none whitespace-nowrap transition-colors text-sky-500',
+                !isSelected && 'opacity-70',
+              )}
+            >
+              CHANGE SOUND
+            </span>
           </div>
 
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-3">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <AdjustmentsHorizontal
-                className={cn('w-4 h-4 shrink-0 transition-colors text-sky-500', !isSelected && 'opacity-70')}
-              />
-              <span
-                className={cn(
-                  'text-sm font-bold tracking-wide select-none whitespace-nowrap transition-colors text-sky-500',
-                  !isSelected && 'opacity-70',
-                )}
-              >
-                CHANGE SOUND
-              </span>
-            </div>
-          </div>
-
-          <div
-            className="absolute right-0 top-0 w-5 h-full cursor-ew-resize rounded-r-xl flex items-center justify-center z-10 group"
-            onMouseDown={(e) => handleResizeMouseDown(e, 'resize-right')}
-          >
-            <div className="w-1 h-6 bg-sky-500/60 rounded-full group-hover:bg-sky-500 group-hover:h-8 transition-all duration-150" />
-          </div>
         </div>
 
         <ContextMenu

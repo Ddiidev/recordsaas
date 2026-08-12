@@ -8,7 +8,14 @@ import {
   sortRegionsByLanePrecedence,
 } from './timeline-lanes'
 import { getWebcamAspectRatio, getWebcamRadius } from './webcam'
-import type { EditorState, RenderableState, WebcamLayout, WebcamPosition, WebcamStyles } from '../types'
+import type {
+  CameraSwapRegion,
+  EditorState,
+  RenderableState,
+  WebcamLayout,
+  WebcamPosition,
+  WebcamStyles,
+} from '../types'
 
 type Rect = { x: number; y: number; width: number; height: number }
 type MediaRectConfig = Rect & {
@@ -23,6 +30,11 @@ type MediaRectConfig = Rect & {
 }
 
 type BackgroundImageSource = HTMLImageElement | ImageBitmap
+export type FloatingMonitorRenderSource = {
+  source: CanvasImageSource
+  width: number
+  height: number
+}
 type ResolvedLayout = {
   mode: WebcamLayout['mode']
   desktopConfig: MediaRectConfig
@@ -30,8 +42,7 @@ type ResolvedLayout = {
   cameraFlip: boolean
 }
 type WindowWithScreenCache = Window & {
-  __screenCacheCanvas?: HTMLCanvasElement
-  __screenCacheCtx?: CanvasRenderingContext2D | null
+  __instanceRenderCanvasCache?: Map<string, InstanceRenderCanvasCache>
   __backgroundCacheCanvas?: HTMLCanvasElement
   __backgroundCacheCtx?: CanvasRenderingContext2D | null
   __backgroundCacheKey?: string
@@ -40,12 +51,23 @@ type WindowWithScreenCache = Window & {
   __mediaLayerCacheKey?: string
 }
 
+type CachedRenderCanvas = {
+  canvas: HTMLCanvasElement
+  ctx: CanvasRenderingContext2D
+}
+
+type InstanceRenderCanvasCache = {
+  screen?: CachedRenderCanvas
+  composition?: CachedRenderCanvas
+}
+
 let blurSampleCanvas: HTMLCanvasElement | null = null
 let blurSampleCtx: CanvasRenderingContext2D | null = null
 let blurPixelCanvas: HTMLCanvasElement | null = null
 let blurPixelCtx: CanvasRenderingContext2D | null = null
 const roundedRectPathCache = new Map<string, Path2D>()
 const ROUNDED_RECT_PATH_CACHE_LIMIT = 128
+const INSTANCE_RENDER_CANVAS_CACHE_LIMIT = 16
 const objectValuesCache = new WeakMap<object, unknown[]>()
 
 const getObjectValuesCached = <T>(source: Record<string, T> | null | undefined): T[] => {
@@ -85,8 +107,46 @@ const getRoundedRectPath = (rect: Rect, radius: number): Path2D => {
   return path
 }
 
+const getOrCreateInstanceRenderCanvas = (
+  kind: keyof InstanceRenderCanvasCache,
+  instanceKey: string,
+  width: number,
+  height: number,
+): CachedRenderCanvas | null => {
+  const roundedWidth = Math.max(1, Math.round(width))
+  const roundedHeight = Math.max(1, Math.round(height))
+  const cacheWindow = window as WindowWithScreenCache
+  const cache = cacheWindow.__instanceRenderCanvasCache || new Map<string, InstanceRenderCanvasCache>()
+  cacheWindow.__instanceRenderCanvasCache = cache
+
+  let entry = cache.get(instanceKey)
+  if (!entry) {
+    if (cache.size >= INSTANCE_RENDER_CANVAS_CACHE_LIMIT) {
+      const oldestKey = cache.keys().next().value
+      if (oldestKey) cache.delete(oldestKey)
+    }
+    entry = {}
+  } else {
+    cache.delete(instanceKey)
+  }
+  cache.set(instanceKey, entry)
+
+  let cachedCanvas = entry[kind]
+  if (!cachedCanvas) {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    cachedCanvas = { canvas, ctx }
+    entry[kind] = cachedCanvas
+  }
+
+  if (cachedCanvas.canvas.width !== roundedWidth) cachedCanvas.canvas.width = roundedWidth
+  if (cachedCanvas.canvas.height !== roundedHeight) cachedCanvas.canvas.height = roundedHeight
+  return cachedCanvas
+}
+
 const getOrCreateCanvas = (
-  kind: 'sample' | 'pixel' | 'screen' | 'background' | 'media-layer',
+  kind: 'sample' | 'pixel' | 'background' | 'media-layer',
   width: number,
   height: number,
 ): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null => {
@@ -102,20 +162,6 @@ const getOrCreateCanvas = (
     if (blurSampleCanvas.width !== roundedWidth) blurSampleCanvas.width = roundedWidth
     if (blurSampleCanvas.height !== roundedHeight) blurSampleCanvas.height = roundedHeight
     return { canvas: blurSampleCanvas, ctx: blurSampleCtx }
-  }
-
-  if (kind === 'screen') {
-    const cacheWindow = window as WindowWithScreenCache
-    if (!cacheWindow.__screenCacheCanvas) {
-      cacheWindow.__screenCacheCanvas = document.createElement('canvas')
-      cacheWindow.__screenCacheCtx = cacheWindow.__screenCacheCanvas.getContext('2d')
-    }
-    const canvas = cacheWindow.__screenCacheCanvas
-    const ctx = cacheWindow.__screenCacheCtx
-    if (!canvas || !ctx) return null
-    if (canvas.width !== roundedWidth) canvas.width = roundedWidth
-    if (canvas.height !== roundedHeight) canvas.height = roundedHeight
-    return { canvas, ctx }
   }
 
   if (kind === 'background') {
@@ -490,9 +536,11 @@ const resolveLayoutConfig = ({
 
   if (webcamLayout.mode === 'side-by-side') {
     const cameraBounds = hasFramePadding ? insetRect(sidebarArea, baseInset * 0.75, baseInset * 0.75) : sidebarArea
-    const cameraRect = hasFramePadding
-      ? fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
-      : cameraBounds
+    const fittedCameraRect = fitRectWithinBounds(cameraBounds, getWebcamAspectRatio(webcamStyles.shape))
+    const cameraRect: Rect = {
+      ...fittedCameraRect,
+      x: sidebarOnLeft ? cameraBounds.x + cameraBounds.width - fittedCameraRect.width : cameraBounds.x,
+    }
     return {
       mode: 'side-by-side',
       desktopConfig: createFrameConfig(desktopRect, state.frameStyles, 0),
@@ -648,6 +696,10 @@ export const drawScene = (
   preloadedBgImage: BackgroundImageSource | null,
   webcamDimensions?: { width: number; height: number },
   exportQuality?: string,
+  floatingMonitorSources: Record<string, FloatingMonitorRenderSource> = {},
+  monitorAncestry: ReadonlySet<string> = new Set(),
+  monitorSourcePath = 'main',
+  previewRenderScale = 1,
 ): void => {
   if (!state.videoDimensions.width || !state.videoDimensions.height) return
 
@@ -655,6 +707,7 @@ export const drawScene = (
   const swapRegions = getObjectValuesCached(state.swapRegions)
   const zoomRegions = getObjectValuesCached(state.zoomRegions)
   const blurRegions = getObjectValuesCached(state.blurRegions)
+  const floatingMonitorRegions = getObjectValuesCached(state.floatingMonitorRegions)
   const activeBlurRegions =
     blurRegions.length > 0
       ? sortRegionsByLanePrecedence(
@@ -691,13 +744,11 @@ export const drawScene = (
 
   // --- 3. Determine Swap Region and Transitions ---
   const activeSwapRegion = getTopActiveRegionAtTime(swapRegions, currentTime, laneContext)
-
-  let isSwapped = false
+  const isSwapped = false
   let swapProgress = 0
 
   if (activeSwapRegion) {
     const TRANSITION_DURATION = activeSwapRegion.transitionDuration ?? 0.3
-    isSwapped = true
     swapProgress = 1
     if (activeSwapRegion.transition !== 'none') {
       const timeIn = currentTime - activeSwapRegion.startTime
@@ -711,7 +762,12 @@ export const drawScene = (
   }
 
   // --- 4. Prepare Screen Canvas (Video + Clicks + Cursor + Zoom) ---
-  const screenCache = getOrCreateCanvas('screen', frameContentWidth, frameContentHeight)
+  const screenCache = getOrCreateInstanceRenderCanvas(
+    'screen',
+    monitorSourcePath,
+    frameContentWidth,
+    frameContentHeight,
+  )
   if (screenCache) {
     const sCtx = screenCache.ctx
     sCtx.imageSmoothingEnabled = true
@@ -893,8 +949,7 @@ export const drawScene = (
         cameraFlip: false,
       }
 
-  const effectiveShowDesktopOverlay =
-    activeSwapRegion && resolvedLayout.mode === 'overlay' ? activeSwapRegion.showDesktopOverlay : false
+  const effectiveShowDesktopOverlay = false
 
   // --- 6. Draw Media Helper and Transitions ---
   const lerpConfig = (a: MediaRectConfig, b: MediaRectConfig, p: number): MediaRectConfig => ({
@@ -1055,7 +1110,7 @@ export const drawScene = (
   const cameraCrop = webcamIsRenderable ? state.webcamStyles.crop : null
   const normalDesktopConfig = resolvedLayout.desktopConfig
   const normalCameraConfig = resolvedLayout.cameraConfig
-  const canSwapCamera = Boolean(cameraSource && cameraDims && normalCameraConfig)
+  const canSwapCamera = false
   const transitionType = activeSwapRegion?.transition || 'none'
   const isAnimatedTransition = canSwapCamera && swapProgress > 0 && swapProgress < 1 && transitionType !== 'none'
   const progressAnim =
@@ -1283,6 +1338,227 @@ export const drawScene = (
             cameraCrop,
           ),
       })
+    }
+  }
+
+  const activeFloatingMonitorRegions = sortRegionsByLanePrecedence(
+    floatingMonitorRegions.filter((region) => isRegionActiveAtTime(region, currentTime)),
+    laneContext,
+  )
+  const monitorSlots = new Map<
+    string,
+    {
+      source: CanvasImageSource
+      width: number
+      height: number
+      config: MediaRectConfig
+      isFlipped: boolean
+      crop: RenderableState['webcamStyles']['crop'] | null
+    }
+  >()
+  activeFloatingMonitorRegions.forEach((region) => {
+    const monitor = state.floatingMonitors[region.monitorId]
+    const sourceKey = `${monitorSourcePath}/${region.id}`
+    const renderSource =
+      floatingMonitorSources[sourceKey] || floatingMonitorSources[region.id] || floatingMonitorSources[region.monitorId]
+    if (!monitor || !renderSource || renderSource.width <= 0 || renderSource.height <= 0) return
+
+    let source: CanvasImageSource = renderSource.source
+    let sourceWidth = renderSource.width
+    let sourceHeight = renderSource.height
+    if (monitor.timeline && typeof document !== 'undefined' && !monitorAncestry.has(monitor.id)) {
+      const nestedOutputWidth = Math.max(1, Math.round(sourceWidth * previewRenderScale))
+      const nestedOutputHeight = Math.max(1, Math.round(sourceHeight * previewRenderScale))
+      const nestedComposition = getOrCreateInstanceRenderCanvas(
+        'composition',
+        sourceKey,
+        nestedOutputWidth,
+        nestedOutputHeight,
+      )
+      if (nestedComposition) {
+        const nestedState: RenderableState = {
+          ...state,
+          ...monitor.timeline,
+          videoDimensions:
+            monitor.timeline.videoDimensions.width > 0 && monitor.timeline.videoDimensions.height > 0
+              ? monitor.timeline.videoDimensions
+              : { width: sourceWidth, height: sourceHeight },
+          cursorStyles: monitor.timeline.cursorStyles || state.cursorStyles,
+          isWebcamVisible: false,
+          metadata: [],
+          cursorImages: {},
+          cursorBitmapsToRender: new Map(),
+        }
+        const assetTime = Math.max(0, region.sourceStart + currentTime - region.startTime)
+        drawScene(
+          nestedComposition.ctx,
+          nestedState,
+          source,
+          null,
+          assetTime,
+          nestedOutputWidth,
+          nestedOutputHeight,
+          null,
+          undefined,
+          exportQuality,
+          floatingMonitorSources,
+          new Set([...monitorAncestry, monitor.id]),
+          sourceKey,
+          previewRenderScale,
+        )
+        source = nestedComposition.canvas
+        sourceWidth = nestedComposition.canvas.width
+        sourceHeight = nestedComposition.canvas.height
+      }
+    }
+
+    const normalizedWidth = Number.isFinite(region.width) ? region.width : monitor.width
+    const normalizedHeight = Number.isFinite(region.height) ? region.height : monitor.height
+    const width = Math.max(1, Math.min(outputWidth, outputWidth * normalizedWidth))
+    const height = Math.max(1, Math.min(outputHeight, outputHeight * normalizedHeight))
+    const normalizedX = Number.isFinite(region.x) ? region.x : monitor.x
+    const normalizedY = Number.isFinite(region.y) ? region.y : monitor.y
+    const x = Math.max(0, Math.min(outputWidth - width, outputWidth * normalizedX))
+    const y = Math.max(0, Math.min(outputHeight - height, outputHeight * normalizedY))
+    const borderRadius = Number.isFinite(region.borderRadius)
+      ? region.borderRadius
+      : DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue
+    const config: MediaRectConfig = {
+      x,
+      y,
+      width,
+      height,
+      radius: getWebcamRadius('rectangle', width, height, borderRadius),
+      shadowBlur: Number.isFinite(region.shadowBlur)
+        ? region.shadowBlur
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+      shadowOffsetX: Number.isFinite(region.shadowOffsetX)
+        ? region.shadowOffsetX
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+      shadowOffsetY: Number.isFinite(region.shadowOffsetY)
+        ? region.shadowOffsetY
+        : DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+      shadowColor: region.shadowColor || DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
+      borderWidth: (
+        typeof region.border === 'boolean' ? region.border : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue
+      )
+        ? Number.isFinite(region.borderWidth)
+          ? region.borderWidth
+          : DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue
+        : 0,
+      borderColor: region.borderColor || DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+      zIndex: 10_000 + region.zIndex,
+    }
+    monitorSlots.set(region.id, {
+      source,
+      width: sourceWidth,
+      height: sourceHeight,
+      config,
+      isFlipped: region.isFlipped,
+      crop: region.crop,
+    })
+    draws.push({
+      zIndex: config.zIndex,
+      draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
+    })
+  })
+
+  if (activeSwapRegion) {
+    const screenSlot = desktopSource
+      ? {
+          source: desktopSource,
+          width: desktopDims.width,
+          height: desktopDims.height,
+          config: normalDesktopConfig,
+          isFlipped: false,
+          crop: null,
+        }
+      : null
+    const webcamSlot =
+      cameraSource && cameraDims && normalCameraConfig
+        ? {
+            source: cameraSource,
+            width: cameraDims.width,
+            height: cameraDims.height,
+            config: normalCameraConfig,
+            isFlipped: resolvedLayout.cameraFlip,
+            crop: cameraCrop,
+          }
+        : null
+    const getSwapSlot = (participant: CameraSwapRegion['origin']) => {
+      if (participant.kind === 'main-screen') return screenSlot
+      if (participant.kind === 'webcam') return webcamSlot
+      return monitorSlots.get(participant.regionId) || null
+    }
+    const isSameParticipant =
+      activeSwapRegion.origin.kind === activeSwapRegion.target.kind &&
+      (activeSwapRegion.origin.kind !== 'floating-monitor-region' ||
+        activeSwapRegion.target.kind !== 'floating-monitor-region' ||
+        activeSwapRegion.origin.regionId === activeSwapRegion.target.regionId)
+    const originSlot = getSwapSlot(activeSwapRegion.origin)
+    const targetSlot = getSwapSlot(activeSwapRegion.target)
+
+    if (!isSameParticipant && originSlot && targetSlot) {
+      const drawIntoDestination = (
+        sourceSlot: NonNullable<typeof originSlot>,
+        destinationSlot: NonNullable<typeof targetSlot>,
+        config: MediaRectConfig,
+        alpha = 1,
+        destinationStyle = destinationSlot,
+      ) =>
+        drawMediaToConfig(
+          config,
+          sourceSlot.source,
+          sourceSlot.width,
+          sourceSlot.height,
+          destinationStyle.isFlipped,
+          alpha,
+          destinationStyle.crop,
+        )
+
+      if (activeSwapRegion.transition === 'none' || swapProgress >= 0.999) {
+        draws.push({
+          zIndex: targetSlot.config.zIndex,
+          draw: () => drawIntoDestination(originSlot, targetSlot, targetSlot.config),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex,
+          draw: () => drawIntoDestination(targetSlot, originSlot, originSlot.config),
+        })
+      } else if (activeSwapRegion.transition === 'fade') {
+        draws.push({
+          zIndex: targetSlot.config.zIndex + 0.1,
+          draw: () => drawIntoDestination(originSlot, targetSlot, targetSlot.config, swapProgress),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex + 0.1,
+          draw: () => drawIntoDestination(targetSlot, originSlot, originSlot.config, swapProgress),
+        })
+      } else {
+        const progress = EASING_MAP.Balanced(swapProgress)
+        draws.push({
+          zIndex: targetSlot.config.zIndex + 0.1,
+          draw: () =>
+            drawIntoDestination(
+              originSlot,
+              targetSlot,
+              lerpConfig(originSlot.config, targetSlot.config, progress),
+              1,
+              progress < 0.5 ? originSlot : targetSlot,
+            ),
+        })
+        draws.push({
+          zIndex: originSlot.config.zIndex + 0.1,
+          draw: () =>
+            drawIntoDestination(
+              targetSlot,
+              originSlot,
+              lerpConfig(targetSlot.config, originSlot.config, progress),
+              1,
+              progress < 0.5 ? targetSlot : originSlot,
+            ),
+        })
+      }
     }
   }
 

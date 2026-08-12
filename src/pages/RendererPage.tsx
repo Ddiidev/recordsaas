@@ -7,6 +7,14 @@ import { RESOLUTIONS } from '../lib/constants'
 import { drawScene } from '../lib/renderer'
 import { prepareCursorBitmaps, mapExportTimeToSourceTime, calculateExportDuration } from '../lib/utils'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
+import {
+  getTakeScopedZoomRegions,
+  mapCompositionTimeToTake,
+  mapTakeMetadataToComposition,
+  positionTakes,
+} from '../lib/takes'
+import type { TakeSourceTime } from '../lib/takes'
+import type { TakeClip } from '../types'
 
 let rendererReadySignalSent = false
 
@@ -45,6 +53,8 @@ type VideoFrameProvider = {
   width: number
   height: number
   fps: number | null
+  // Returns a caller-owned snapshot. The provider keeps its decode candidates
+  // private so another source can advance without invalidating this frame.
   getFrameForTime: (timeSec: number) => Promise<VideoFrame | null>
   close: () => void
 }
@@ -615,12 +625,14 @@ async function createVideoFrameProvider(
       throwIfPumpFailed()
     }
 
-    if (!lastFrame) return nextFrame ?? null
-    if (!nextFrame) return lastFrame
+    const cloneFrame = (frame: VideoFrame | null): VideoFrame | null => (frame ? new VideoFrame(frame) : null)
+
+    if (!lastFrame) return cloneFrame(nextFrame)
+    if (!nextFrame) return cloneFrame(lastFrame)
 
     const lastTs = lastFrame.timestamp ?? 0
     const nextTs = nextFrame.timestamp ?? 0
-    return targetUs - lastTs <= nextTs - targetUs ? lastFrame : nextFrame
+    return cloneFrame(targetUs - lastTs <= nextTs - targetUs ? lastFrame : nextFrame)
   }
 
   const close = () => {
@@ -741,6 +753,19 @@ const loadBackgroundImage = async (
   }
 }
 
+const loadMediaImage = async (path: string): Promise<ImageBitmap | null> => {
+  const url = toMediaUrl(path)
+  if (!url || !('createImageBitmap' in window)) return null
+  try {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return createImageBitmap(await response.blob())
+  } catch (error) {
+    log.error(`[RendererPage] Failed to load monitor image: ${url}`, error)
+    return null
+  }
+}
+
 export function RendererPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -757,6 +782,18 @@ export function RendererPage() {
         const webcamVideo = webcamVideoRef.current
         let frameProvider: VideoFrameProvider | null = null
         let webcamFrameProvider: VideoFrameProvider | null = null
+        const floatingMonitorFrameProviders = new Map<string, VideoFrameProvider>()
+        const takeFrameProviders = new Map<string, Promise<VideoFrameProvider>>()
+        const takeProviderLastRequestedTimes = new Map<string, number>()
+        const takeRenderCanvases = new Map<string, HTMLCanvasElement>()
+        const takeProviderStats = {
+          created: 0,
+          reused: 0,
+          resetForBackwardSeek: 0,
+          released: 0,
+          canvasCreated: 0,
+        }
+        const floatingMonitorImages = new Map<string, ImageBitmap>()
         let bgImage: ExportBackgroundImage | null = null
 
         try {
@@ -806,6 +843,25 @@ export function RendererPage() {
             finalCursorBitmaps = await prepareCursorBitmaps(projectState.cursorImages)
           }
           const projectStateWithCursorBitmaps = { ...projectState, cursorBitmapsToRender: finalCursorBitmaps }
+          const captureOffsets = projectState.captureSourceOffsetsMs || {
+            screen: 0,
+            webcam: 0,
+            recording: 0,
+            systemAudio: 0,
+          }
+          const sourceOffsetSeconds = (source: 'screen' | 'webcam'): number => {
+            const value = captureOffsets[source]
+            return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) / 1000 : 0
+          }
+          const toRecordingSourceTime = (time: number, source: 'screen' | 'webcam') =>
+            Math.max(0, time + sourceOffsetSeconds(source))
+          const isTakeMode = projectState.takeModeEnabled === true && projectState.takes.length > 0
+          const takePositionsById = new Map(
+            (isTakeMode ? positionTakes(projectState.takes, projectState.takeTransitions) : []).map((item) => [
+              item.take.id,
+              item,
+            ]),
+          )
           bgImage = await loadBackgroundImage(projectState.frameStyles.background)
 
           // --- 2.5 SETUP VIDEO DECODER (Optimization) ---
@@ -830,13 +886,82 @@ export function RendererPage() {
             projectStateWithCursorBitmaps.webcamVideoPath &&
             typeof projectStateWithCursorBitmaps.webcamVideoPath === 'string',
           )
-          const memoryBudget = await resolveExportMemoryBudget(outputWidth, outputHeight, hasWebcam ? 2 : 1)
+          const floatingMonitorPaths = Object.entries(projectStateWithCursorBitmaps.floatingMonitors || {}).filter(
+            ([, monitor]) => typeof monitor.path === 'string' && monitor.path.length > 0 && monitor.kind !== 'image',
+          )
+          const floatingMonitorImagePaths = Object.entries(projectStateWithCursorBitmaps.floatingMonitors || {}).filter(
+            ([, monitor]) => typeof monitor.path === 'string' && monitor.path.length > 0 && monitor.kind === 'image',
+          )
+          const memoryBudget = await resolveExportMemoryBudget(
+            outputWidth,
+            outputHeight,
+            (isTakeMode ? 2 : 1 + (hasWebcam ? 1 : 0)) + floatingMonitorPaths.length,
+          )
           const memoryController = createExportMemoryController(memoryBudget)
+          const releaseTakeProvider = (key: string) => {
+            const provider = takeFrameProviders.get(key)
+            if (!provider) return
+
+            takeFrameProviders.delete(key)
+            takeProviderLastRequestedTimes.delete(key)
+            takeProviderStats.released += 1
+            void provider.then((value) => value.close()).catch(() => undefined)
+          }
+          const getTakeProvider = (
+            key: string,
+            mediaPath: string,
+            sourceTime: number,
+            reuseSequentialSource: boolean,
+            activeProviderKeys: Set<string>,
+          ): Promise<VideoFrameProvider> => {
+            const providerKey = reuseSequentialSource ? `source:${mediaPath}` : key
+            const lastRequestedTime = takeProviderLastRequestedTimes.get(providerKey)
+            const existing = takeFrameProviders.get(providerKey)
+            if (existing) {
+              if (reuseSequentialSource && lastRequestedTime !== undefined && sourceTime < lastRequestedTime) {
+                takeProviderStats.resetForBackwardSeek += 1
+                releaseTakeProvider(providerKey)
+              } else {
+                takeProviderStats.reused += 1
+                takeProviderLastRequestedTimes.set(providerKey, sourceTime)
+                activeProviderKeys.add(providerKey)
+                return existing
+              }
+            }
+
+            const pending = createVideoFrameProvider(mediaPath, memoryBudget, memoryController)
+            takeFrameProviders.set(providerKey, pending)
+            takeProviderLastRequestedTimes.set(providerKey, sourceTime)
+            takeProviderStats.created += 1
+            activeProviderKeys.add(providerKey)
+            return pending
+          }
+          const releaseInactiveTakeProviders = (activeProviderKeys: ReadonlySet<string>) => {
+            for (const key of takeFrameProviders.keys()) {
+              if (!activeProviderKeys.has(key)) releaseTakeProvider(key)
+            }
+          }
+          const getTakeRenderCanvas = (slot: string): HTMLCanvasElement => {
+            const existing = takeRenderCanvases.get(slot)
+            if (existing && existing.width === outputWidth && existing.height === outputHeight) return existing
+
+            const canvas = document.createElement('canvas')
+            canvas.width = outputWidth
+            canvas.height = outputHeight
+            takeRenderCanvases.set(slot, canvas)
+            takeProviderStats.canvasCreated += 1
+            return canvas
+          }
+          const resolveTakePath = (take: TakeClip): string => {
+            if (take.source.kind === 'recording-screen') return projectStateWithCursorBitmaps.videoPath || ''
+            if (take.source.kind === 'recording-webcam') return projectStateWithCursorBitmaps.webcamVideoPath || ''
+            return projectStateWithCursorBitmaps.floatingMonitors[take.source.assetId]?.path || ''
+          }
           log.info(
             `${renderLogPrefix} Export memory budget: limit=${memoryBudget.limitPercent}% total=${formatMemoryBytes(memoryBudget.totalMemoryBytes)} max=${formatMemoryBytes(memoryBudget.maxBytes)} chunk=${formatMemoryBytes(memoryBudget.chunkSizeBytes)} bufferedFrames=${memoryBudget.maxBufferedFramesPerProvider} decodeQueue=${memoryBudget.maxDecodeQueueSize} encoderQueue=${memoryBudget.maxEncoderQueueSize}`,
           )
           try {
-            if (projectStateWithCursorBitmaps.videoPath) {
+            if (!isTakeMode && projectStateWithCursorBitmaps.videoPath) {
               frameProvider = await createVideoFrameProvider(
                 projectStateWithCursorBitmaps.videoPath,
                 memoryBudget,
@@ -844,7 +969,7 @@ export function RendererPage() {
               )
               if (frameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for main video.')
             }
-            if (hasWebcam) {
+            if (!isTakeMode && hasWebcam) {
               webcamFrameProvider = await createVideoFrameProvider(
                 projectStateWithCursorBitmaps.webcamVideoPath!,
                 memoryBudget,
@@ -852,13 +977,21 @@ export function RendererPage() {
               )
               if (webcamFrameProvider) log.info('[RendererPage] Using WebCodecs VideoDecoder for webcam video.')
             }
+            for (const [monitorId, monitor] of floatingMonitorPaths) {
+              const provider = await createVideoFrameProvider(monitor.path, memoryBudget, memoryController)
+              floatingMonitorFrameProviders.set(monitorId, provider)
+            }
+            for (const [monitorId, monitor] of floatingMonitorImagePaths) {
+              const image = await loadMediaImage(monitor.path)
+              if (image) floatingMonitorImages.set(monitorId, image)
+            }
           } catch (e) {
             const msg = e instanceof Error ? e.message : 'Unknown decoder initialization error'
             throw new Error(
               `Decoder initialization failed (secureContext=${isSecure}, hasVideoDecoder=${hasVideoDecoder}, ua=${ua}): ${msg}`,
             )
           }
-          const useDecoder = Boolean(frameProvider)
+          const useDecoder = isTakeMode || Boolean(frameProvider)
           const useWebcamDecoder = Boolean(webcamFrameProvider)
           if (!useDecoder) {
             throw new Error(
@@ -918,7 +1051,7 @@ export function RendererPage() {
           }
 
           // --- 4. CALCULATE EXPORT DURATION AND FRAMES ---
-          const effectiveDuration = mainDuration || projectState.duration
+          const effectiveDuration = isTakeMode ? projectState.duration : mainDuration || projectState.duration
           const exportDuration = Math.max(
             0,
             calculateExportDuration(
@@ -932,6 +1065,24 @@ export function RendererPage() {
           log.info(
             `[RendererPage] Starting seek-driven rendering. Total frames: ${totalFrames}, Export duration: ${exportDuration.toFixed(2)}s`,
           )
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-started',
+            exportSessionId,
+            metrics: {
+              outputWidth,
+              outputHeight,
+              fps,
+              exportDuration: Number(exportDuration.toFixed(3)),
+              totalFrames,
+              isTakeMode,
+              takeCount: projectState.takes.length,
+              metadataEventCount: projectState.metadata.length,
+              zoomRegionCount: Object.keys(projectState.zoomRegions || {}).length,
+              webcamEnabled: hasWebcam,
+              webCodecsDecoder: hasVideoDecoder,
+              webCodecsEncoder: hasVideoEncoder,
+            },
+          })
 
           // --- SETUP ENCODER (Optimization) ---
           let videoEncoder: any = null
@@ -1050,6 +1201,8 @@ export function RendererPage() {
             waitMs: 0,
             mainDecodeMs: 0,
             webcamDecodeMs: 0,
+            takeScreenDecodeMs: 0,
+            takeWebcamDecodeMs: 0,
             drawMs: 0,
             encodeMs: 0,
             totalMs: 0,
@@ -1090,17 +1243,23 @@ export function RendererPage() {
 
             let mainFrame: VideoFrame | null = null
             let webcamFrame: VideoFrame | null = null
+            const floatingMonitorFrames: Record<string, { source: CanvasImageSource; width: number; height: number }> =
+              {}
 
-            if (useDecoder && frameProvider) {
+            const takeMapping = isTakeMode
+              ? mapCompositionTimeToTake(sourceTimestamp, projectState.takes, projectState.takeTransitions)
+              : null
+
+            if (!isTakeMode && useDecoder && frameProvider) {
               const mainDecodeStartedAt = performance.now()
-              mainFrame = await frameProvider.getFrameForTime(sourceTimestamp)
+              mainFrame = await frameProvider.getFrameForTime(toRecordingSourceTime(sourceTimestamp, 'screen'))
               perfStats.mainDecodeMs += performance.now() - mainDecodeStartedAt
-            } else {
+            } else if (!isTakeMode) {
               throw new Error('Decoder-only mode: main video decoder not available.')
             }
 
-            if (hasWebcam && webcamVideo) {
-              const webcamTimestamp = Math.max(0, sourceTimestamp)
+            if (!isTakeMode && hasWebcam && webcamVideo) {
+              const webcamTimestamp = toRecordingSourceTime(sourceTimestamp, 'webcam')
               if (useWebcamDecoder && webcamFrameProvider) {
                 const webcamDecodeStartedAt = performance.now()
                 webcamFrame = await webcamFrameProvider.getFrameForTime(webcamTimestamp)
@@ -1110,7 +1269,52 @@ export function RendererPage() {
               }
             }
 
-            if (!mainFrame) {
+            const activeFloatingMonitorSources = new Map<string, { monitorId: string; time: number }>()
+            const collectActiveFloatingMonitorSources = (
+              regions: typeof projectStateWithCursorBitmaps.floatingMonitorRegions,
+              playbackTime: number,
+              ancestry = new Set<string>(),
+              sourcePath = 'main',
+            ) => {
+              Object.values(regions || {}).forEach((region) => {
+                if (playbackTime < region.startTime || playbackTime >= region.startTime + region.duration) return
+                const monitor = projectStateWithCursorBitmaps.floatingMonitors[region.monitorId]
+                if (!monitor || ancestry.has(monitor.id)) return
+                const monitorTime = Math.max(0, region.sourceStart + playbackTime - region.startTime)
+                const sourceKey = `${sourcePath}/${region.id}`
+                activeFloatingMonitorSources.set(sourceKey, { monitorId: region.monitorId, time: monitorTime })
+                if (monitor.timeline?.floatingMonitorRegions) {
+                  const nextAncestry = new Set(ancestry)
+                  nextAncestry.add(monitor.id)
+                  collectActiveFloatingMonitorSources(
+                    monitor.timeline.floatingMonitorRegions,
+                    monitorTime,
+                    nextAncestry,
+                    sourceKey,
+                  )
+                }
+              })
+            }
+            collectActiveFloatingMonitorSources(projectStateWithCursorBitmaps.floatingMonitorRegions, sourceTimestamp)
+            for (const [regionId, sourceInstance] of activeFloatingMonitorSources.entries()) {
+              const { monitorId, time: monitorTime } = sourceInstance
+              const image = floatingMonitorImages.get(monitorId)
+              if (image) {
+                floatingMonitorFrames[regionId] = { source: image, width: image.width, height: image.height }
+                return
+              }
+              const provider = floatingMonitorFrameProviders.get(monitorId)
+              if (!provider || floatingMonitorFrames[regionId]) return
+              const monitorFrame = await provider.getFrameForTime(monitorTime)
+              if (!monitorFrame) return
+              floatingMonitorFrames[regionId] = {
+                source: monitorFrame,
+                width: monitorFrame.displayWidth || monitorFrame.codedWidth,
+                height: monitorFrame.displayHeight || monitorFrame.codedHeight,
+              }
+            }
+
+            if (!isTakeMode && !mainFrame) {
               throw new Error('No decoded frame available for main video.')
             }
 
@@ -1125,18 +1329,162 @@ export function RendererPage() {
                 }
               : undefined
 
-            await drawScene(
-              ctx,
-              projectStateWithCursorBitmaps,
-              mainFrame,
-              webcamFrameToUse,
-              sourceTimestamp, // Use the precise source timestamp for drawing
-              outputWidth,
-              outputHeight,
-              bgImage,
-              webcamFrameDimensions,
-              exportSettings.quality,
-            )
+            if (isTakeMode) {
+              if (!takeMapping) throw new Error('Take composition has no active source.')
+              const activeTakeProviderKeys = new Set<string>()
+              const reuseSequentialSource = !takeMapping.secondary && !takeMapping.transition
+              const renderTakeSource = async (
+                source: TakeSourceTime,
+                canvasSlot: string,
+              ): Promise<HTMLCanvasElement> => {
+                const takePath = resolveTakePath(source.take)
+                if (!takePath) throw new Error(`Missing media source for take ${source.take.id}.`)
+                const takeSourceTime =
+                  source.take.source.kind === 'recording-screen'
+                    ? toRecordingSourceTime(source.sourceTime, 'screen')
+                    : source.take.source.kind === 'recording-webcam'
+                      ? toRecordingSourceTime(source.sourceTime, 'webcam')
+                      : source.sourceTime
+                const provider = await getTakeProvider(
+                  `take:${source.take.id}`,
+                  takePath,
+                  takeSourceTime,
+                  reuseSequentialSource,
+                  activeTakeProviderKeys,
+                )
+                const webcamSourceTime = toRecordingSourceTime(source.sourceTime, 'webcam')
+                const webcamProvider =
+                  source.take.source.kind === 'recording-screen' && hasWebcam
+                    ? await getTakeProvider(
+                        `take:${source.take.id}:webcam`,
+                        projectStateWithCursorBitmaps.webcamVideoPath!,
+                        webcamSourceTime,
+                        reuseSequentialSource,
+                        activeTakeProviderKeys,
+                      )
+                    : null
+                const takeScreenDecodeStartedAt = performance.now()
+                const takeFramePromise = provider.getFrameForTime(takeSourceTime).then((frame) => {
+                  perfStats.takeScreenDecodeMs += performance.now() - takeScreenDecodeStartedAt
+                  return frame
+                })
+                const takeWebcamDecodeStartedAt = performance.now()
+                const takeWebcamFramePromise = (
+                  webcamProvider?.getFrameForTime(webcamSourceTime) ?? Promise.resolve(null)
+                ).then((frame) => {
+                  perfStats.takeWebcamDecodeMs += performance.now() - takeWebcamDecodeStartedAt
+                  return frame
+                })
+                const [takeFrame, takeWebcamFrame] = await Promise.all([takeFramePromise, takeWebcamFramePromise])
+                if (!takeFrame) throw new Error(`No decoded frame available for take ${source.take.id}.`)
+                const takeCanvas = getTakeRenderCanvas(canvasSlot)
+                const takeContext = takeCanvas.getContext('2d', { alpha: false })
+                if (!takeContext) throw new Error('Failed to create take transition canvas.')
+                const isFullFrame = source.take.source.kind !== 'recording-screen'
+                const takePosition = takePositionsById.get(source.take.id)
+                const takeEffects = takePosition
+                  ? {
+                      zoomRegions: getTakeScopedZoomRegions(projectStateWithCursorBitmaps.zoomRegions, source.take.id),
+                      metadata: mapTakeMetadataToComposition(
+                        projectStateWithCursorBitmaps.metadata,
+                        source.take,
+                        takePosition.start,
+                      ),
+                    }
+                  : { zoomRegions: projectStateWithCursorBitmaps.zoomRegions, metadata: [] }
+                const takeState = isFullFrame
+                  ? {
+                      ...projectStateWithCursorBitmaps,
+                      ...takeEffects,
+                      cursorRegions: {},
+                      webcamRegions: {},
+                      swapRegions: {},
+                      cursorStyles: {
+                        ...projectStateWithCursorBitmaps.cursorStyles,
+                        showCursor: false,
+                        clickRippleEffect: false,
+                        clickScaleEffect: false,
+                      },
+                    }
+                  : { ...projectStateWithCursorBitmaps, ...takeEffects }
+                try {
+                  await drawScene(
+                    takeContext,
+                    takeState,
+                    takeFrame,
+                    takeWebcamFrame,
+                    sourceTimestamp,
+                    outputWidth,
+                    outputHeight,
+                    bgImage,
+                    takeWebcamFrame
+                      ? {
+                          width: takeWebcamFrame.displayWidth || takeWebcamFrame.codedWidth,
+                          height: takeWebcamFrame.displayHeight || takeWebcamFrame.codedHeight,
+                        }
+                      : undefined,
+                    exportSettings.quality,
+                    floatingMonitorFrames,
+                  )
+                } finally {
+                  takeFrame.close()
+                  takeWebcamFrame?.close()
+                }
+                return takeCanvas
+              }
+              const primaryCanvas = await renderTakeSource(takeMapping.primary, 'primary')
+              if (!takeMapping.secondary || !takeMapping.transition) {
+                ctx.drawImage(primaryCanvas, 0, 0)
+              } else {
+                const secondaryCanvas = await renderTakeSource(takeMapping.secondary, 'secondary')
+                const progress = takeMapping.transitionProgress
+                ctx.save()
+                if (takeMapping.transition.type === 'dip-black') {
+                  ctx.drawImage(progress < 0.5 ? primaryCanvas : secondaryCanvas, 0, 0)
+                  ctx.fillStyle = `rgba(0,0,0,${1 - Math.abs(progress * 2 - 1)})`
+                  ctx.fillRect(0, 0, outputWidth, outputHeight)
+                } else if (
+                  takeMapping.transition.type === 'slide-left' ||
+                  takeMapping.transition.type === 'slide-right'
+                ) {
+                  const direction = takeMapping.transition.type === 'slide-left' ? -1 : 1
+                  ctx.drawImage(primaryCanvas, direction * progress * outputWidth, 0)
+                  ctx.drawImage(secondaryCanvas, direction * (progress - 1) * outputWidth, 0)
+                } else if (takeMapping.transition.type === 'zoom') {
+                  ctx.drawImage(primaryCanvas, 0, 0)
+                  const scale = 0.85 + progress * 0.15
+                  const width = outputWidth * scale
+                  const height = outputHeight * scale
+                  ctx.globalAlpha = progress
+                  ctx.drawImage(secondaryCanvas, (outputWidth - width) / 2, (outputHeight - height) / 2, width, height)
+                } else {
+                  ctx.drawImage(primaryCanvas, 0, 0)
+                  ctx.globalAlpha = progress
+                  ctx.drawImage(secondaryCanvas, 0, 0)
+                }
+                ctx.restore()
+              }
+              releaseInactiveTakeProviders(activeTakeProviderKeys)
+            } else {
+              await drawScene(
+                ctx,
+                projectStateWithCursorBitmaps,
+                mainFrame!,
+                webcamFrameToUse,
+                sourceTimestamp,
+                outputWidth,
+                outputHeight,
+                bgImage,
+                webcamFrameDimensions,
+                exportSettings.quality,
+                floatingMonitorFrames,
+              )
+            }
+            mainFrame?.close()
+            webcamFrame?.close()
+            Object.values(floatingMonitorFrames).forEach(({ source }) => {
+              if (source instanceof VideoFrame) source.close()
+            })
             perfStats.drawMs += performance.now() - drawStartedAt
 
             if (videoEncoder) {
@@ -1172,13 +1520,25 @@ export function RendererPage() {
                   backpressure: Number((perfStats.waitMs / frames).toFixed(3)),
                   mainDecode: Number((perfStats.mainDecodeMs / frames).toFixed(3)),
                   webcamDecode: Number((perfStats.webcamDecodeMs / frames).toFixed(3)),
+                  takeScreenDecode: Number((perfStats.takeScreenDecodeMs / frames).toFixed(3)),
+                  takeWebcamDecode: Number((perfStats.takeWebcamDecodeMs / frames).toFixed(3)),
                   draw: Number((perfStats.drawMs / frames).toFixed(3)),
                   encode: Number((perfStats.encodeMs / frames).toFixed(3)),
                   totalLoop: Number((perfStats.totalMs / frames).toFixed(3)),
                 },
                 encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
+                takeProviders: {
+                  ...takeProviderStats,
+                  active: takeFrameProviders.size,
+                  canvases: takeRenderCanvases.size,
+                },
               }
               log.info(`${renderLogPrefix}[Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
+              window.electronAPI.sendRenderDiagnostics({
+                event: 'renderer-perf',
+                exportSessionId,
+                metrics: perfPayload,
+              })
               perfStats.lastLoggedAt = now
             }
           }
@@ -1187,18 +1547,46 @@ export function RendererPage() {
             await videoEncoder.flush()
           }
 
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-finished',
+            exportSessionId,
+            metrics: {
+              elapsedMs: Number((performance.now() - perfStats.startedAt).toFixed(3)),
+              renderedFrames: perfStats.frames,
+              totalFrames,
+              takeProviders: {
+                ...takeProviderStats,
+                active: takeFrameProviders.size,
+                canvases: takeRenderCanvases.size,
+              },
+            },
+          })
+
           // --- 6. FINISH ---
           log.info('[RendererPage] Render loop finished. Sending "finishRender" signal.')
           window.electronAPI.finishRender()
           bgImage?.close()
           if (frameProvider) frameProvider.close()
           if (webcamFrameProvider) webcamFrameProvider.close()
+          for (const provider of await Promise.all(takeFrameProviders.values())) provider.close()
+          floatingMonitorFrameProviders.forEach((provider) => provider.close())
+          floatingMonitorImages.forEach((image) => image.close())
         } catch (error) {
           log.error('[RendererPage] CRITICAL ERROR during render process:', error)
           bgImage?.close()
           if (frameProvider) frameProvider.close()
           if (webcamFrameProvider) webcamFrameProvider.close()
+          for (const provider of await Promise.allSettled(takeFrameProviders.values())) {
+            if (provider.status === 'fulfilled') provider.value.close()
+          }
+          floatingMonitorFrameProviders.forEach((provider) => provider.close())
+          floatingMonitorImages.forEach((image) => image.close())
           const message = error instanceof Error ? error.message : 'Unknown render error'
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-error',
+            exportSessionId,
+            metrics: { error: message },
+          })
           window.electronAPI.sendRenderError({ error: message })
         }
       },

@@ -1,4 +1,4 @@
-import { BLUR_REGION, SWAP_REGION, TIMELINE, ZOOM } from '../../lib/constants'
+import { BLUR_REGION, DEFAULTS, SWAP_REGION, TIMELINE, ZOOM } from '../../lib/constants'
 import type { TimelineState, TimelineActions, Slice } from '../../types'
 import type {
   BlurRegion,
@@ -10,6 +10,7 @@ import type {
   SwapPresetDefaults,
   MediaAudioRegion,
   ChangeSoundRegion,
+  FloatingMonitorRegion,
   TimelineLane,
   TimelineRegion,
   Preset,
@@ -19,7 +20,12 @@ import {
   createDefaultTimelineLane,
   getFallbackLaneId,
   sortTimelineLanes,
+  ensureContentRootLane,
+  removeContentRootLaneIfEmpty,
+  CONTENT_ROOT_LANE_ID,
 } from '../../lib/timeline-lanes'
+import { resolveMonitorForAssetTimeline } from '../../lib/floating-monitor'
+import { applyMediaAudioCutAdaptation } from '../../lib/media-audio-cuts'
 
 export const initialTimelineState: TimelineState = {
   timelineLanes: [createDefaultTimelineLane()],
@@ -30,6 +36,7 @@ export const initialTimelineState: TimelineState = {
   swapRegions: {},
   mediaAudioRegions: {},
   changeSoundRegions: {},
+  floatingMonitorRegions: {},
   previewCutRegion: null,
   selectedRegionId: null,
   activeZoomRegionId: null,
@@ -48,26 +55,37 @@ const BLUR_DEFAULT_UPDATE_KEYS: Array<keyof BlurPresetDefaults> = [
 ]
 const SWAP_DEFAULT_UPDATE_KEYS: Array<keyof SwapPresetDefaults> = [
   'duration',
-  'showDesktopOverlay',
+  'origin',
+  'target',
   'transition',
   'transitionDuration',
 ]
 
-const getBlurDefaults = (preset: Preset | null | undefined): BlurPresetDefaults => ({
-  duration: preset?.blurDefaults?.duration ?? BLUR_REGION.DEFAULT_DURATION,
-  style: preset?.blurDefaults?.style ?? BLUR_REGION.STYLE.DEFAULT,
-  intensity: preset?.blurDefaults?.intensity ?? BLUR_REGION.INTENSITY.defaultValue,
-  x: preset?.blurDefaults?.x ?? BLUR_REGION.X.defaultValue,
-  y: preset?.blurDefaults?.y ?? BLUR_REGION.Y.defaultValue,
-  width: preset?.blurDefaults?.width ?? BLUR_REGION.WIDTH.defaultValue,
-  height: preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
+const getBlurDefaults = (
+  preset: Preset | null | undefined,
+  localDefaults?: BlurPresetDefaults,
+): BlurPresetDefaults => ({
+  duration: localDefaults?.duration ?? preset?.blurDefaults?.duration ?? BLUR_REGION.DEFAULT_DURATION,
+  style: localDefaults?.style ?? preset?.blurDefaults?.style ?? BLUR_REGION.STYLE.DEFAULT,
+  intensity: localDefaults?.intensity ?? preset?.blurDefaults?.intensity ?? BLUR_REGION.INTENSITY.defaultValue,
+  x: localDefaults?.x ?? preset?.blurDefaults?.x ?? BLUR_REGION.X.defaultValue,
+  y: localDefaults?.y ?? preset?.blurDefaults?.y ?? BLUR_REGION.Y.defaultValue,
+  width: localDefaults?.width ?? preset?.blurDefaults?.width ?? BLUR_REGION.WIDTH.defaultValue,
+  height: localDefaults?.height ?? preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
 })
 
-const getSwapDefaults = (preset: Preset | null | undefined): SwapPresetDefaults => ({
-  duration: preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
-  showDesktopOverlay: preset?.swapDefaults?.showDesktopOverlay ?? SWAP_REGION.SHOW_DESKTOP_OVERLAY,
-  transition: preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
-  transitionDuration: preset?.swapDefaults?.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
+const getSwapDefaults = (
+  preset: Preset | null | undefined,
+  localDefaults?: SwapPresetDefaults,
+): SwapPresetDefaults => ({
+  duration: localDefaults?.duration ?? preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
+  origin: localDefaults?.origin ?? preset?.swapDefaults?.origin ?? { kind: 'main-screen' },
+  target: localDefaults?.target ?? preset?.swapDefaults?.target ?? { kind: 'webcam' },
+  transition: localDefaults?.transition ?? preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
+  transitionDuration:
+    localDefaults?.transitionDuration ??
+    preset?.swapDefaults?.transitionDuration ??
+    SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
 
 const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
@@ -82,7 +100,8 @@ const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
 
 const toSwapPresetDefaults = (region: CameraSwapRegion): SwapPresetDefaults => ({
   duration: region.duration,
-  showDesktopOverlay: region.showDesktopOverlay,
+  origin: region.origin,
+  target: region.target,
   transition: region.transition,
   transitionDuration: region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
@@ -95,6 +114,7 @@ const getAllRegions = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }): TimelineRegion[] => [
   ...Object.values(state.zoomRegions),
   ...Object.values(state.cutRegions),
@@ -103,7 +123,35 @@ const getAllRegions = (state: {
   ...Object.values(state.swapRegions),
   ...Object.values(state.mediaAudioRegions),
   ...Object.values(state.changeSoundRegions),
+  ...Object.values(state.floatingMonitorRegions),
 ]
+
+const nextContentRootRegionStart = (
+  cutRegions: Record<string, CutRegion>,
+  changeSoundRegions: Record<string, ChangeSoundRegion>,
+  startTime: number,
+): number => {
+  let next = Number.POSITIVE_INFINITY
+  for (const region of Object.values(cutRegions)) {
+    if (region.startTime > startTime && region.startTime < next) next = region.startTime
+  }
+  for (const region of Object.values(changeSoundRegions)) {
+    if (region.startTime > startTime && region.startTime < next) next = region.startTime
+  }
+  return next
+}
+
+const defaultContentRootDuration = (
+  duration: number,
+  startTime: number,
+  nextRegionStart: number,
+): number => {
+  const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+  return Math.max(
+    TIMELINE.MINIMUM_REGION_DURATION,
+    Math.min(duration * 0.1, Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - startTime)),
+  )
+}
 
 const getRegionById = (
   state: {
@@ -114,6 +162,7 @@ const getRegionById = (
     swapRegions: Record<string, CameraSwapRegion>
     mediaAudioRegions: Record<string, MediaAudioRegion>
     changeSoundRegions: Record<string, ChangeSoundRegion>
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
   },
   id: string,
 ): TimelineRegion | null =>
@@ -124,7 +173,54 @@ const getRegionById = (
   state.swapRegions[id] ||
   state.mediaAudioRegions[id] ||
   state.changeSoundRegions[id] ||
+  state.floatingMonitorRegions[id] ||
   null
+
+const duplicateTimelineRegion = <T extends TimelineRegion>(region: T, id: string): T => ({
+  ...region,
+  id,
+  startTime: region.startTime + region.duration,
+  zIndex: 0,
+})
+
+const monitorWouldCreateCycle = (
+  monitors: Record<string, { timeline?: { floatingMonitorRegions: Record<string, FloatingMonitorRegion> } }>,
+  ownerMonitorId: string,
+  candidateMonitorId: string,
+): boolean => {
+  const visited = new Set<string>()
+  const visit = (monitorId: string): boolean => {
+    if (monitorId === ownerMonitorId) return true
+    if (visited.has(monitorId)) return false
+    visited.add(monitorId)
+    return Object.values(monitors[monitorId]?.timeline?.floatingMonitorRegions || {}).some((region) =>
+      visit(region.monitorId),
+    )
+  }
+  return visit(candidateMonitorId)
+}
+
+const getSwapParticipantBounds = (
+  state: {
+    duration: number
+    webcamVideoUrl: string | null
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  },
+  participant: CameraSwapRegion['origin'],
+): { start: number; end: number } | null => {
+  if (participant.kind === 'main-screen') return { start: 0, end: state.duration }
+  if (participant.kind === 'webcam') return state.webcamVideoUrl ? { start: 0, end: state.duration } : null
+  const monitorRegion = state.floatingMonitorRegions[participant.regionId]
+  return monitorRegion
+    ? { start: monitorRegion.startTime, end: monitorRegion.startTime + monitorRegion.duration }
+    : null
+}
+
+const sameSwapParticipant = (left: CameraSwapRegion['origin'], right: CameraSwapRegion['target']): boolean =>
+  left.kind === right.kind &&
+  (left.kind !== 'floating-monitor-region' ||
+    right.kind !== 'floating-monitor-region' ||
+    left.regionId === right.regionId)
 
 const ensureRegionLaneIds = (state: {
   timelineLanes: TimelineLane[]
@@ -135,6 +231,7 @@ const ensureRegionLaneIds = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }) => {
   const fallbackLaneId = getFallbackLaneId(state.timelineLanes)
   getAllRegions(state).forEach((region) => {
@@ -157,6 +254,7 @@ const recalculateZIndices = (state: {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
 }) => {
   state.timelineLanes = normalizeTimelineLanes(state.timelineLanes)
   ensureRegionLaneIds(state)
@@ -184,6 +282,8 @@ const recalculateZIndices = (state: {
         state.mediaAudioRegions[region.id].zIndex = newZIndex
       } else if (state.changeSoundRegions[region.id]) {
         state.changeSoundRegions[region.id].zIndex = newZIndex
+      } else if (state.floatingMonitorRegions[region.id]) {
+        state.floatingMonitorRegions[region.id].zIndex = newZIndex
       }
     })
   })
@@ -212,7 +312,16 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   removeTimelineLane: (laneId) => {
     set((state) => {
       const normalizedLanes = normalizeTimelineLanes(state.timelineLanes)
-      if (normalizedLanes.length <= 1 || !normalizedLanes.some((lane) => lane.id === laneId)) return
+      const targetLane = normalizedLanes.find((lane) => lane.id === laneId)
+      if (
+        normalizedLanes.length <= 1 ||
+        !targetLane ||
+        targetLane.isContentRootLane ||
+        targetLane.isCutLane ||
+        targetLane.isChangeSoundLane
+      ) {
+        return
+      }
 
       const laneIndex = normalizedLanes.findIndex((lane) => lane.id === laneId)
       const fallbackLane = normalizedLanes[laneIndex - 1] || normalizedLanes[laneIndex + 1]
@@ -233,9 +342,16 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       const sorted = sortTimelineLanes(normalizeTimelineLanes(state.timelineLanes))
       const index = sorted.findIndex((lane) => lane.id === laneId)
       if (index === -1) return
+      if (sorted[index].isContentRootLane || sorted[index].isCutLane || sorted[index].isChangeSoundLane) return
 
       const targetIndex = direction === 'up' ? index - 1 : index + 1
       if (targetIndex < 0 || targetIndex >= sorted.length) return
+      if (
+        sorted[targetIndex].isContentRootLane ||
+        sorted[targetIndex].isCutLane ||
+        sorted[targetIndex].isChangeSoundLane
+      )
+        return
 
       const reordered = [...sorted]
       const [lane] = reordered.splice(index, 1)
@@ -253,7 +369,14 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
   },
   moveRegionToLane: (regionId, laneId) => {
     set((state) => {
-      if (!state.timelineLanes.some((lane) => lane.id === laneId)) return
+      const targetLane = state.timelineLanes.find((lane) => lane.id === laneId)
+      if (
+        !targetLane ||
+        targetLane.isContentRootLane ||
+        targetLane.isCutLane ||
+        targetLane.isChangeSoundLane
+      )
+        return
       const region = getRegionById(state, regionId)
       if (!region) return
       region.laneId = laneId
@@ -327,26 +450,28 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const { currentTime, duration } = get()
     if (duration === 0) return
 
-    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
-    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
+    const startTime = currentTime
+    const nextRegionStart = nextContentRootRegionStart(get().cutRegions, get().changeSoundRegions, startTime)
+    const defaultDuration = defaultContentRootDuration(duration, startTime, nextRegionStart)
 
     const id = `cut-${Date.now()}`
     const newRegion: CutRegion = {
       id,
       type: 'cut',
-      laneId: preferredLaneId,
-      startTime: currentTime,
-      duration: 2,
+      laneId: CONTENT_ROOT_LANE_ID,
+      startTime,
+      duration: defaultDuration,
       zIndex: 0,
       ...regionData,
     }
 
-    if (newRegion.startTime + newRegion.duration > duration) {
-      newRegion.duration = Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - newRegion.startTime)
+    const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+    if (newRegion.startTime + newRegion.duration > maxEnd) {
+      newRegion.duration = Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - newRegion.startTime)
     }
 
     set((state) => {
+      state.timelineLanes = ensureContentRootLane(state.timelineLanes)
       state.cutRegions[id] = newRegion
       state.selectedRegionId = id
       recalculateZIndices(state)
@@ -414,7 +539,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
     const activePresetId = get().activePresetId
     const activePreset = activePresetId ? get().presets[activePresetId] : null
-    const blurDefaults = getBlurDefaults(activePreset)
+    const blurDefaults = getBlurDefaults(activePreset, get().assetTimelineEditing?.blurDefaults)
 
     const id = `blur-${Date.now()}`
     const newRegion: BlurRegion = {
@@ -462,6 +587,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       newRegion.laneId = resolvedLaneId
 
       state.blurRegions[id] = newRegion
+      if (state.assetTimelineEditing) {
+        state.assetTimelineEditing.blurDefaults = toBlurPresetDefaults(newRegion)
+      }
       state.selectedRegionId = id
       recalculateZIndices(state)
     })
@@ -475,7 +603,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const preferredLaneId = selectedRegion?.laneId || fallbackLaneId
     const activePresetId = get().activePresetId
     const activePreset = activePresetId ? get().presets[activePresetId] : null
-    const swapDefaults = getSwapDefaults(activePreset)
+    const swapDefaults = getSwapDefaults(activePreset, get().assetTimelineEditing?.swapDefaults)
 
     const id = `swap-${Date.now()}`
     const newRegion: CameraSwapRegion = {
@@ -484,7 +612,8 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       laneId: preferredLaneId,
       startTime: currentTime,
       duration: swapDefaults.duration,
-      showDesktopOverlay: swapDefaults.showDesktopOverlay,
+      origin: swapDefaults.origin,
+      target: swapDefaults.target,
       transition: swapDefaults.transition,
       transitionDuration: swapDefaults.transitionDuration,
       zIndex: 0,
@@ -520,6 +649,9 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       newRegion.laneId = resolvedLaneId
 
       state.swapRegions[id] = newRegion
+      if (state.assetTimelineEditing) {
+        state.assetTimelineEditing.swapDefaults = toSwapPresetDefaults(newRegion)
+      }
       state.selectedRegionId = id
       recalculateZIndices(state)
     })
@@ -530,7 +662,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
 
     const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
     const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = params?.laneId || selectedRegion?.laneId || fallbackLaneId
+    const selectedLane = selectedRegion
+      ? get().timelineLanes.find((lane) => lane.id === selectedRegion.laneId)
+      : null
+    const preferredLaneId =
+      params?.laneId ||
+      (selectedLane && !selectedLane.isContentRootLane && !selectedLane.isCutLane && !selectedLane.isChangeSoundLane
+        ? selectedLane.id
+        : null) ||
+      fallbackLaneId
 
     const requestedStart = params?.startTime ?? 0
     const sourceStart = Math.max(0, params?.sourceStart ?? 0)
@@ -543,7 +683,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     const clampedStartTime = Math.max(0, Math.min(requestedStart, duration))
     const clampedDuration = Math.max(
       TIMELINE.MINIMUM_REGION_DURATION,
-      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - clampedStartTime)),
+      Math.min(requestedDuration, availableSourceDuration),
     )
 
     const id = `media-audio-${Date.now()}`
@@ -595,27 +735,27 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     })
   },
   addChangeSoundRegion: (params) => {
+    if (get().assetTimelineEditing) return
     const { duration } = get()
     if (duration <= 0) return
 
-    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
-    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
-    const preferredLaneId = params?.laneId || selectedRegion?.laneId || fallbackLaneId
-
     const requestedStart = params?.startTime ?? 0
-    const requestedDuration = params?.duration ?? Math.min(3, duration)
-
     const clampedStartTime = Math.max(0, Math.min(requestedStart, duration))
+    const nextRegionStart = nextContentRootRegionStart(get().cutRegions, get().changeSoundRegions, clampedStartTime)
+    const maxEnd = Math.min(duration, nextRegionStart < Number.POSITIVE_INFINITY ? nextRegionStart : duration)
+    const requestedDuration =
+      params?.duration ?? defaultContentRootDuration(duration, clampedStartTime, nextRegionStart)
+
     const clampedDuration = Math.max(
       TIMELINE.MINIMUM_REGION_DURATION,
-      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - clampedStartTime)),
+      Math.min(requestedDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, maxEnd - clampedStartTime)),
     )
 
     const id = `change-sound-${Date.now()}`
     const newRegion: ChangeSoundRegion = {
       id,
       type: 'change-sound',
-      laneId: preferredLaneId,
+      laneId: CONTENT_ROOT_LANE_ID,
       startTime: clampedStartTime,
       duration: clampedDuration,
       sourceKey: 'recording-mic',
@@ -627,34 +767,65 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     }
 
     set((state) => {
-      const allRegs = getAllRegions(state)
-      const endTime = newRegion.startTime + newRegion.duration
-      const isOccupied = (laneId: string) =>
-        allRegs.some(
-          (region) =>
-            region.laneId === laneId &&
-            region.startTime < endTime &&
-            region.startTime + region.duration > newRegion.startTime,
-        )
-
-      let resolvedLaneId = newRegion.laneId
-      if (isOccupied(resolvedLaneId)) {
-        const freeLane = state.timelineLanes.find((lane) => !isOccupied(lane.id))
-        if (freeLane) {
-          resolvedLaneId = freeLane.id
-        } else {
-          const normalizedLanes = normalizeTimelineLanes(state.timelineLanes)
-          const nextOrder = normalizedLanes.length
-          resolvedLaneId = `lane-${Date.now()}`
-          state.timelineLanes = [
-            ...normalizedLanes,
-            { id: resolvedLaneId, name: `Lane ${nextOrder + 1}`, order: nextOrder, visible: true, locked: false },
-          ]
-        }
-      }
-
-      newRegion.laneId = resolvedLaneId
+      state.timelineLanes = ensureContentRootLane(state.timelineLanes)
       state.changeSoundRegions[id] = newRegion
+      state.selectedRegionId = id
+      recalculateZIndices(state)
+    })
+  },
+  addFloatingMonitorRegion: (monitorId, params) => {
+    const { duration, floatingMonitors, assetTimelineEditing } = get()
+    const monitor = assetTimelineEditing
+      ? resolveMonitorForAssetTimeline(floatingMonitors, monitorId)
+      : floatingMonitors[monitorId]
+    if (!monitor || duration <= 0 || monitor.timelineDuration <= 0) return
+    if (assetTimelineEditing && monitorWouldCreateCycle(floatingMonitors, assetTimelineEditing.monitorId, monitor.id)) {
+      return
+    }
+
+    const fallbackLaneId = getFallbackLaneId(get().timelineLanes)
+    const selectedRegion = get().selectedRegionId ? getRegionById(get(), get().selectedRegionId!) : null
+    const selectedLane = selectedRegion
+      ? get().timelineLanes.find((lane) => lane.id === selectedRegion.laneId)
+      : null
+    const preferredLaneId =
+      params?.laneId ||
+      (selectedLane && !selectedLane.isContentRootLane && !selectedLane.isCutLane && !selectedLane.isChangeSoundLane
+        ? selectedLane.id
+        : null) ||
+      fallbackLaneId
+    const startTime = Math.max(0, Math.min(params?.startTime ?? get().currentTime, duration))
+    const regionDuration = Math.max(
+      TIMELINE.MINIMUM_REGION_DURATION,
+      Math.min(monitor.timelineDuration, Math.max(TIMELINE.MINIMUM_REGION_DURATION, duration - startTime)),
+    )
+    const id = `floating-monitor-region-${Date.now()}`
+
+    set((state) => {
+      state.floatingMonitorRegions[id] = {
+        id,
+        type: 'floating-monitor',
+        monitorId: monitor.id,
+        laneId: preferredLaneId,
+        startTime,
+        duration: regionDuration,
+        sourceStart: monitor.timelineStart,
+        x: monitor.x,
+        y: monitor.y,
+        width: monitor.width,
+        height: monitor.height,
+        crop: { top: 0, right: 0, bottom: 0, left: 0 },
+        borderRadius: DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.defaultValue,
+        isFlipped: DEFAULTS.FLOATING_MONITOR.STYLE.FLIP.defaultValue,
+        border: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.ENABLED.defaultValue,
+        borderWidth: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.defaultValue,
+        borderColor: DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.DEFAULT_COLOR_RGBA,
+        shadowBlur: DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.defaultValue,
+        shadowOffsetX: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.defaultValue,
+        shadowOffsetY: DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.defaultValue,
+        shadowColor: DEFAULTS.FLOATING_MONITOR.EFFECTS.DEFAULT_COLOR_RGBA,
+        zIndex: 0,
+      }
       state.selectedRegionId = id
       recalculateZIndices(state)
     })
@@ -695,6 +866,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       recalculateZIndices(state)
     })
   },
+  adaptMediaAudioToCuts: (regionId) => {
+    set((state) => {
+      if (!state.mediaAudioRegions[regionId]) return
+      const firstRegionId = applyMediaAudioCutAdaptation(state.cutRegions, state.mediaAudioRegions)
+      if (!firstRegionId) return
+      state.selectedRegionId = firstRegionId
+      recalculateZIndices(state)
+    })
+  },
   splitChangeSoundRegion: (regionId, splitTime) => {
     set((state) => {
       const region = state.changeSoundRegions[regionId]
@@ -731,6 +911,73 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       recalculateZIndices(state)
     })
   },
+  splitFloatingMonitorRegion: (regionId, splitTime) => {
+    set((state) => {
+      const region = state.floatingMonitorRegions[regionId]
+      if (!region) return
+
+      const regionStart = region.startTime
+      const regionEnd = region.startTime + region.duration
+      const clampedSplitTime = Math.max(regionStart, Math.min(splitTime, regionEnd))
+
+      const firstDuration = clampedSplitTime - regionStart
+      const secondDuration = regionEnd - clampedSplitTime
+      if (firstDuration < TIMELINE.MINIMUM_REGION_DURATION || secondDuration < TIMELINE.MINIMUM_REGION_DURATION) {
+        return
+      }
+
+      region.duration = firstDuration
+
+      const nextRegionId = `floating-monitor-${Date.now()}`
+      state.floatingMonitorRegions[nextRegionId] = {
+        ...region,
+        id: nextRegionId,
+        startTime: clampedSplitTime,
+        duration: secondDuration,
+        sourceStart: region.sourceStart + firstDuration,
+      }
+
+      state.selectedRegionId = nextRegionId
+      recalculateZIndices(state)
+    })
+  },
+  duplicateRegion: (id) => {
+    set((state) => {
+      const source = getRegionById(state, id)
+      if (!source) return
+
+      const duplicatedId = `${source.type}-${Date.now()}`
+      switch (source.type) {
+        case 'zoom':
+          state.zoomRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'cut':
+          state.cutRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'speed':
+          state.speedRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'blur':
+          state.blurRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'swap':
+          state.swapRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'media-audio':
+          state.mediaAudioRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'change-sound':
+          state.changeSoundRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+        case 'floating-monitor':
+          state.floatingMonitorRegions[duplicatedId] = duplicateTimelineRegion(source, duplicatedId)
+          break
+      }
+
+      state.selectedRegionId = duplicatedId
+      recalculateZIndices(state)
+    })
+  },
   updateRegion: (id, updates) => {
     const shouldSyncBlurDefaults = BLUR_DEFAULT_UPDATE_KEYS.some((key) => key in updates)
     const shouldSyncSwapDefaults = SWAP_DEFAULT_UPDATE_KEYS.some((key) => key in updates)
@@ -758,6 +1005,60 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
           region.volume = Math.max(0, Math.min(region.volume, 1))
           region.fadeInDuration = Math.max(0, Math.min(region.fadeInDuration, region.duration))
           region.fadeOutDuration = Math.max(0, Math.min(region.fadeOutDuration, region.duration))
+        } else if (region.type === 'floating-monitor') {
+          region.sourceStart = Math.max(0, region.sourceStart)
+          region.x = Math.max(0, Math.min(region.x, 1))
+          region.y = Math.max(0, Math.min(region.y, 1))
+          region.width = Math.max(0.1, Math.min(region.width, 1))
+          region.height = Math.max(0.1, Math.min(region.height, 1))
+          region.borderRadius = Math.max(
+            DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.min,
+            Math.min(region.borderRadius, DEFAULTS.FLOATING_MONITOR.STYLE.RADIUS.max),
+          )
+          region.borderWidth = Math.max(
+            DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.min,
+            Math.min(region.borderWidth, DEFAULTS.FLOATING_MONITOR.STYLE.BORDER.WIDTH.max),
+          )
+          region.shadowBlur = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.min,
+            Math.min(region.shadowBlur, DEFAULTS.FLOATING_MONITOR.EFFECTS.BLUR.max),
+          )
+          region.shadowOffsetX = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.min,
+            Math.min(region.shadowOffsetX, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_X.max),
+          )
+          region.shadowOffsetY = Math.max(
+            DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.min,
+            Math.min(region.shadowOffsetY, DEFAULTS.FLOATING_MONITOR.EFFECTS.OFFSET_Y.max),
+          )
+          const monitor = state.floatingMonitors[region.monitorId]
+          if (monitor?.kind === 'image') {
+            region.sourceStart = 0
+          } else if (monitor?.duration) {
+            region.duration = Math.min(
+              region.duration,
+              Math.max(TIMELINE.MINIMUM_REGION_DURATION, monitor.duration - region.sourceStart),
+            )
+          }
+        } else if (region.type === 'swap') {
+          if (sameSwapParticipant(region.origin, region.target)) {
+            region.target = { kind: 'floating-monitor-region', regionId: '' }
+          }
+          const originBounds = getSwapParticipantBounds(state, region.origin)
+          const targetBounds = getSwapParticipantBounds(state, region.target)
+          if (originBounds && targetBounds) {
+            const validStart = Math.max(originBounds.start, targetBounds.start)
+            const validEnd = Math.min(originBounds.end, targetBounds.end)
+            if (validEnd - validStart >= TIMELINE.MINIMUM_REGION_DURATION) {
+              region.startTime = Math.max(
+                validStart,
+                Math.min(region.startTime, validEnd - TIMELINE.MINIMUM_REGION_DURATION),
+              )
+              region.duration = Math.min(region.duration, validEnd - region.startTime)
+            } else {
+              region.target = { kind: 'floating-monitor-region', regionId: '' }
+            }
+          }
         }
         if (oldDuration !== region.duration || oldLaneId !== region.laneId) {
           recalculateZIndices(state)
@@ -768,14 +1069,30 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     if (shouldSyncBlurDefaults) {
       const updatedBlurRegion = get().blurRegions[id]
       if (updatedBlurRegion) {
-        get()._updateActivePresetToolDefaults({ blurDefaults: toBlurPresetDefaults(updatedBlurRegion) })
+        if (get().assetTimelineEditing) {
+          set((state) => {
+            if (state.assetTimelineEditing) {
+              state.assetTimelineEditing.blurDefaults = toBlurPresetDefaults(updatedBlurRegion)
+            }
+          })
+        } else {
+          get()._updateActivePresetToolDefaults({ blurDefaults: toBlurPresetDefaults(updatedBlurRegion) })
+        }
       }
     }
 
     if (shouldSyncSwapDefaults) {
       const updatedSwapRegion = get().swapRegions[id]
       if (updatedSwapRegion) {
-        get()._updateActivePresetToolDefaults({ swapDefaults: toSwapPresetDefaults(updatedSwapRegion) })
+        if (get().assetTimelineEditing) {
+          set((state) => {
+            if (state.assetTimelineEditing) {
+              state.assetTimelineEditing.swapDefaults = toSwapPresetDefaults(updatedSwapRegion)
+            }
+          })
+        } else {
+          get()._updateActivePresetToolDefaults({ swapDefaults: toSwapPresetDefaults(updatedSwapRegion) })
+        }
       }
     }
   },
@@ -788,9 +1105,15 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       delete state.swapRegions[id]
       delete state.mediaAudioRegions[id]
       delete state.changeSoundRegions[id]
+      delete state.floatingMonitorRegions[id]
       if (state.selectedRegionId === id) {
         state.selectedRegionId = null
       }
+      state.timelineLanes = removeContentRootLaneIfEmpty(
+        state.timelineLanes,
+        Object.keys(state.cutRegions).length > 0,
+        Object.keys(state.changeSoundRegions).length > 0,
+      )
       recalculateZIndices(state)
     })
   },
@@ -804,7 +1127,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
     }),
   setTimelineZoom: (zoom) =>
     set((state) => {
-      state.timelineZoom = zoom
+      state.timelineZoom = Math.min(TIMELINE.VIEW_ZOOM.MAX, Math.max(TIMELINE.VIEW_ZOOM.MIN, zoom))
     }),
   applyAnimationSettingsToAll: ({ transitionDuration, easing, zoomLevel }) => {
     set((state) => {

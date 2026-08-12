@@ -81,10 +81,10 @@ export function ContextMenu({ isOpen, onClose, position, children, className }: 
         ref={menuRef}
         className={cn(
           'fixed min-w-[200px] rounded-lg overflow-hidden',
-          'bg-zinc-900/60 backdrop-blur-3xl backdrop-saturate-200',
-          'border border-white/5 shadow-2xl shadow-black/40',
+          'bg-popover/95 text-popover-foreground backdrop-blur-3xl backdrop-saturate-200',
+          'border border-border shadow-2xl shadow-black/20 dark:shadow-black/40',
           'animate-in fade-in-0 zoom-in-95 duration-100',
-          'ring-1 ring-white/10 ring-inset',
+          'ring-1 ring-border/40 ring-inset',
           className,
         )}
         style={{
@@ -113,8 +113,8 @@ export const ContextMenuItem = React.forwardRef<
     ref={ref}
     className={cn(
       'w-full px-3 py-1.5 text-left text-sm font-medium',
-      'text-white/90 hover:text-white',
-      'hover:bg-white/10 active:bg-white/15',
+      'text-popover-foreground hover:text-popover-foreground',
+      'hover:bg-accent active:bg-accent/80',
       'transition-colors duration-75',
       'flex items-center gap-2',
       'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -137,7 +137,7 @@ export const ContextMenuLabel = React.forwardRef<HTMLDivElement, React.HTMLAttri
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('px-3 py-1.5 text-xs font-semibold text-white/40 uppercase tracking-wider', className)}
+      className={cn('px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider', className)}
       {...props}
     />
   ),

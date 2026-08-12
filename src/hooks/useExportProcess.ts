@@ -109,12 +109,23 @@ export const useExportProcess = () => {
       syncOffset: fullState.syncOffset,
       audioPath: fullState.audioPath,
       audioUrl: fullState.audioUrl,
+      volume: fullState.volume,
+      isMuted: fullState.isMuted,
       systemAudioPath: fullState.systemAudioPath,
       systemAudioVolume: fullState.systemAudioVolume,
       systemAudioMuted: fullState.systemAudioMuted,
+      recordingSyncOffsetMs: fullState.recordingSyncOffsetMs,
+      systemAudioSyncOffsetMs: fullState.systemAudioSyncOffsetMs,
+      captureSourceOffsetsMs: fullState.captureSourceOffsetsMs,
       mediaAudioClip: fullState.mediaAudioClip,
       mediaAudioRegions: fullState.mediaAudioRegions,
       changeSoundRegions: fullState.changeSoundRegions,
+      takeModeEnabled: fullState.takeModeEnabled,
+      sourceDuration: fullState.sourceDuration,
+      takes: fullState.takes,
+      takeTransitions: fullState.takeTransitions,
+      floatingMonitors: fullState.floatingMonitors,
+      floatingMonitorRegions: fullState.floatingMonitorRegions,
     }
 
     setResult(null)

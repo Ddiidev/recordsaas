@@ -33,7 +33,8 @@ const DEFAULT_BLUR_PRESET_DEFAULTS: BlurPresetDefaults = {
 }
 const DEFAULT_SWAP_PRESET_DEFAULTS: SwapPresetDefaults = {
   duration: SWAP_REGION.DEFAULT_DURATION,
-  showDesktopOverlay: SWAP_REGION.SHOW_DESKTOP_OVERLAY,
+  origin: { kind: 'main-screen' },
+  target: { kind: 'webcam' },
   transition: SWAP_REGION.TRANSITION.DEFAULT,
   transitionDuration: SWAP_REGION.TRANSITION_DURATION.defaultValue,
 }
@@ -76,10 +77,18 @@ const normalizeSwapPresetDefaults = (value: Partial<SwapPresetDefaults> | undefi
     typeof value?.duration === 'number' && Number.isFinite(value.duration)
       ? Math.max(TIMELINE.MINIMUM_REGION_DURATION, value.duration)
       : DEFAULT_SWAP_PRESET_DEFAULTS.duration,
-  showDesktopOverlay:
-    typeof value?.showDesktopOverlay === 'boolean'
-      ? value.showDesktopOverlay
-      : DEFAULT_SWAP_PRESET_DEFAULTS.showDesktopOverlay,
+  origin:
+    value?.origin?.kind === 'webcam'
+      ? { kind: 'webcam' }
+      : value?.origin?.kind === 'floating-monitor-region'
+        ? { kind: 'floating-monitor-region', regionId: value.origin.regionId || '' }
+        : { kind: 'main-screen' },
+  target:
+    value?.target?.kind === 'main-screen'
+      ? { kind: 'main-screen' }
+      : value?.target?.kind === 'floating-monitor-region'
+        ? { kind: 'floating-monitor-region', regionId: value.target.regionId || '' }
+        : { kind: 'webcam' },
   transition:
     value?.transition && SWAP_REGION.TRANSITION.OPTIONS.includes(value.transition)
       ? value.transition
@@ -235,6 +244,11 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
       set((state) => {
         state.frameStyles = cloneDeep(preset.styles)
         state.aspectRatio = preset.aspectRatio
+        if (state.assetTimelineEditing) {
+          state.assetTimelineEditing.blurDefaults = cloneDeep(normalizeBlurPresetDefaults(preset.blurDefaults))
+          state.assetTimelineEditing.swapDefaults = cloneDeep(normalizeSwapPresetDefaults(preset.swapDefaults))
+          return
+        }
         state.activePresetId = id
         if (preset.webcamLayout) state.webcamLayout = cloneDeep(preset.webcamLayout)
         if (preset.webcamStyles) state.webcamStyles = cloneDeep(preset.webcamStyles)
@@ -245,6 +259,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     }
   },
   resetPreset: (id) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       const presetToReset = state.presets[id]
       if (presetToReset?.isDefault) {
@@ -262,6 +277,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   _ensureActivePresetIsWritable: () => {
+    if (get().assetTimelineEditing) return
     const { activePresetId, presets } = get()
     if (activePresetId && presets[activePresetId]?.isDefault) {
       const newId = `preset-${Date.now()}`
@@ -280,6 +296,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
   },
 
   _persistPresets: async (presets: Record<string, Preset>) => {
+    if (get().assetTimelineEditing) return
     try {
       set((state) => {
         state.presetSaveStatus = 'saving'
@@ -304,6 +321,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
   },
 
   updatePresetName: (id, name) => {
+    if (get().assetTimelineEditing) return
     set((state) => {
       const preset = state.presets[id]
       if (preset && !preset.isDefault) {
@@ -313,6 +331,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   saveCurrentStyleAsPreset: (name) => {
+    if (get().assetTimelineEditing) return
     const id = `preset-${Date.now()}`
     const {
       frameStyles,
@@ -346,6 +365,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   updateActivePreset: () => {
+    if (get().assetTimelineEditing) return
     const {
       activePresetId,
       presets,
@@ -372,6 +392,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     }
   },
   _updateActivePresetToolDefaults: (defaults) => {
+    if (get().assetTimelineEditing) return
     get()._ensureActivePresetIsWritable()
 
     const activePresetId = get().activePresetId
@@ -390,6 +411,7 @@ export const createPresetSlice: Slice<PresetState, PresetActions> = (set, get) =
     get()._persistPresets(get().presets)
   },
   deletePreset: (id) => {
+    if (get().assetTimelineEditing) return
     if (get().presets[id]?.isDefault || id === DEFAULT_PRESET_ID) return
     set((state) => {
       delete state.presets[id]

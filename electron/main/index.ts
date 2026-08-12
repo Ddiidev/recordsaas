@@ -7,6 +7,7 @@ import fsSync from 'node:fs'
 import { Readable } from 'node:stream'
 import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
+import { prepareExportExperimentLog } from './lib/export-experiment-log'
 import { setupLogging } from './lib/logging'
 import { resolveMediaRequestPath } from './lib/media-url'
 import { registerIpcHandlers } from './ipc'
@@ -26,13 +27,16 @@ protocol.registerSchemesAsPrivileged([
       standard: true,
       secure: true,
       supportFetchAPI: true,
+      corsEnabled: true,
       stream: true,
     },
   },
 ])
 
-// Enable WebCodecs in renderer/worker contexts
-app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebCodecsExperimental')
+// Enable WebCodecs and the Wayland global-shortcut portal before app readiness.
+const enabledFeatures = ['WebCodecs', 'WebCodecsExperimental']
+if (process.platform === 'linux') enabledFeatures.push('GlobalShortcutsPortal')
+app.commandLine.appendSwitch('enable-features', enabledFeatures.join(','))
 app.commandLine.appendSwitch('enable-blink-features', 'WebCodecs,WebCodecsExperimental')
 app.commandLine.appendSwitch('disable-gpu-vsync')
 
@@ -133,6 +137,8 @@ const createFileResponse = (request: Request, filePath: string): Response => {
     return new Response(null, {
       status: 416,
       headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
         'Accept-Ranges': 'bytes',
         'Content-Range': `bytes */${fileSize}`,
       },
@@ -148,6 +154,8 @@ const createFileResponse = (request: Request, filePath: string): Response => {
       : (Readable.toWeb(fsSync.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>)
 
   const headers: Record<string, string> = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range',
     'Accept-Ranges': 'bytes',
     'Content-Length': String(contentLength),
     'Content-Type': contentType,
@@ -177,6 +185,9 @@ if (!hasSingleInstanceLock) {
     if (appState.recorderWin && !appState.recorderWin.isDestroyed()) {
       if (appState.recorderWin.isMinimized()) {
         appState.recorderWin.restore()
+      }
+      if (!appState.recorderWin.isVisible()) {
+        appState.recorderWin.show()
       }
       appState.recorderWin.focus()
     } else {
@@ -211,6 +222,12 @@ app.on('activate', () => {
 
 app.whenReady().then(async () => {
   log.info('[App] Ready. Initializing...')
+  const exportExperimentLogPath = prepareExportExperimentLog()
+  if (exportExperimentLogPath) {
+    log.info(`[ExportExperiment] Fresh diagnostics log: ${exportExperimentLogPath}`)
+  } else {
+    log.warn('[ExportExperiment] Could not prepare diagnostics log.')
+  }
   registerCustomProtocolClient()
 
   // Set Dock Menu on macOS

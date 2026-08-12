@@ -46,11 +46,15 @@ type CurrentProcessMemoryInfo = {
   shared: number
 }
 
-type MediaAudioImportResult = {
+type MediaImportResult = {
   canceled: boolean
   asset?: {
     path: string
     name: string
+    duration?: number
+    hasAudioTrack?: boolean
+    isSeekableProxy?: boolean
+    originalPath?: string
   }
 }
 type FileStatResult = {
@@ -220,24 +224,56 @@ export const electronAPI = {
     computerAudioEnabled?: boolean
     computerAudioDeviceId?: string
     recordingProfile?: unknown
+    takeModeEnabled?: boolean
   }): Promise<RecordingResult> => ipcRenderer.invoke('recording:start', options),
   selectRecordingArea: (): Promise<WindowSource['geometry'] | undefined> => ipcRenderer.invoke('recording:select-area'),
   getComputerAudioSupport: (): Promise<{ supported: boolean; reason?: string }> =>
     ipcRenderer.invoke('recording:get-computer-audio-support'),
   stopRecording: (): void => ipcRenderer.send('recording:stop'),
+  toggleRecordingTimer: (): void => ipcRenderer.send('recording:toggle-timer'),
+  onTakeMarked: (callback: (payload: { takeNumber: number; timestamp: number }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { takeNumber: number; timestamp: number }) =>
+      callback(payload)
+    ipcRenderer.on('recording:take-marked', listener)
+    return () => ipcRenderer.removeListener('recording:take-marked', listener)
+  },
   loadVideoFromFile: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:load-from-file'),
   importProject: (): Promise<RecordingResult> => ipcRenderer.invoke('recording:import-project'),
   importProjectFile: (projectFilePath: string): Promise<RecordingResult> =>
     ipcRenderer.invoke('recording:import-project-file', projectFilePath),
-  importMediaAudioAsset: (): Promise<MediaAudioImportResult> => ipcRenderer.invoke('media:import-audio'),
+  importMediaAudioAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-audio'),
+  importMediaVideoAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-video'),
+  prepareTakeVideo: (assetPath: string, requestId: string): Promise<MediaImportResult> =>
+    ipcRenderer.invoke('media:prepare-take-video', { assetPath, requestId }),
+  cancelPrepareTakeVideo: (requestId: string): void => ipcRenderer.send('media:cancel-prepare-take-video', requestId),
+  onPrepareTakeVideoProgress: (
+    callback: (payload: { requestId: string; progress: number; stage: string }) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { requestId: string; progress: number; stage: string },
+    ) => callback(payload)
+    ipcRenderer.on('media:prepare-take-video-progress', listener)
+    return () => ipcRenderer.removeListener('media:prepare-take-video-progress', listener)
+  },
+  importMediaImageAsset: (): Promise<MediaImportResult> => ipcRenderer.invoke('media:import-image'),
   getCursorScale: (): Promise<number> => ipcRenderer.invoke('desktop:get-cursor-scale'),
   setCursorScale: (scale: number): void => ipcRenderer.send('desktop:set-cursor-scale', scale),
 
   getDisplays: (): Promise<DisplayInfo[]> => ipcRenderer.invoke('desktop:get-displays'),
   getDshowDevices: (): Promise<{ video: DshowDevice[]; audio: DshowDevice[] }> =>
     ipcRenderer.invoke('desktop:get-dshow-devices'),
-  getWindowsAudioDevices: (): Promise<{ id: string; name: string; isDefault: boolean; sampleRate: number; channels: number; bitsPerSample: number; sampleFormat: string }[]> =>
-    ipcRenderer.invoke('desktop:get-windows-audio-devices'),
+  getWindowsAudioDevices: (): Promise<
+    {
+      id: string
+      name: string
+      isDefault: boolean
+      sampleRate: number
+      channels: number
+      bitsPerSample: number
+      sampleFormat: string
+    }[]
+  > => ipcRenderer.invoke('desktop:get-windows-audio-devices'),
   analyzeRecordingCapability: (): Promise<{
     recommendedFps: 30 | 60
     canRecord60Fps: boolean
@@ -398,6 +434,9 @@ export const electronAPI = {
     }
     ipcRenderer.send('export:render-progress', payload)
   },
+  sendRenderDiagnostics: (payload: { event: string; exportSessionId?: string; metrics: Record<string, unknown> }) => {
+    ipcRenderer.send('export:render-diagnostics', payload)
+  },
   finishRender: () => {
     ipcRenderer.send('export:render-finished')
   },
@@ -443,6 +482,8 @@ export const electronAPI = {
   getPlatform: (): Promise<NodeJS.Platform> => ipcRenderer.invoke('app:getPlatform'),
   getVideoFrame: (options: { videoPath: string; time: number }): Promise<string> =>
     ipcRenderer.invoke('video:get-frame', options),
+  getAudioWaveform: (filePath: string): Promise<{ peaks: number[]; peaksPerSecond: number }> =>
+    ipcRenderer.invoke('audio:build-waveform', filePath),
 }
 
 // Expose API safely

@@ -20,6 +20,8 @@ import { Input } from '../components/ui/input'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
+import type { FloatingMonitor, FrameStyles } from '../types'
+import { positionTakes } from '../lib/takes'
 
 const generateDefaultProjectName = () => {
   const now = new Date()
@@ -31,6 +33,71 @@ const getProjectThumbnailTimeSeconds = (duration: number) => {
   if (!Number.isFinite(duration) || duration <= 0) return 0
   if (duration <= 2) return Math.max(0, duration / 2)
   return Math.min(1, duration - 0.1)
+}
+
+// Asset editing replaces the working timeline only in memory. Project files always
+// serialize the main timeline plus the current asset draft.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const createCanonicalProjectSaveState = (storeState: any) => {
+  const editing = storeState.assetTimelineEditing
+  if (!editing) return { ...storeState }
+
+  const monitor = storeState.floatingMonitors[editing.monitorId]
+  const assetTimeline = {
+    duration: storeState.duration,
+    videoDimensions: storeState.videoDimensions,
+    frameStyles: storeState.frameStyles,
+    aspectRatio: storeState.aspectRatio,
+    timelineLanes: storeState.timelineLanes,
+    zoomRegions: storeState.zoomRegions,
+    cutRegions: storeState.cutRegions,
+    speedRegions: storeState.speedRegions,
+    blurRegions: storeState.blurRegions,
+    swapRegions: storeState.swapRegions,
+    floatingMonitorRegions: storeState.floatingMonitorRegions,
+    mediaAudioClip: storeState.mediaAudioClip,
+    mediaAudioRegions: storeState.mediaAudioRegions,
+    blurDefaults: editing.blurDefaults,
+    swapDefaults: editing.swapDefaults,
+    cursorStyles: storeState.cursorStyles,
+    selectedRegionId: storeState.selectedRegionId,
+  }
+
+  return createCanonicalProjectSaveState({
+    ...storeState,
+    ...editing.mainProject,
+    floatingMonitors: {
+      ...storeState.floatingMonitors,
+      ...(monitor
+        ? {
+            [editing.monitorId]: {
+              ...monitor,
+              duration: Math.max(monitor.duration, storeState.duration),
+              timelineStart: 0,
+              timelineDuration: storeState.duration,
+              timeline: assetTimeline,
+            },
+          }
+        : {}),
+    },
+    assetTimelineEditing: editing.mainProject.assetTimelineEditing,
+    isPlaying: false,
+  })
+}
+
+const serializeFrameStyles = (frameStyles: FrameStyles | undefined): FrameStyles | undefined => {
+  const imagePath = frameStyles?.background?.imagePath
+  if (!imagePath) return frameStyles
+
+  const serializedImagePath = getMediaPathBasename(imagePath)
+  return {
+    ...frameStyles,
+    background: {
+      ...frameStyles.background,
+      imagePath: serializedImagePath,
+      imageUrl: serializedImagePath,
+    },
+  }
 }
 
 export function EditorPage() {
@@ -45,12 +112,17 @@ export function EditorPage() {
     seekToPreviousFrame,
     seekBackward,
     seekForward,
+    finishAssetTimelineEdit,
   } = useEditorStore.getState()
-  const { presetSaveStatus, duration, isPreviewFullScreen } = useEditorStore(
+  const { presetSaveStatus, duration, isPreviewFullScreen, assetTimelineEditing, editingAssetName } = useEditorStore(
     useShallow((state) => ({
       presetSaveStatus: state.presetSaveStatus,
       duration: state.duration,
       isPreviewFullScreen: state.isPreviewFullScreen,
+      assetTimelineEditing: state.assetTimelineEditing,
+      editingAssetName: state.assetTimelineEditing
+        ? state.floatingMonitors[state.assetTimelineEditing.monitorId]?.name
+        : null,
     })),
   )
   const { undo, redo } = useEditorStore.temporal.getState()
@@ -87,6 +159,7 @@ export function EditorPage() {
   const [projectExportName, setProjectExportName] = useState(generateDefaultProjectName)
   const [projectNameError, setProjectNameError] = useState<string | null>(null)
   const [isProjectNameValid, setProjectNameValid] = useState(true)
+  const [isTimelineScrubbing, setIsTimelineScrubbing] = useState(false)
   const isImportedProject = !!useEditorStore((state) => state.originalProjectPath)
 
   useEffect(() => {
@@ -112,6 +185,7 @@ export function EditorPage() {
       try {
         setIsExportingProject(true)
         const storeState = useEditorStore.getState()
+        const canonicalState = createCanonicalProjectSaveState(storeState)
         const {
           videoPath,
           metadataPath,
@@ -119,11 +193,25 @@ export function EditorPage() {
           systemAudioPath,
           webcamVideoPath,
           mediaAudioClip,
+          floatingMonitors,
           originalProjectPath,
           duration: projectDuration,
-        } = storeState
+        } = canonicalState
 
-        const mediaFiles = [videoPath, metadataPath, audioPath, systemAudioPath, webcamVideoPath, mediaAudioClip?.path]
+        const mediaFiles = [
+          videoPath,
+          metadataPath,
+          audioPath,
+          systemAudioPath,
+          webcamVideoPath,
+          mediaAudioClip?.path,
+          ...Object.values(floatingMonitors as Record<string, FloatingMonitor>).flatMap((monitor) => [
+            monitor.path,
+            monitor.timeline?.mediaAudioClip?.path,
+            monitor.timeline?.frameStyles?.background?.imagePath,
+          ]),
+          canonicalState.frameStyles?.background?.imagePath,
+        ]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
 
@@ -143,8 +231,9 @@ export function EditorPage() {
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const stateToSave = { ...storeState } as any
+        const stateToSave = { ...canonicalState } as any
         delete stateToSave.cursorBitmapsToRender
+        delete stateToSave.assetTimelineEditing
         stateToSave.events = storeState.metadata
         delete stateToSave.metadata
 
@@ -165,6 +254,35 @@ export function EditorPage() {
             url: `media://${serializedMediaPath}`,
           }
         }
+        stateToSave.frameStyles = serializeFrameStyles(stateToSave.frameStyles)
+        stateToSave.floatingMonitors = Object.fromEntries(
+          Object.entries((stateToSave.floatingMonitors as Record<string, FloatingMonitor> | undefined) || {}).map(
+            ([monitorId, monitor]) => {
+              const serializedPath = getMediaPathBasename(monitor.path)
+              return [
+                monitorId,
+                {
+                  ...monitor,
+                  path: serializedPath,
+                  url: `media://${serializedPath}`,
+                  timeline: monitor.timeline
+                    ? {
+                        ...monitor.timeline,
+                        frameStyles: serializeFrameStyles(monitor.timeline.frameStyles),
+                        mediaAudioClip: monitor.timeline.mediaAudioClip
+                          ? {
+                              ...monitor.timeline.mediaAudioClip,
+                              path: getMediaPathBasename(monitor.timeline.mediaAudioClip.path),
+                              url: `media://${getMediaPathBasename(monitor.timeline.mediaAudioClip.path)}`,
+                            }
+                          : null,
+                      }
+                    : undefined,
+                },
+              ]
+            },
+          ),
+        )
 
         const projectData = JSON.stringify(stateToSave, null, 2)
 
@@ -178,6 +296,9 @@ export function EditorPage() {
           if (!originalProjectPath) {
             useEditorStore.getState().setOriginalProjectPath(targetFolder)
             window.electronAPI.showItemInFolder(targetFolder)
+          }
+          if (storeState.assetTimelineEditing) {
+            useEditorStore.getState().finishAssetTimelineEdit()
           }
           setProjectNamePopupOpen(false)
         } else if (saveResult.canceled) {
@@ -221,11 +342,37 @@ export function EditorPage() {
   }, [handleExportProject, projectExportName])
 
   const handleDeleteSelectedRegion = useCallback(() => {
-    const currentSelectedId = useEditorStore.getState().selectedRegionId
+    const state = useEditorStore.getState()
+    if (state.selectedTakeId) {
+      state.deleteTake(state.selectedTakeId)
+      return
+    }
+    const currentSelectedId = state.selectedRegionId
     if (currentSelectedId) {
       deleteRegion(currentSelectedId)
     }
   }, [deleteRegion])
+
+  const handleSplitAtPlayhead = useCallback(() => {
+    const state = useEditorStore.getState()
+    if (state.selectedTakeId) {
+      const positioned = positionTakes(state.takes, state.takeTransitions).find(
+        (item) => item.take.id === state.selectedTakeId,
+      )
+      if (positioned) state.splitTake(state.selectedTakeId, state.currentTime - positioned.start)
+      return
+    }
+    const selectedId = state.selectedRegionId
+    if (!selectedId) return
+    const time = state.currentTime
+    if (state.floatingMonitorRegions[selectedId]) {
+      state.splitFloatingMonitorRegion(selectedId, time)
+    } else if (state.mediaAudioRegions[selectedId]) {
+      state.splitMediaAudioRegion(selectedId, time)
+    } else if (state.changeSoundRegions[selectedId]) {
+      state.splitChangeSoundRegion(selectedId, time)
+    }
+  }, [])
 
   const handleSeekFrame = useCallback(
     (direction: 'next' | 'prev') => {
@@ -234,8 +381,9 @@ export function EditorPage() {
       } else {
         seekToPreviousFrame()
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = useEditorStore.getState().currentTime
+      if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
+        const state = useEditorStore.getState()
+        videoRef.current.currentTime = state.currentTime + Math.max(0, state.captureSourceOffsetsMs?.screen || 0) / 1000
       }
     },
     [seekToNextFrame, seekToPreviousFrame],
@@ -248,8 +396,9 @@ export function EditorPage() {
       } else {
         seekBackward(Math.abs(seconds))
       }
-      if (videoRef.current) {
-        videoRef.current.currentTime = useEditorStore.getState().currentTime
+      if (videoRef.current && !useEditorStore.getState().takeModeEnabled) {
+        const state = useEditorStore.getState()
+        videoRef.current.currentTime = state.currentTime + Math.max(0, state.captureSourceOffsetsMs?.screen || 0) / 1000
       }
     },
     [seekForward, seekBackward],
@@ -259,6 +408,10 @@ export function EditorPage() {
     {
       delete: handleDeleteSelectedRegion,
       backspace: handleDeleteSelectedRegion,
+      s: (e) => {
+        e.preventDefault()
+        handleSplitAtPlayhead()
+      },
       ' ': (e) => {
         e.preventDefault()
         togglePlay()
@@ -280,8 +433,35 @@ export function EditorPage() {
         e.preventDefault()
         redo()
       },
+      'ctrl+d': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.duplicateTake(state.selectedTakeId)
+      },
+      'alt+arrowleft': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.moveTake(state.selectedTakeId, 'left')
+      },
+      'alt+arrowright': () => {
+        const state = useEditorStore.getState()
+        if (state.selectedTakeId) state.moveTake(state.selectedTakeId, 'right')
+      },
+      f2: () => {
+        const state = useEditorStore.getState()
+        const take = state.takes.find((candidate) => candidate.id === state.selectedTakeId)
+        if (!take) return
+        const name = window.prompt('Take name', take.name || '')
+        if (name !== null) state.renameTake(take.id, name)
+      },
     },
-    [handleDeleteSelectedRegion, undo, redo, togglePlay, handleSeekFrame, togglePreviewFullScreen],
+    [
+      handleDeleteSelectedRegion,
+      handleSplitAtPlayhead,
+      undo,
+      redo,
+      togglePlay,
+      handleSeekFrame,
+      togglePreviewFullScreen,
+    ],
   )
 
   useEffect(() => {
@@ -356,6 +536,23 @@ export function EditorPage() {
   }
 
   const renderHeaderActions = () => {
+    if (assetTimelineEditing) {
+      return [
+        <div
+          key="asset-editor-label"
+          className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-sm font-semibold text-violet-600"
+        >
+          Editando asset: {editingAssetName || 'Vídeo'}
+        </div>,
+        <Button
+          key="finish-asset-edit"
+          onClick={finishAssetTimelineEdit}
+          className="bg-violet-600 text-white hover:bg-violet-500"
+        >
+          Concluir edição
+        </Button>,
+      ]
+    }
     const actions = [
       <div key="export-project" className="relative z-[1100]">
         <ExportProjectButton
@@ -516,7 +713,7 @@ export function EditorPage() {
                 isPreviewFullScreen && 'fixed inset-0 z-50 bg-black p-0',
               )}
             >
-              <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} />
+              <Preview videoRef={videoRef} onSeekFrame={handleSeekFrame} isTimelineScrubbing={isTimelineScrubbing} />
             </div>
             <div className={cn('flex-shrink-0', isPreviewFullScreen && 'hidden')}>
               <PreviewControls />
@@ -527,7 +724,7 @@ export function EditorPage() {
                 isPreviewFullScreen && 'hidden', // Hide Timeline in fullscreen
               )}
             >
-              <Timeline videoRef={videoRef} />
+              <Timeline videoRef={videoRef} onScrubStateChange={setIsTimelineScrubbing} />
             </div>
           </div>
         </div>

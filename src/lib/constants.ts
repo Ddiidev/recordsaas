@@ -38,6 +38,11 @@ export const APP = {
 export const TIMELINE = {
   MINIMUM_REGION_DURATION: 0.1, // 100ms
   REGION_DELETE_THRESHOLD: 0.05, // 50ms - Regions smaller than this on mouse up are deleted.
+  VIEW_ZOOM: {
+    MIN: 1,
+    MAX: 100,
+    STEP: 0.5,
+  },
 }
 
 // Zoom and Pan specific constants
@@ -182,8 +187,25 @@ export const DEFAULTS = {
       SMOOTHING_WINDOW: 0.5, // seconds - time window for smoothing calculation
     },
   },
+  FLOATING_MONITOR: {
+    STYLE: {
+      RADIUS: { min: 0, max: 50, step: 1, defaultValue: 4 },
+      FLIP: { defaultValue: false },
+      BORDER: {
+        ENABLED: { defaultValue: true },
+        WIDTH: { min: 1, max: 20, step: 1, defaultValue: 2 },
+        DEFAULT_COLOR_RGBA: 'rgba(255, 255, 255, 0.72)',
+      },
+    },
+    EFFECTS: {
+      BLUR: { min: 0, max: 80, step: 1, defaultValue: 12 },
+      OFFSET_X: { min: -40, max: 40, step: 1, defaultValue: 0 },
+      OFFSET_Y: { min: -40, max: 40, step: 1, defaultValue: 3 },
+      DEFAULT_COLOR_RGBA: 'rgba(0, 0, 0, 0.35)',
+    },
+  },
   AUDIO: {
-    VOLUME: { min: 0, max: 1, step: 0.01, defaultValue: 1 },
+    VOLUME: { min: 0, max: 1.5, step: 0.01, defaultValue: 1 },
     MUTED: { defaultValue: false },
   },
   ANIMATION: {

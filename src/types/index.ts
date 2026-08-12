@@ -18,6 +18,7 @@ export interface Background {
   gradientStart?: string
   gradientEnd?: string
   gradientDirection?: string
+  imagePath?: string
   imageUrl?: string
   thumbnailUrl?: string
 }
@@ -53,6 +54,10 @@ export interface CursorStyles {
 
 export type BlurRegionStyle = 'blur' | 'pixelated'
 export type CameraSwapTransition = 'none' | 'fade' | 'slide' | 'scale'
+export type SwapParticipant =
+  | { kind: 'main-screen' }
+  | { kind: 'webcam' }
+  | { kind: 'floating-monitor-region'; regionId: string }
 
 export interface BlurPresetDefaults {
   duration: number
@@ -66,7 +71,8 @@ export interface BlurPresetDefaults {
 
 export interface SwapPresetDefaults {
   duration: number
-  showDesktopOverlay: boolean
+  origin: SwapParticipant
+  target: SwapParticipant
   transition: CameraSwapTransition
   transitionDuration: number
 }
@@ -91,6 +97,9 @@ export interface TimelineLane {
   order: number
   visible: boolean
   locked: boolean
+  isContentRootLane?: boolean
+  isCutLane?: boolean
+  isChangeSoundLane?: boolean
 }
 
 export interface ZoomRegion {
@@ -106,6 +115,10 @@ export interface ZoomRegion {
   targetY: number
   mode: 'auto' | 'fixed'
   zIndex: number
+  generatedTakeId?: string
+  generatedEffectStartTime?: number
+  generatedEffectDuration?: number
+  generatedEffectTransitionDuration?: number
 }
 
 export interface CutRegion {
@@ -142,7 +155,7 @@ export interface MediaAudioRegion {
   zIndex: number
 }
 
-export type RecordingAudioSourceKey = 'recording-mic'
+export type ChangeSoundSourceKey = 'recording-mic' | 'system-audio'
 
 export interface ChangeSoundRegion {
   id: string
@@ -150,7 +163,7 @@ export interface ChangeSoundRegion {
   laneId: string
   startTime: number
   duration: number
-  sourceKey: RecordingAudioSourceKey
+  sourceKey: ChangeSoundSourceKey
   isMuted: boolean
   volume: number
   fadeInDuration: number
@@ -179,10 +192,36 @@ export interface CameraSwapRegion {
   laneId: string
   startTime: number
   duration: number
-  showDesktopOverlay: boolean
+  origin: SwapParticipant
+  target: SwapParticipant
   transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number
+}
+
+export interface FloatingMonitorRegion {
+  id: string
+  type: 'floating-monitor'
+  laneId: string
+  monitorId: string
+  startTime: number
+  duration: number
+  sourceStart: number
+  x: number
+  y: number
+  width: number
+  height: number
+  crop: WebcamCrop
+  borderRadius: number
+  isFlipped: boolean
+  border: boolean
+  borderWidth: number
+  borderColor: string
+  shadowBlur: number
+  shadowOffsetX: number
+  shadowOffsetY: number
+  shadowColor: string
+  zIndex: number
 }
 
 export type TimelineRegion =
@@ -193,6 +232,7 @@ export type TimelineRegion =
   | CameraSwapRegion
   | MediaAudioRegion
   | ChangeSoundRegion
+  | FloatingMonitorRegion
 
 export interface MetaDataItem {
   timestamp: number
@@ -290,7 +330,143 @@ export interface MediaAudioClip {
   startTime: number
 }
 
+export type TakeSourceRef =
+  | { kind: 'recording-screen' }
+  | { kind: 'recording-webcam' }
+  | { kind: 'imported-video'; assetId: string }
+
+export type TakeAudioMode = 'session' | 'source' | 'none'
+
+export interface TakeClip {
+  id: string
+  name?: string
+  source: TakeSourceRef
+  sourceStart: number
+  duration: number
+  audioMode: TakeAudioMode
+  sessionAudioStart?: number
+  volume: number
+  isMuted: boolean
+}
+
+export type TakeTransitionType = 'dissolve' | 'dip-black' | 'slide-left' | 'slide-right' | 'zoom'
+
+export interface TakeTransition {
+  fromTakeId: string
+  toTakeId: string
+  type: TakeTransitionType
+  duration: number
+  audioMode: 'cut' | 'crossfade'
+}
+
+export interface FloatingMonitor {
+  id: string
+  kind: 'video' | 'image'
+  path: string
+  url: string
+  name: string
+  originalName: string
+  isEditedCopy: boolean
+  duration: number
+  timelineStart: number
+  timelineDuration: number
+  x: number
+  y: number
+  width: number
+  height: number
+  timeline?: AssetTimelineState
+  hasAudioTrack?: boolean
+  isSeekableProxy?: boolean
+  originalPath?: string
+}
+
+export interface AssetTimelineState {
+  duration: number
+  videoDimensions: VideoDimensions
+  frameStyles: FrameStyles
+  aspectRatio: AspectRatio
+  timelineLanes: TimelineLane[]
+  zoomRegions: Record<string, ZoomRegion>
+  cutRegions: Record<string, CutRegion>
+  speedRegions: Record<string, SpeedRegion>
+  blurRegions: Record<string, BlurRegion>
+  swapRegions: Record<string, CameraSwapRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+  mediaAudioClip: MediaAudioClip | null
+  mediaAudioRegions: Record<string, MediaAudioRegion>
+  blurDefaults: BlurPresetDefaults
+  swapDefaults: SwapPresetDefaults
+  cursorStyles?: CursorStyles
+  selectedRegionId: string | null
+}
+
+export interface AssetTimelineEditing {
+  monitorId: string
+  blurDefaults: BlurPresetDefaults
+  swapDefaults: SwapPresetDefaults
+  mainProject: {
+    videoPath: string | null
+    videoUrl: string | null
+    audioPath: string | null
+    audioUrl: string | null
+    systemAudioPath: string | null
+    systemAudioUrl: string | null
+    systemAudioVolume: number
+    systemAudioMuted: boolean
+    recordingSyncOffsetMs: number
+    systemAudioSyncOffsetMs: number
+    captureSourceOffsetsMs: CaptureSourceOffsetsMs
+    audioWaveformVisibility: AudioWaveformVisibility
+    volume: number
+    isMuted: boolean
+    mediaAudioClip: MediaAudioClip | null
+    mediaAudioRegions: Record<string, MediaAudioRegion>
+    changeSoundRegions: Record<string, ChangeSoundRegion>
+    webcamVideoPath: string | null
+    webcamVideoUrl: string | null
+    webcamLayout: WebcamLayout
+    webcamPosition: WebcamPosition
+    webcamStyles: WebcamStyles
+    hasAudioTrack: boolean
+    duration: number
+    videoDimensions: VideoDimensions
+    frameStyles: FrameStyles
+    aspectRatio: AspectRatio
+    timelineLanes: TimelineLane[]
+    zoomRegions: Record<string, ZoomRegion>
+    cutRegions: Record<string, CutRegion>
+    speedRegions: Record<string, SpeedRegion>
+    blurRegions: Record<string, BlurRegion>
+    swapRegions: Record<string, CameraSwapRegion>
+    floatingMonitorRegions: Record<string, FloatingMonitorRegion>
+    cursorStyles: CursorStyles
+    isWebcamVisible: boolean
+    selectedRegionId: string | null
+    currentTime: number
+    isPlaying: boolean
+    assetTimelineEditing: AssetTimelineEditing | null
+    takeModeEnabled: boolean
+    sourceDuration: number
+    takes: TakeClip[]
+    takeTransitions: TakeTransition[]
+    selectedTakeId: string | null
+  }
+}
+
 // --- Slice State & Actions Types ---
+
+export interface CaptureSourceOffsetsMs {
+  /** Source-local timestamp that corresponds to project timeline zero. */
+  screen: number
+  webcam: number
+  recording: number
+  systemAudio: number
+}
+
+export interface AudioWaveformVisibility {
+  recording: boolean
+  systemAudio: boolean
+}
 
 export interface ProjectState {
   videoPath: string | null
@@ -302,7 +478,13 @@ export interface ProjectState {
   systemAudioUrl: string | null
   systemAudioVolume: number
   systemAudioMuted: boolean
+  recordingSyncOffsetMs: number
+  systemAudioSyncOffsetMs: number
+  captureSourceOffsetsMs: CaptureSourceOffsetsMs
+  audioWaveformVisibility: AudioWaveformVisibility
   mediaAudioClip: MediaAudioClip | null
+  floatingMonitors: Record<string, FloatingMonitor>
+  assetTimelineEditing: AssetTimelineEditing | null
   videoDimensions: VideoDimensions
   recordingGeometry: RecordingGeometry | null
   screenSize: ScreenSize | null
@@ -316,6 +498,11 @@ export interface ProjectState {
   cursorTheme: CursorTheme | null
   hasAudioTrack: boolean
   originalProjectPath?: string
+  takeModeEnabled: boolean
+  sourceDuration: number
+  takes: TakeClip[]
+  takeTransitions: TakeTransition[]
+  selectedTakeId: string | null
 }
 
 export interface ProjectActions {
@@ -334,11 +521,39 @@ export interface ProjectActions {
   reloadCursorTheme: (themeName: string) => Promise<void>
   setHasAudioTrack: (hasAudio: boolean) => void
   updateSystemAudioSettings: (settings: { volume?: number; isMuted?: boolean }) => void
+  setRecordingSyncOffsetMs: (offsetMs: number) => void
+  setSystemAudioSyncOffsetMs: (offsetMs: number) => void
+  setAudioWaveformVisible: (source: keyof AudioWaveformVisibility, visible: boolean) => void
   setMediaAudioClip: (clip: { path: string; name: string; startTime?: number; duration?: number }) => void
   setMediaAudioStartTime: (startTime: number) => void
   setMediaAudioDuration: (duration: number) => void
   clearMediaAudioClip: () => void
+  addFloatingMonitor: (monitor: {
+    path: string
+    name: string
+    kind?: 'video' | 'image'
+    duration?: number
+    hasAudioTrack?: boolean
+    isSeekableProxy?: boolean
+    originalPath?: string
+  }) => void
+  updateFloatingMonitor: (id: string, updates: Partial<Omit<FloatingMonitor, 'id' | 'path' | 'url'>>) => void
+  removeFloatingMonitor: (id: string) => void
+  beginAssetTimelineEdit: (id: string) => void
+  finishAssetTimelineEdit: () => void
   setOriginalProjectPath: (path: string) => void
+  setTakeModeEnabled: (enabled: boolean) => void
+  initializeTakes: (boundaries?: number[]) => void
+  selectTake: (id: string | null) => void
+  splitTake: (id: string, offset: number) => void
+  trimTake: (id: string, edge: 'start' | 'end', delta: number) => void
+  moveTake: (id: string, direction: 'left' | 'right') => void
+  duplicateTake: (id: string) => void
+  replaceTake: (id: string, source: TakeSourceRef, sourceDuration: number, audioMode?: TakeAudioMode) => void
+  renameTake: (id: string, name: string) => void
+  deleteTake: (id: string) => void
+  setTakeTransition: (transition: TakeTransition | null, boundary?: { fromTakeId: string; toTakeId: string }) => void
+  updateTake: (id: string, updates: Partial<Omit<TakeClip, 'id'>>) => void
 }
 
 export interface PlaybackState {
@@ -375,6 +590,7 @@ export interface TimelineState {
   swapRegions: Record<string, CameraSwapRegion>
   mediaAudioRegions: Record<string, MediaAudioRegion>
   changeSoundRegions: Record<string, ChangeSoundRegion>
+  floatingMonitorRegions: Record<string, FloatingMonitorRegion>
   previewCutRegion: CutRegion | null
   selectedRegionId: string | null
   activeZoomRegionId: string | null
@@ -399,8 +615,12 @@ export interface TimelineActions {
     duration?: number
   }) => void
   addChangeSoundRegion: (params?: { startTime?: number; laneId?: string; duration?: number }) => void
+  addFloatingMonitorRegion: (monitorId: string, params?: { startTime?: number; laneId?: string }) => void
   splitMediaAudioRegion: (regionId: string, splitTime: number) => void
+  adaptMediaAudioToCuts: (regionId: string) => void
   splitChangeSoundRegion: (regionId: string, splitTime: number) => void
+  splitFloatingMonitorRegion: (regionId: string, splitTime: number) => void
+  duplicateRegion: (id: string) => void
   updateRegion: (id: string, updates: Partial<TimelineRegion>) => void
   deleteRegion: (id: string) => void
   setSelectedRegionId: (id: string | null) => void
@@ -463,7 +683,7 @@ export interface UIActions {
 }
 
 export interface AudioState {
-  volume: number // 0 to 1
+  volume: number // 0 to 1.5
   isMuted: boolean
 }
 
@@ -488,7 +708,9 @@ export type RenderableState = Pick<
   | 'speedRegions'
   | 'blurRegions'
   | 'swapRegions'
+  | 'floatingMonitorRegions'
   | 'timelineLanes'
+  | 'floatingMonitors'
   | 'metadata'
   | 'recordingGeometry'
   | 'cursorImages'

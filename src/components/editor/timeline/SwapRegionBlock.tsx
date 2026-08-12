@@ -2,6 +2,7 @@ import React, { useMemo } from 'react'
 import type { CameraSwapRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { Refresh } from '@icons'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface SwapRegionBlockProps {
   region: CameraSwapRegion
@@ -44,7 +45,7 @@ export const SwapRegionBlock = React.memo(function SwapRegionBlock({
       ref={setRef}
       data-region-id={region.id}
       className={cn(
-        'absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+        'group/region absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
         !isBeingDragged && 'transition-all duration-200 ease-out',
         isSelected
           ? 'bg-card/90 border-purple-500 transform -translate-y-[2px] shadow-sm shadow-purple-500/20'
@@ -53,15 +54,14 @@ export const SwapRegionBlock = React.memo(function SwapRegionBlock({
       style={{ willChange: 'transform, width' }}
       onMouseDown={(e) => onMouseDown(e, region, 'move')}
     >
-      <div
-        className="absolute left-0 top-0 w-5 h-full cursor-ew-resize rounded-l-xl flex items-center justify-center z-10 group"
-        onMouseDown={(e) => {
-          e.stopPropagation()
-          onMouseDown(e, region, 'resize-left')
+      <RegionResizeHandles
+        isSelected={isSelected}
+        indicatorClassName="bg-purple-500/60 group-hover/resize-handle:bg-purple-500"
+        onMouseDown={(event, side) => {
+          event.stopPropagation()
+          onMouseDown(event, region, side)
         }}
-      >
-        <div className="w-1 h-6 bg-purple-500/60 rounded-full group-hover:bg-purple-500 group-hover:h-8 transition-all duration-150" />
-      </div>
+      />
 
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-3">
         <div className="flex items-center gap-2 overflow-hidden">
@@ -77,15 +77,6 @@ export const SwapRegionBlock = React.memo(function SwapRegionBlock({
         </div>
       </div>
 
-      <div
-        className="absolute right-0 top-0 w-5 h-full cursor-ew-resize rounded-r-xl flex items-center justify-center z-10 group"
-        onMouseDown={(e) => {
-          e.stopPropagation()
-          onMouseDown(e, region, 'resize-right')
-        }}
-      >
-        <div className="w-1 h-6 bg-purple-500/60 rounded-full group-hover:bg-purple-500 group-hover:h-8 transition-all duration-150" />
-      </div>
     </div>
   )
 })

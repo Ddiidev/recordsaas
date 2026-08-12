@@ -8,13 +8,17 @@ import {
   Search,
   Refresh,
   AdjustmentsHorizontal,
+  Copy,
 } from '@icons'
 import { useEditorStore } from '../../store/editorStore'
 import type { AspectRatio } from '../../types'
+import { useMemo } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 import { Slider } from '../ui/slider'
+import { Input } from '../ui/input'
 import { ToolbarButton } from './ToolbarButton'
 import { sortTimelineLanes } from '../../lib/timeline-lanes'
+import { TIMELINE } from '../../lib/constants'
 
 export function PreviewControls() {
   const {
@@ -29,7 +33,14 @@ export function PreviewControls() {
     timelineZoom,
     setTimelineZoom,
     selectedRegionId,
+    duplicateRegion,
     deleteRegion,
+    splitFloatingMonitorRegion,
+    splitMediaAudioRegion,
+    splitChangeSoundRegion,
+    floatingMonitorRegions,
+    mediaAudioRegions,
+    changeSoundRegions,
     aspectRatio,
     setAspectRatio,
   } = useEditorStore()
@@ -40,6 +51,34 @@ export function PreviewControls() {
   const handleDelete = () => {
     if (selectedRegionId) {
       deleteRegion(selectedRegionId)
+    }
+  }
+
+  const handleDuplicate = () => {
+    if (selectedRegionId) {
+      duplicateRegion(selectedRegionId)
+    }
+  }
+
+  const canSplitSelected = useMemo(() => {
+    if (!selectedRegionId) return false
+    const region =
+      floatingMonitorRegions[selectedRegionId] ??
+      mediaAudioRegions[selectedRegionId] ??
+      changeSoundRegions[selectedRegionId]
+    if (!region) return false
+    const localOffset = currentTime - region.startTime
+    return localOffset > 0.1 && localOffset < region.duration - 0.1
+  }, [selectedRegionId, currentTime, floatingMonitorRegions, mediaAudioRegions, changeSoundRegions])
+
+  const handleSplitAtPlayhead = () => {
+    if (!selectedRegionId) return
+    if (floatingMonitorRegions[selectedRegionId]) {
+      splitFloatingMonitorRegion(selectedRegionId, currentTime)
+    } else if (mediaAudioRegions[selectedRegionId]) {
+      splitMediaAudioRegion(selectedRegionId, currentTime)
+    } else if (changeSoundRegions[selectedRegionId]) {
+      splitChangeSoundRegion(selectedRegionId, currentTime)
     }
   }
 
@@ -59,7 +98,7 @@ export function PreviewControls() {
             <PlayerTrackNext className="w-4 h-4" />
             <span>Speed</span>
           </ToolbarButton>
-          <ToolbarButton tooltip="Add Blur Region" onClick={() => addBlurRegion()} disabled={!!selectedRegionId}>
+          <ToolbarButton tooltip="Add Blur Region" onClick={() => addBlurRegion()}>
             <Search className="w-4 h-4" />
             <span>Blur</span>
           </ToolbarButton>
@@ -74,6 +113,22 @@ export function PreviewControls() {
           >
             <AdjustmentsHorizontal className="w-4 h-4" />
             <span>Change Sound</span>
+          </ToolbarButton>
+          <ToolbarButton
+            variant="icon"
+            tooltip="Split at playhead (S)"
+            onClick={handleSplitAtPlayhead}
+            disabled={!canSplitSelected}
+          >
+            <Scissors className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton
+            variant="icon"
+            tooltip="Duplicate selected region"
+            onClick={handleDuplicate}
+            disabled={!selectedRegionId}
+          >
+            <Copy className="w-4 h-4" />
           </ToolbarButton>
           <ToolbarButton
             variant="icon"
@@ -109,8 +164,25 @@ export function PreviewControls() {
         <div className="flex items-center gap-4 ml-2">
           <ZoomIn className="w-4 h-4 text-muted-foreground" />
           <div className="w-24">
-            <Slider min={1} max={4} step={0.5} value={timelineZoom} onChange={setTimelineZoom} />
+            <Slider
+              min={TIMELINE.VIEW_ZOOM.MIN}
+              max={TIMELINE.VIEW_ZOOM.MAX}
+              step={TIMELINE.VIEW_ZOOM.STEP}
+              value={timelineZoom}
+              onChange={setTimelineZoom}
+            />
           </div>
+          <Input
+            aria-label="Timeline zoom"
+            className="h-8 w-[4.5rem] px-2 text-center text-xs"
+            max={TIMELINE.VIEW_ZOOM.MAX}
+            min={TIMELINE.VIEW_ZOOM.MIN}
+            step={TIMELINE.VIEW_ZOOM.STEP}
+            suffix="x"
+            type="number"
+            value={timelineZoom}
+            onChange={(event) => setTimelineZoom(Number(event.target.value))}
+          />
         </div>
       </div>
 

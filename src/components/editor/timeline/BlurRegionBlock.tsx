@@ -2,6 +2,7 @@ import { memo } from 'react'
 import { TimelineRegion, BlurRegion } from '../../../types'
 import { cn } from '../../../lib/utils'
 import { Search } from '@icons'
+import { RegionResizeHandles } from './RegionResizeHandles'
 
 interface BlurRegionBlockProps {
   region: BlurRegion
@@ -17,17 +18,12 @@ interface BlurRegionBlockProps {
 
 export const BlurRegionBlock = memo(
   ({ region, isSelected, isBeingDragged, onMouseDown, setRef }: BlurRegionBlockProps) => {
-    const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>, type: 'resize-left' | 'resize-right') => {
-      e.stopPropagation()
-      onMouseDown(e, region, type)
-    }
-
     return (
       <div
         ref={setRef}
         data-region-id={region.id}
         className={cn(
-          'absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
+          'group/region absolute w-full h-12 top-0 rounded-xl cursor-grab border-2 backdrop-blur-sm',
           !isBeingDragged && 'transition-all duration-200 ease-out',
           isSelected
             ? 'bg-card/90 border-amber-500 transform -translate-y-[2px] shadow-sm shadow-amber-500/20'
@@ -36,12 +32,14 @@ export const BlurRegionBlock = memo(
         style={{ willChange: 'transform, width' }}
         onMouseDown={(e) => onMouseDown(e, region, 'move')}
       >
-        <div
-          className="absolute left-0 top-0 w-5 h-full cursor-ew-resize rounded-l-xl flex items-center justify-center z-10 group"
-          onMouseDown={(e) => handleResizeMouseDown(e, 'resize-left')}
-        >
-          <div className="w-1 h-6 bg-amber-500/60 rounded-full group-hover:bg-amber-500 group-hover:h-8 transition-all duration-150" />
-        </div>
+        <RegionResizeHandles
+          isSelected={isSelected}
+          indicatorClassName="bg-amber-500/60 group-hover/resize-handle:bg-amber-500"
+          onMouseDown={(event, side) => {
+            event.stopPropagation()
+            onMouseDown(event, region, side)
+          }}
+        />
 
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-3">
           <div className="flex items-center gap-2 overflow-hidden">
@@ -57,12 +55,6 @@ export const BlurRegionBlock = memo(
           </div>
         </div>
 
-        <div
-          className="absolute right-0 top-0 w-5 h-full cursor-ew-resize rounded-r-xl flex items-center justify-center z-10 group"
-          onMouseDown={(e) => handleResizeMouseDown(e, 'resize-right')}
-        >
-          <div className="w-1 h-6 bg-amber-500/60 rounded-full group-hover:bg-amber-500 group-hover:h-8 transition-all duration-150" />
-        </div>
       </div>
     )
   },

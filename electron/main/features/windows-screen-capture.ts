@@ -20,11 +20,22 @@ export type WindowsScreenCaptureCandidate = {
   monitorHandle?: string
 }
 
+export type WindowsScreenCaptureFrameTransfer = {
+  filters: string[]
+  mode: 'direct-d3d11' | 'd3d11-to-qsv' | 'download'
+}
+
 const FFMPEG_PATH = getFFmpegPath()
 const GFXCAPTURE_PROBE_TIMEOUT_MS = 5000
 let hasGfxCaptureFilterCache: boolean | null = null
 const monitorHandleCache = new Map<string, string | null>()
-const gfxCaptureViableCache = new Set<string>
+const gfxCaptureViableCache = new Set<string>()
+const gfxEncoderTransferCache = new Map<string, WindowsScreenCaptureFrameTransfer>()
+
+const DOWNLOAD_TRANSFER: WindowsScreenCaptureFrameTransfer = {
+  filters: ['hwdownload', 'format=bgra'],
+  mode: 'download',
+}
 
 const toEvenDimension = (value: number): number => Math.max(2, Math.floor(value / 2) * 2)
 
@@ -246,4 +257,66 @@ export function selectWindowsScreenCaptureCandidate(
   }
 
   return candidates[candidates.length - 1]
+}
+
+/**
+ * gfxcapture exposes D3D11 frames. NVENC and AMF can receive those frames
+ * directly; QSV requires an explicit direct D3D11-to-QSV mapping. The exact
+ * capture/encoder route is probed before use and falls back to system memory.
+ */
+export function resolveWindowsScreenCaptureFrameTransfer(
+  candidate: WindowsScreenCaptureCandidate,
+  encoder: string | undefined,
+  prefixArgs: string[],
+  codecArgs: string[],
+  allowDirect: boolean,
+): WindowsScreenCaptureFrameTransfer {
+  if (!allowDirect || candidate.backend !== 'gfxcapture' || !candidate.monitorHandle) return DOWNLOAD_TRANSFER
+
+  const directTransfer: WindowsScreenCaptureFrameTransfer | null =
+    encoder === 'h264_nvenc' || encoder === 'h264_amf'
+      ? { filters: [], mode: 'direct-d3d11' }
+      : encoder === 'h264_qsv'
+        ? { filters: ['hwmap=derive_device=qsv:mode=read+write+direct'], mode: 'd3d11-to-qsv' }
+        : null
+
+  if (!directTransfer) return DOWNLOAD_TRANSFER
+
+  const cacheKey = `${candidate.monitorHandle}:${encoder}:${directTransfer.mode}`
+  const cached = gfxEncoderTransferCache.get(cacheKey)
+  if (cached) return cached
+
+  const probe = spawnSync(
+    FFMPEG_PATH,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      ...prefixArgs,
+      ...candidate.inputArgs,
+      '-frames:v',
+      '1',
+      ...(directTransfer.filters.length > 0 ? ['-vf', directTransfer.filters.join(',')] : []),
+      ...codecArgs,
+      '-f',
+      'null',
+      '-',
+    ],
+    { encoding: 'utf-8', timeout: GFXCAPTURE_PROBE_TIMEOUT_MS, windowsHide: true },
+  )
+
+  if (!probe.error && probe.status === 0) {
+    gfxEncoderTransferCache.set(cacheKey, directTransfer)
+    log.info(`[WindowsCapture] ${encoder} selected ${directTransfer.mode} for gfxcapture.`)
+    return directTransfer
+  }
+
+  const fallback = { ...DOWNLOAD_TRANSFER, filters: [...DOWNLOAD_TRANSFER.filters] }
+  gfxEncoderTransferCache.set(cacheKey, fallback)
+  log.warn(
+    `[WindowsCapture] ${encoder} direct gfxcapture route failed; using download fallback. ${
+      probe.error?.message || probe.stderr || `exit ${probe.status}`
+    }`,
+  )
+  return fallback
 }

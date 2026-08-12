@@ -6,11 +6,23 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import path from 'node:path'
 import fsPromises from 'node:fs/promises'
 import { constants as osConstants, cpus, setPriority } from 'node:os'
-import { app, Menu, Tray, nativeImage, screen, ipcMain, dialog, systemPreferences, type Display } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  nativeImage,
+  screen,
+  ipcMain,
+  dialog,
+  globalShortcut,
+  systemPreferences,
+  type Display,
+} from 'electron'
 import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
-import { VITE_PUBLIC } from '../lib/constants'
+import { PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
@@ -22,14 +34,501 @@ import {
   getWindowsPhysicalAreaRect,
   getWindowsPhysicalDisplayRect,
   getWindowsScreenCaptureCandidates,
+  resolveWindowsScreenCaptureFrameTransfer,
   selectWindowsScreenCaptureCandidate,
   PhysicalCaptureRect,
 } from './windows-screen-capture'
 import { getScreenEncoderDefinition, getScreenEncoderStatus } from './screen-encoder'
 
 const FFMPEG_PATH = getFFmpegPath()
-const WINDOWS_SYSTEM_AUDIO_HELPER_PATH = process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
+const WINDOWS_SYSTEM_AUDIO_HELPER_PATH =
+  process.platform === 'win32' ? getBinaryPath('recordsaas-system-audio.exe') : ''
 const store = new Store()
+const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
+const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
+const RECORDING_TIMER_SETTING_KEY = 'recorder.showTimer'
+
+const normalizeTakeShortcut = (value: unknown): string =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : DEFAULT_TAKE_SHORTCUT
+
+const getMonotonicMilliseconds = (): number => performance.now()
+
+const TAKE_TOAST_DURATION_MS = 1800
+const TAKE_TOAST_WIDTH = 286
+const TAKE_TOAST_HEIGHT = 72
+const TAKE_TOAST_MARGIN = 24
+const RECORDING_TIMER_SHORTCUT = 'F2'
+const RECORDING_TIMER_COLLAPSED_WIDTH = 44
+const RECORDING_TIMER_EXPANDED_WIDTH = 264
+const RECORDING_TIMER_HEIGHT = 44
+const RECORDING_TIMER_MARGIN = 0
+const RECORDING_TIMER_ANIMATION_MS = 170
+const TAKE_TOAST_HTML = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body { padding: 1px; box-sizing: border-box; opacity: 0; transform: translateY(-5px); transition: opacity 140ms ease, transform 140ms ease; }
+      body.visible { opacity: 1; transform: translateY(0); }
+      .toast { box-sizing: border-box; width: 100%; height: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid rgba(168, 85, 247, .55); border-radius: 10px; background: rgba(24, 24, 27, .96); box-shadow: 0 14px 34px rgba(0, 0, 0, .35); }
+      .badge { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 999px; background: rgba(168, 85, 247, .18); color: #d8b4fe; font-size: 17px; font-weight: 700; }
+      strong, span { display: block; }
+      strong { color: #fafafa; font-size: 13px; line-height: 18px; }
+      #take { margin-top: 2px; color: #a1a1aa; font-size: 11px; line-height: 15px; }
+    </style>
+  </head>
+  <body>
+    <div class="toast" role="status" aria-live="polite">
+      <div class="badge">✓</div>
+      <div><strong>Take marked</strong><span id="take"></span></div>
+    </div>
+    <script>
+      window.setTakeToast = (takeNumber) => {
+        document.getElementById('take').textContent = 'Take ' + takeNumber + ' started';
+        document.body.classList.remove('visible');
+        void document.body.offsetWidth;
+        document.body.classList.add('visible');
+      };
+    </script>
+  </body>
+</html>`
+
+let takeToastHideTimer: NodeJS.Timeout | null = null
+let pendingTakeToastNumber: number | null = null
+let recordingTimerExpanded = false
+let recordingTimerAnimation: NodeJS.Timeout | null = null
+let pendingRecordingTimerStartTime: number | null = null
+let pendingRecordingTimerExpanded = false
+let pendingRecordingTimerTakeCount = 0
+let pendingRecordingTimerShow = false
+
+const RECORDING_TIMER_HTML = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light; font-family: Inter, Segoe UI, sans-serif; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+      .timer-shell { box-sizing: border-box; display: flex; width: 100%; height: 100%; overflow: hidden; border: 1px solid hsl(154 60% 42%); border-right: 0; border-radius: 4px 0 0 4px; background: rgba(255, 255, 255, .98); box-shadow: 0 4px 12px rgba(17, 24, 39, .16); }
+      .details { position: relative; min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; overflow: hidden; padding-left: 10px; color: hsl(154 60% 25%); opacity: 0; transform: translateX(8px); transition: opacity 120ms ease, transform 170ms ease; pointer-events: none; white-space: nowrap; }
+      body.expanded .details { opacity: 1; transform: translateX(0); pointer-events: auto; }
+      .label { display: block; color: hsl(154 33% 35%); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+      #elapsed { display: block; color: hsl(154 60% 25%); font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+      kbd { padding: 3px 5px; border: 1px solid hsl(154 35% 78%); border-radius: 3px; color: hsl(154 50% 31%); background: hsl(154 60% 95%); font-family: inherit; font-size: 10px; font-weight: 700; }
+      .take-count { padding-left: 9px; border-left: 1px solid hsl(154 30% 84%); color: hsl(154 40% 31%); font-size: 11px; font-weight: 700; }
+      .toggle, .stop { box-sizing: border-box; border: 0; cursor: pointer; }
+      .toggle { width: 43px; flex: 0 0 43px; display: grid; place-items: center; color: white; background: hsl(154 60% 42%); }
+      .toggle:hover { background: hsl(154 60% 35%); }
+      .toggle:focus-visible, .stop:focus-visible { outline: 2px solid hsl(154 60% 42% / .48); outline-offset: -3px; }
+      .chevron { font-size: 28px; line-height: 1; font-family: Arial, sans-serif; transform: translateY(-1px); transition: transform 170ms ease; }
+      body.expanded .chevron { transform: translateY(-1px) rotate(180deg); }
+      .stop { width: 28px; height: 28px; margin-left: auto; margin-right: 7px; border-radius: 3px; color: white; background: hsl(0 72% 51%); font-size: 13px; line-height: 1; }
+      .stop:hover { background: hsl(0 72% 43%); }
+      .stop:disabled { cursor: wait; opacity: .7; }
+      .stop-tooltip { position: absolute; top: 4px; right: 43px; z-index: 2; padding: 4px 7px; border: 1px solid hsl(154 35% 78%); border-radius: 3px; color: hsl(154 50% 31%); background: hsl(154 60% 95%); box-shadow: 0 3px 8px rgba(17, 24, 39, .14); font-size: 10px; font-weight: 700; opacity: 0; transform: translateY(3px); transition: opacity 100ms ease, transform 120ms ease; pointer-events: none; }
+      .stop:hover + .stop-tooltip, .stop:focus-visible + .stop-tooltip { opacity: 1; transform: translateY(0); }
+      @media (prefers-reduced-motion: reduce) { .details { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="timer-shell">
+      <div class="details" aria-live="polite">
+        <span><span class="label">Recording</span><span id="elapsed">00:00:00</span></span>
+        <kbd>F2</kbd>
+        <span id="take-count" class="take-count" hidden></span>
+        <button id="stop" class="stop" type="button" aria-label="Stop recording" aria-describedby="stop-tooltip">■</button>
+        <span id="stop-tooltip" class="stop-tooltip" role="tooltip">Stop recording</span>
+      </div>
+      <button id="toggle" class="toggle" type="button" aria-label="Expand recording controls" aria-expanded="false"><span class="chevron" aria-hidden="true">‹</span></button>
+    </div>
+    <script>
+      const button = document.getElementById('toggle');
+      const stopButton = document.getElementById('stop');
+      const elapsed = document.getElementById('elapsed');
+      const takeCount = document.getElementById('take-count');
+      let startedAt = 0;
+      let timerId = null;
+      const formatElapsed = (milliseconds) => {
+        const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+        const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+        const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+        const seconds = String(totalSeconds % 60).padStart(2, '0');
+        return hours + ':' + minutes + ':' + seconds;
+      };
+      const renderElapsed = () => { elapsed.textContent = formatElapsed(Date.now() - startedAt); };
+      window.setRecordingTimer = (value) => {
+        startedAt = Number(value) || Date.now();
+        renderElapsed();
+        if (timerId !== null) window.clearInterval(timerId);
+        timerId = window.setInterval(renderElapsed, 250);
+      };
+      window.setRecordingTimerExpanded = (expanded) => {
+        document.body.classList.toggle('expanded', Boolean(expanded));
+        button.setAttribute('aria-expanded', String(Boolean(expanded)));
+        button.setAttribute('aria-label', expanded ? 'Collapse recording controls' : 'Expand recording controls');
+      };
+      window.setRecordingTimerTakeCount = (count) => {
+        const normalizedCount = Math.max(0, Number(count) || 0);
+        takeCount.hidden = normalizedCount === 0;
+        takeCount.textContent = normalizedCount + (normalizedCount === 1 ? ' take' : ' takes');
+      };
+      button.addEventListener('click', () => window.electronAPI?.toggleRecordingTimer?.());
+      stopButton.addEventListener('click', () => {
+        stopButton.disabled = true;
+        window.electronAPI?.stopRecording?.();
+      });
+    </script>
+  </body>
+</html>`
+
+const positionTakeToast = (toastWindow: BrowserWindow): void => {
+  const recorderWindow = appState.recorderWin
+  const referenceBounds =
+    recorderWindow && !recorderWindow.isDestroyed() ? recorderWindow.getBounds() : screen.getPrimaryDisplay().bounds
+  const workArea = screen.getDisplayMatching(referenceBounds).workArea
+  toastWindow.setBounds({
+    x: workArea.x + workArea.width - TAKE_TOAST_WIDTH - TAKE_TOAST_MARGIN,
+    y: workArea.y + workArea.height - TAKE_TOAST_HEIGHT - TAKE_TOAST_MARGIN,
+    width: TAKE_TOAST_WIDTH,
+    height: TAKE_TOAST_HEIGHT,
+  })
+}
+
+const updateTakeToast = (toastWindow: BrowserWindow, takeNumber: number): void => {
+  if (toastWindow.webContents.isLoading()) {
+    pendingTakeToastNumber = takeNumber
+    return
+  }
+
+  void toastWindow.webContents
+    .executeJavaScript(`window.setTakeToast(${JSON.stringify(takeNumber)})`, true)
+    .then(() => {
+      if (pendingTakeToastNumber === takeNumber) pendingTakeToastNumber = null
+    })
+    .catch((error) => {
+      pendingTakeToastNumber = takeNumber
+      log.warn('[TakeMode] Failed to update take toast:', error)
+    })
+}
+
+const ensureTakeToastWindow = (): BrowserWindow => {
+  const existing = appState.takeToastWin
+  if (existing && !existing.isDestroyed()) return existing
+
+  const toastWindow = new BrowserWindow({
+    width: TAKE_TOAST_WIDTH,
+    height: TAKE_TOAST_HEIGHT,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      sandbox: true,
+    },
+  })
+  toastWindow.setContentProtection(true)
+  toastWindow.setIgnoreMouseEvents(true)
+  toastWindow.setAlwaysOnTop(true, 'floating')
+  toastWindow.webContents.on('did-finish-load', () => {
+    if (pendingTakeToastNumber === null || toastWindow.isDestroyed()) return
+    const takeNumber = pendingTakeToastNumber
+    pendingTakeToastNumber = null
+    updateTakeToast(toastWindow, takeNumber)
+  })
+  toastWindow.on('closed', () => {
+    if (appState.takeToastWin === toastWindow) appState.takeToastWin = null
+  })
+  appState.takeToastWin = toastWindow
+  void toastWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(TAKE_TOAST_HTML)}`)
+    .catch((error) => log.debug('[TakeMode] Take toast window closed before loading:', error))
+  return toastWindow
+}
+
+const closeTakeToast = (): void => {
+  if (takeToastHideTimer) {
+    clearTimeout(takeToastHideTimer)
+    takeToastHideTimer = null
+  }
+  pendingTakeToastNumber = null
+  const toastWindow = appState.takeToastWin
+  appState.takeToastWin = null
+  if (toastWindow && !toastWindow.isDestroyed()) toastWindow.close()
+}
+
+const showTakeToast = (takeNumber: number): void => {
+  const toastWindow = ensureTakeToastWindow()
+  positionTakeToast(toastWindow)
+  pendingTakeToastNumber = takeNumber
+  updateTakeToast(toastWindow, takeNumber)
+  toastWindow.showInactive()
+  if (takeToastHideTimer) clearTimeout(takeToastHideTimer)
+  takeToastHideTimer = setTimeout(closeTakeToast, TAKE_TOAST_DURATION_MS)
+}
+
+const getRecordingTimerWorkArea = () => {
+  const recorderWindow = appState.recorderWin
+  const referenceBounds =
+    recorderWindow && !recorderWindow.isDestroyed() ? recorderWindow.getBounds() : screen.getPrimaryDisplay().bounds
+  return screen.getDisplayMatching(referenceBounds).workArea
+}
+
+const isRecordingTimerEnabled = (): boolean => store.get(RECORDING_TIMER_SETTING_KEY, true) !== false
+
+const getRecordingTimerBounds = (expanded: boolean) => {
+  const workArea = getRecordingTimerWorkArea()
+  const width = expanded ? RECORDING_TIMER_EXPANDED_WIDTH : RECORDING_TIMER_COLLAPSED_WIDTH
+  return {
+    x: workArea.x + workArea.width - width - RECORDING_TIMER_MARGIN,
+    y: workArea.y + workArea.height - RECORDING_TIMER_HEIGHT - RECORDING_TIMER_MARGIN,
+    width,
+    height: RECORDING_TIMER_HEIGHT,
+  }
+}
+
+const updateRecordingTimer = (timerWindow: BrowserWindow, startedAt: number): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerStartTime = startedAt
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimer(${JSON.stringify(startedAt)})`, true)
+    .catch((error) => {
+      pendingRecordingTimerStartTime = startedAt
+      log.warn('[RecordingTimer] Failed to update timer:', error)
+    })
+}
+
+const updateRecordingTimerExpanded = (timerWindow: BrowserWindow, expanded: boolean): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerExpanded = expanded
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimerExpanded(${JSON.stringify(expanded)})`, true)
+    .catch((error) => log.warn('[RecordingTimer] Failed to update visibility:', error))
+}
+
+const updateRecordingTimerTakeCount = (timerWindow: BrowserWindow, count: number): void => {
+  if (timerWindow.webContents.isLoading()) {
+    pendingRecordingTimerTakeCount = count
+    return
+  }
+
+  void timerWindow.webContents
+    .executeJavaScript(`window.setRecordingTimerTakeCount(${JSON.stringify(count)})`, true)
+    .catch((error) => {
+      pendingRecordingTimerTakeCount = count
+      log.warn('[RecordingTimer] Failed to update take count:', error)
+    })
+}
+
+const setRecordingTimerBounds = (timerWindow: BrowserWindow, expanded: boolean, animated: boolean): void => {
+  const targetBounds = getRecordingTimerBounds(expanded)
+  if (recordingTimerAnimation) {
+    clearTimeout(recordingTimerAnimation)
+    recordingTimerAnimation = null
+  }
+
+  if (!animated) {
+    timerWindow.setBounds(targetBounds)
+    return
+  }
+
+  const initialBounds = timerWindow.getBounds()
+  const rightEdge = targetBounds.x + targetBounds.width
+  const animationStartedAt = Date.now()
+  const updateBounds = () => {
+    if (timerWindow.isDestroyed()) return
+    const progress = Math.min(1, (Date.now() - animationStartedAt) / RECORDING_TIMER_ANIMATION_MS)
+    const easedProgress = 1 - (1 - progress) ** 3
+    const width = Math.round(initialBounds.width + (targetBounds.width - initialBounds.width) * easedProgress)
+    timerWindow.setBounds({
+      x: rightEdge - width,
+      y: targetBounds.y,
+      width,
+      height: targetBounds.height,
+    })
+    if (progress < 1) {
+      recordingTimerAnimation = setTimeout(updateBounds, 16)
+    } else {
+      recordingTimerAnimation = null
+    }
+  }
+  updateBounds()
+}
+
+const ensureRecordingTimerWindow = (): BrowserWindow => {
+  const existing = appState.recordingTimerWin
+  if (existing && !existing.isDestroyed()) return existing
+
+  const timerWindow = new BrowserWindow({
+    ...getRecordingTimerBounds(false),
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: PRELOAD_SCRIPT,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  timerWindow.setContentProtection(true)
+  timerWindow.setAlwaysOnTop(true, 'floating')
+  timerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  timerWindow.webContents.on('did-finish-load', () => {
+    if (timerWindow.isDestroyed()) return
+    if (pendingRecordingTimerStartTime !== null) {
+      const startedAt = pendingRecordingTimerStartTime
+      pendingRecordingTimerStartTime = null
+      updateRecordingTimer(timerWindow, startedAt)
+    }
+    updateRecordingTimerExpanded(timerWindow, pendingRecordingTimerExpanded)
+    updateRecordingTimerTakeCount(timerWindow, pendingRecordingTimerTakeCount)
+    if (pendingRecordingTimerShow) {
+      pendingRecordingTimerShow = false
+      timerWindow.showInactive()
+    }
+  })
+  timerWindow.on('closed', () => {
+    if (recordingTimerAnimation) {
+      clearTimeout(recordingTimerAnimation)
+      recordingTimerAnimation = null
+    }
+    if (appState.recordingTimerWin === timerWindow) appState.recordingTimerWin = null
+  })
+  appState.recordingTimerWin = timerWindow
+  void timerWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(RECORDING_TIMER_HTML)}`)
+    .catch((error) => log.debug('[RecordingTimer] Timer window closed before loading:', error))
+  return timerWindow
+}
+
+const closeRecordingTimer = (): void => {
+  if (recordingTimerAnimation) {
+    clearTimeout(recordingTimerAnimation)
+    recordingTimerAnimation = null
+  }
+  pendingRecordingTimerStartTime = null
+  pendingRecordingTimerTakeCount = 0
+  pendingRecordingTimerShow = false
+  recordingTimerExpanded = false
+  const timerWindow = appState.recordingTimerWin
+  appState.recordingTimerWin = null
+  if (timerWindow && !timerWindow.isDestroyed()) timerWindow.close()
+}
+
+const showRecordingTimer = (startedAt: number): void => {
+  recordingTimerExpanded = false
+  pendingRecordingTimerStartTime = startedAt
+  pendingRecordingTimerExpanded = false
+  pendingRecordingTimerTakeCount = 0
+  pendingRecordingTimerShow = true
+  const timerWindow = ensureRecordingTimerWindow()
+  setRecordingTimerBounds(timerWindow, false, false)
+  updateRecordingTimer(timerWindow, startedAt)
+  updateRecordingTimerExpanded(timerWindow, false)
+}
+
+export function toggleRecordingTimer(): void {
+  const timerWindow = appState.recordingTimerWin
+  if (!timerWindow || timerWindow.isDestroyed()) return
+
+  recordingTimerExpanded = !recordingTimerExpanded
+  pendingRecordingTimerExpanded = recordingTimerExpanded
+  updateRecordingTimer(timerWindow, appState.recordingStartTime)
+  updateRecordingTimerExpanded(timerWindow, recordingTimerExpanded)
+  setRecordingTimerBounds(timerWindow, recordingTimerExpanded, true)
+}
+
+const registerRecordingTimerShortcut = (): void => {
+  globalShortcut.unregister(RECORDING_TIMER_SHORTCUT)
+  try {
+    if (!globalShortcut.register(RECORDING_TIMER_SHORTCUT, toggleRecordingTimer)) {
+      log.warn(`[RecordingTimer] Could not register ${RECORDING_TIMER_SHORTCUT}. Click the timer chip to toggle it.`)
+    }
+  } catch (error) {
+    log.warn(`[RecordingTimer] Failed to register ${RECORDING_TIMER_SHORTCUT}:`, error)
+  }
+}
+
+const unregisterRecordingTimerShortcut = (): void => {
+  if (globalShortcut.isRegistered(RECORDING_TIMER_SHORTCUT)) globalShortcut.unregister(RECORDING_TIMER_SHORTCUT)
+}
+
+const unregisterTakeShortcut = (): void => {
+  const shortcut = appState.currentRecordingSession?.takeShortcut
+  if (shortcut && globalShortcut.isRegistered(shortcut)) globalShortcut.unregister(shortcut)
+}
+
+export function markTake(): { marked: boolean; takeNumber?: number; timestamp?: number; reason?: string } {
+  const session = appState.currentRecordingSession
+  if (!session?.takeModeEnabled) return { marked: false, reason: 'take-mode-disabled' }
+  if (typeof session.takeRecordingReadyMonotonicMs !== 'number') return { marked: false, reason: 'recording-not-ready' }
+
+  const now = getMonotonicMilliseconds()
+  const basePts = session.takeLastPtsSeconds || 0
+  const baseMonotonic = session.takeLastPtsMonotonicMs ?? session.takeRecordingReadyMonotonicMs
+  const screenSourceOffsetSeconds = Math.max(0, session.captureSourceOffsetsMs?.screen || 0) / 1000
+  const timestamp = Math.max(0, basePts + Math.max(0, now - baseMonotonic) / 1000 - screenSourceOffsetSeconds)
+  const boundaries = session.takeBoundaries || (session.takeBoundaries = [])
+  const lastBoundary = boundaries[boundaries.length - 1] || 0
+  const fps = Math.max(1, session.requestedScreenFps || 30)
+  const minimumDuration = Math.max(0.1, 2 / fps)
+  if (timestamp - lastBoundary < minimumDuration) return { marked: false, reason: 'take-too-short' }
+
+  boundaries.push(timestamp)
+  const takeNumber = boundaries.length + 1
+  appState.tray?.setToolTip(`RecordSaaS is recording — Take ${takeNumber}`)
+  appState.recorderWin?.webContents.send('recording:take-marked', { takeNumber, timestamp })
+  showTakeToast(takeNumber)
+  const timerWindow = appState.recordingTimerWin
+  if (timerWindow && !timerWindow.isDestroyed()) updateRecordingTimerTakeCount(timerWindow, boundaries.length)
+  log.info(`[TakeMode] Marked Take ${takeNumber} at ${timestamp.toFixed(3)}s.`)
+  return { marked: true, takeNumber, timestamp }
+}
+
+const registerTakeShortcut = async (session: RecordingSession): Promise<boolean> => {
+  if (!session.takeModeEnabled) return true
+  const shortcut = normalizeTakeShortcut(session.takeShortcut)
+  session.takeShortcut = shortcut
+  globalShortcut.unregister(shortcut)
+  try {
+    if (globalShortcut.register(shortcut, () => markTake())) return true
+  } catch (error) {
+    log.warn(`[TakeMode] Invalid global shortcut "${shortcut}".`, error)
+  }
+
+  const messageBoxOptions: Electron.MessageBoxOptions = {
+    type: 'warning',
+    title: 'Take Shortcut Unavailable',
+    message: `${shortcut} is already used by another application.`,
+    detail: 'Continue with Mark Take in the tray, or cancel this recording.',
+    buttons: ['Continue with tray', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }
+  const response = appState.recorderWin
+    ? await dialog.showMessageBox(appState.recorderWin, messageBoxOptions)
+    : await dialog.showMessageBox(messageBoxOptions)
+  return response.response === 0
+}
 
 const getFFmpegVersionLine = (): string | undefined => {
   const result = spawnSync(FFMPEG_PATH, ['-hide_banner', '-version'], {
@@ -56,6 +555,9 @@ type ImportedProjectPayload = {
     order?: number
     visible?: boolean
     locked?: boolean
+    isContentRootLane?: boolean
+    isCutLane?: boolean
+    isChangeSoundLane?: boolean
   }>
   mediaAudioClip?: {
     id?: string
@@ -89,11 +591,58 @@ type ImportedProjectPayload = {
       laneId?: string
       startTime?: number
       duration?: number
-      sourceKey?: 'recording-mic'
+      sourceKey?: 'recording-mic' | 'system-audio'
       isMuted?: boolean
       volume?: number
       fadeInDuration?: number
       fadeOutDuration?: number
+      zIndex?: number
+    }
+  >
+  floatingMonitors?: Record<
+    string,
+    {
+      id?: string
+      path?: string | null
+      url?: string | null
+      kind?: 'video' | 'image'
+      name?: string | null
+      originalName?: string | null
+      isEditedCopy?: boolean
+      duration?: number
+      timelineStart?: number
+      timelineDuration?: number
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+      timeline?: Record<string, unknown>
+    }
+  >
+  floatingMonitorRegions?: Record<
+    string,
+    {
+      id?: string
+      type?: 'floating-monitor'
+      monitorId?: string
+      laneId?: string
+      startTime?: number
+      duration?: number
+      sourceStart?: number
+      x?: number
+      y?: number
+      width?: number
+      height?: number
+      crop?: { top?: number; right?: number; bottom?: number; left?: number }
+      borderRadius?: number
+      isFlipped?: boolean
+      border?: boolean
+      borderWidth?: number
+      borderColor?: string
+      shadowBlur?: number
+      shadowOffsetX?: number
+      shadowOffsetY?: number
+      shadowColor?: string
       zIndex?: number
     }
   >
@@ -153,7 +702,10 @@ type RecordingProfileRuntime = {
 type RecordingOutputOptions = {
   screenScale?: { width: number; height: number }
   screenFps?: RecordingScreenFps
+  webcamFps?: number
   screenNeedsHwDownload?: boolean
+  screenFrameTransferFilters?: string[]
+  screenFrameTransferMode?: string
   screenCaptureBackend?: string
   screenEncoderStatus?: ScreenEncoderStatus
   screenCaptureDisplay?: any
@@ -276,9 +828,23 @@ const normalizeRecordingProcessPriorities = (value: unknown): RecordingProcessPr
   }
 }
 
-const getRecordingProcessPriorityCandidates = (priority: RecordingProcessPriority): number[] => {
+const getRecordingProcessPriorityCandidates = (
+  priority: RecordingProcessPriority,
+  role?: FfmpegProcessRole,
+): number[] => {
   if (process.platform === 'win32') {
-    if (priority === 'low') return [osConstants.priority.PRIORITY_LOW]
+    if (priority === 'low') {
+      // DShow capture cannot be put in Windows Idle priority: it can stop
+      // receiving frames before FFmpeg writes the first packet.
+      if (role === 'webcam') {
+        return [osConstants.priority.PRIORITY_BELOW_NORMAL, osConstants.priority.PRIORITY_NORMAL]
+      }
+      return [
+        osConstants.priority.PRIORITY_LOW,
+        osConstants.priority.PRIORITY_BELOW_NORMAL,
+        osConstants.priority.PRIORITY_NORMAL,
+      ]
+    }
     if (priority === 'high') return [osConstants.priority.PRIORITY_ABOVE_NORMAL, osConstants.priority.PRIORITY_NORMAL]
     return [osConstants.priority.PRIORITY_BELOW_NORMAL, osConstants.priority.PRIORITY_NORMAL]
   }
@@ -292,10 +858,11 @@ const applyRecordingProcessPriority = (
   childProcess: ChildProcessWithoutNullStreams,
   priority: RecordingProcessPriority,
   label: string,
+  role?: FfmpegProcessRole,
 ) => {
   if (!childProcess.pid) return
 
-  for (const candidate of getRecordingProcessPriorityCandidates(priority)) {
+  for (const candidate of getRecordingProcessPriorityCandidates(priority, role)) {
     try {
       setPriority(childProcess.pid, candidate)
       log.info(
@@ -483,7 +1050,7 @@ const probeWin32DshowWebcamInput = (
   size: { width: number; height: number } | undefined,
 ): Promise<boolean> =>
   new Promise((resolve) => {
-    const args = ['-hide_banner', '-f', 'dshow']
+    const args = ['-hide_banner', '-loglevel', 'info', '-f', 'dshow']
     appendWin32DshowWebcamBufferOptions(args)
     args.push('-framerate', String(fps))
     if (size) {
@@ -493,6 +1060,7 @@ const probeWin32DshowWebcamInput = (
 
     const probe = spawn(FFMPEG_PATH, args, { windowsHide: true })
     let settled = false
+    let stderr = ''
 
     const settle = (result: boolean) => {
       if (settled) return
@@ -510,15 +1078,21 @@ const probeWin32DshowWebcamInput = (
       settle(false)
     }, 3000)
 
+    probe.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
     probe.once('error', () => settle(false))
-    probe.once('exit', (code) => settle(code === 0))
+    probe.once('close', (code) => {
+      const producedFrame = /(?:^|\s)frame=\s*[1-9]\d*/m.test(stderr)
+      settle(code === 0 && producedFrame)
+    })
   })
 
 const resolveWebcamInputOptions = async (
   profile: RecordingProfileRuntime,
   context: WebcamInputContext,
   webcam: { deviceLabel: string },
-): Promise<WebcamInputOptions> => {
+): Promise<WebcamInputOptions | null> => {
   const fps = resolveWebcamFps(profile)
   const desiredSize = resolveDesiredWebcamSize(profile, context)
 
@@ -547,9 +1121,9 @@ const resolveWebcamInputOptions = async (
 
   const fallbackFps = fps === 60 ? 30 : fps
   log.warn(
-    `[RecordingManager] Webcam probe failed for all explicit FPS/size combinations; falling back to DShow device default at ${fallbackFps}fps.`,
+    `[RecordingManager] Webcam probe opened the device but received no frames for any explicit FPS/size combination. requestedFps=${fps} fallbackFps=${fallbackFps}`,
   )
-  return { fps: fallbackFps }
+  return null
 }
 
 const parseProbeTimeSeconds = (value: string): number | null => {
@@ -730,9 +1304,9 @@ function normalizeWindowsSystemAudioSampleFormat(
   }
 }
 
-function probeWindowsSystemAudioHelper(deviceId?: string):
-  | { supported: true; probe: WindowsSystemAudioProbe }
-  | { supported: false; reason?: string } {
+function probeWindowsSystemAudioHelper(
+  deviceId?: string,
+): { supported: true; probe: WindowsSystemAudioProbe } | { supported: false; reason?: string } {
   const probeArgs = deviceId ? ['--probe', '--device-id', deviceId] : ['--probe']
   const result = spawnSync(WINDOWS_SYSTEM_AUDIO_HELPER_PATH, probeArgs, {
     encoding: 'utf-8',
@@ -750,8 +1324,11 @@ function probeWindowsSystemAudioHelper(deviceId?: string):
   if (result.status !== 0) {
     return {
       supported: false,
-      reason:
-        (result.stderr || result.stdout || `Windows system-audio helper exited with code ${result.status}`).trim(),
+      reason: (
+        result.stderr ||
+        result.stdout ||
+        `Windows system-audio helper exited with code ${result.status}`
+      ).trim(),
     }
   }
 
@@ -831,7 +1408,10 @@ function resolveLinuxSystemAudioSource(): string | null {
     timeout: 4000,
   })
   if (sourceList.error || sourceList.status !== 0) {
-    log.warn('[LinuxAudio] Failed to list PulseAudio sources through pactl:', sourceList.error || sourceList.stderr || sourceList.stdout)
+    log.warn(
+      '[LinuxAudio] Failed to list PulseAudio sources through pactl:',
+      sourceList.error || sourceList.stderr || sourceList.stdout,
+    )
     return null
   }
 
@@ -841,7 +1421,10 @@ function resolveLinuxSystemAudioSource(): string | null {
   })
   const defaultSink = pactlResult.status === 0 ? (pactlResult.stdout || '').trim() : ''
   if (pactlResult.error || pactlResult.status !== 0) {
-    log.warn('[LinuxAudio] Could not resolve default PulseAudio sink:', pactlResult.error || pactlResult.stderr || pactlResult.stdout)
+    log.warn(
+      '[LinuxAudio] Could not resolve default PulseAudio sink:',
+      pactlResult.error || pactlResult.stderr || pactlResult.stdout,
+    )
   }
 
   const sourceNames = (sourceList.stdout || '')
@@ -854,9 +1437,7 @@ function resolveLinuxSystemAudioSource(): string | null {
   const monitorSources = sourceNames.filter((name) => name.endsWith('.monitor'))
   const preferredMonitor = defaultSink ? `${defaultSink}.monitor` : null
   const selectedSource =
-    (preferredMonitor && monitorSources.find((name) => name === preferredMonitor)) ||
-    monitorSources[0] ||
-    null
+    (preferredMonitor && monitorSources.find((name) => name === preferredMonitor)) || monitorSources[0] || null
 
   if (!selectedSource) {
     log.warn('[LinuxAudio] No PulseAudio monitor source was found for computer audio capture.')
@@ -943,7 +1524,11 @@ function resolveComputerAudioCaptureConfig(deviceId?: string): ComputerAudioCapt
   }
 }
 
-export function getComputerAudioSupport(): { supported: boolean; reason?: string; backend?: ComputerAudioBackend | null } {
+export function getComputerAudioSupport(): {
+  supported: boolean
+  reason?: string
+  backend?: ComputerAudioBackend | null
+} {
   const support = resolveComputerAudioCaptureConfig()
   if (support.supported) {
     return { supported: true, backend: support.backend }
@@ -1176,6 +1761,9 @@ function normalizeTimelineLanes(
       order: typeof lane?.order === 'number' && Number.isFinite(lane.order) ? lane.order : index,
       visible: lane?.visible !== false,
       locked: lane?.locked === true,
+      isContentRootLane: lane?.isContentRootLane === true,
+      isCutLane: lane?.isCutLane === true,
+      isChangeSoundLane: lane?.isChangeSoundLane === true,
     }))
     .sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
     .map((lane, index) => ({ ...lane, order: index }))
@@ -1194,21 +1782,6 @@ function resolveImportedLaneId(
     return laneId
   }
   return fallbackLaneId
-}
-
-/**
- * Uses ffprobe to get the precise creation time of the video file.
- * @param videoPath The path to the video file.
- * @returns A promise that resolves to the creation time as a UNIX timestamp (ms).
- */
-async function getVideoStartTime(videoPath: string): Promise<number> {
-  try {
-    const stats = await fsPromises.stat(videoPath)
-    return stats.birthtimeMs
-  } catch (error) {
-    log.error(`[getVideoStartTime] Error getting file stats for ${videoPath}:`, error)
-    throw error
-  }
 }
 
 /**
@@ -1272,62 +1845,10 @@ async function validateRecordingFiles(session: RecordingSession): Promise<boolea
   return true
 }
 
-/**
- * Trims the audio file by removing the specified amount from the beginning.
- * @param audioPath - Path to the audio file to trim
- * @param trimMs - Amount to trim from the beginning in milliseconds (default 1000ms)
- * @returns Promise that resolves to the path of the trimmed audio file
- */
-async function trimAudioFile(audioPath: string, trimMs: number = 1000): Promise<string> {
-  const ext = path.extname(audioPath) || '.wav'
-  const trimmedPath = audioPath.slice(0, -ext.length) + `-trimmed${ext}`
-  const trimSeconds = trimMs / 1000
-
-  log.info(`[AudioTrim] Trimming ${trimMs}ms from beginning of ${audioPath}`)
-
-  return new Promise((resolve, reject) => {
-    const codecArgs =
-      ext.toLowerCase() === '.wav'
-        ? ['-c:a', 'pcm_s16le']
-        : ['-c:a', 'copy']
-    const ffmpegArgs = ['-y', '-ss', trimSeconds.toString(), '-i', audioPath, ...codecArgs, trimmedPath]
-
-    const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
-
-    ffmpeg.stderr.on('data', (data: any) => {
-      log.info(`[AudioTrim FFmpeg]: ${data.toString()}`)
-    })
-
-    ffmpeg.on('close', async (code: any) => {
-      if (code === 0) {
-        log.info(`[AudioTrim] Successfully trimmed audio, replacing original file`)
-        try {
-          // Replace original file with trimmed version
-          await fsPromises.unlink(audioPath)
-          await fsPromises.rename(trimmedPath, audioPath)
-          resolve(audioPath)
-        } catch (error) {
-          log.error(`[AudioTrim] Error replacing audio file:`, error)
-          reject(error)
-        }
-      } else {
-        log.error(`[AudioTrim] FFmpeg exited with code ${code}`)
-        reject(new Error(`Audio trim failed with code ${code}`))
-      }
-    })
-
-    ffmpeg.on('error', (error: any) => {
-      log.error(`[AudioTrim] FFmpeg error:`, error)
-      reject(error)
-    })
-  })
-}
-
-async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: number = 1000): Promise<void> {
+async function finalizeSystemAudioCapture(session: RecordingSession): Promise<void> {
   if (!session.systemAudioPath) return
 
   if (!session.systemAudioTempPath) {
-    await trimAudioFile(session.systemAudioPath, trimMs)
     return
   }
 
@@ -1338,23 +1859,12 @@ async function finalizeSystemAudioCapture(session: RecordingSession, trimMs: num
     audioBitrateKbps: normalizeRecordingAudioBitrate(session.recordingAudioBitrateKbps, 192),
     audioSampleRate: normalizeRecordingAudioSampleRate(session.recordingAudioSampleRate, 48000),
   }
-  const trimSeconds = trimMs / 1000
-
   log.info(
     `[SystemAudioFinalize] Encoding helper capture ${tempPath} -> ${finalPath} (${config.audioCodec}/${config.audioBitrateKbps}k/${config.audioSampleRate}Hz)`,
   )
 
   await new Promise<void>((resolve, reject) => {
-    const ffmpegArgs = [
-      '-y',
-      '-ss',
-      trimSeconds.toString(),
-      '-i',
-      tempPath,
-      '-vn',
-      ...getRecordedAudioCodecArgs(config),
-      finalPath,
-    ]
+    const ffmpegArgs = ['-y', '-i', tempPath, '-vn', ...getRecordedAudioCodecArgs(config), finalPath]
     const ffmpeg = spawn(FFMPEG_PATH, ffmpegArgs)
 
     ffmpeg.stderr.on('data', (data: any) => {
@@ -1403,6 +1913,8 @@ async function startActualRecording(
   recordSystemAudio: boolean = false,
   systemAudioCapture?: SupportedComputerAudioCaptureConfig,
   audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
+  takeModeEnabled: boolean = false,
+  takeShortcut: string = DEFAULT_TAKE_SHORTCUT,
 ) {
   const recordingProcessPriorityMode = normalizeRecordingProcessPriorityMode(
     store.get(RECORDING_PROCESS_PRIORITY_SETTING_KEY, DEFAULT_RECORDING_PROCESS_PRIORITY_MODE),
@@ -1436,8 +1948,24 @@ async function startActualRecording(
     recordingAudioCodec: audioConfig.audioCodec,
     recordingAudioBitrateKbps: audioConfig.audioBitrateKbps,
     recordingAudioSampleRate: audioConfig.audioSampleRate,
+    takeModeEnabled,
+    takeBoundaries: [],
+    takeLastPtsSeconds: 0,
+    takeShortcut: normalizeTakeShortcut(takeShortcut),
   }
-  appState.recorderWin?.minimize()
+  if (!(await registerTakeShortcut(appState.currentRecordingSession))) {
+    unregisterTakeShortcut()
+    appState.currentRecordingSession = null
+    await cleanupEditorFiles({
+      screenVideoPath,
+      webcamVideoPath,
+      audioPath,
+      systemAudioPath,
+      metadataPath,
+    })
+    return { canceled: true }
+  }
+  appState.recorderWin?.hide()
 
   // Reset state for the new session
   appState.recordingStartTime = Date.now()
@@ -1470,6 +1998,7 @@ async function startActualRecording(
           x: normalizedX - recordingGeometry.x,
           y: normalizedY - recordingGeometry.y,
           timestamp: data.timestamp,
+          captureMonotonicMs: getMonotonicMilliseconds(),
         }
         appState.recordedMouseEvents.push(absoluteEvent)
       }
@@ -1551,20 +2080,19 @@ async function startActualRecording(
       recordingProcessPriorityMode,
       recordingProcessPriorities,
     )
-    applyRecordingProcessPriority(process, processPriority, `ffmpeg:${spec.role}`)
+    applyRecordingProcessPriority(process, processPriority, `ffmpeg:${spec.role}`, spec.role)
     return { ...spec, process }
   })
   appState.ffmpegProcess = ffmpegRuns.find((run) => run.role === 'main')?.process || ffmpegRuns[0]?.process || null
   appState.ffmpegProcesses = ffmpegRuns.map((run) => run.process)
-  const systemAudioEncoderRun =
-    systemAudioEncoderArgs ? ffmpegRuns.find((run) => run.role === 'system-audio') || null : null
+  const systemAudioEncoderRun = systemAudioEncoderArgs
+    ? ffmpegRuns.find((run) => run.role === 'system-audio') || null
+    : null
 
-  let systemAudioHelperRun:
-    | {
-        role: 'system-audio'
-        process: ChildProcessWithoutNullStreams
-      }
-    | null = null
+  let systemAudioHelperRun: {
+    role: 'system-audio'
+    process: ChildProcessWithoutNullStreams
+  } | null = null
 
   if (systemAudioPath && systemAudioCapture?.backend === 'windows-helper') {
     log.info('[SystemAudioHelper] Starting helper in stdout mode.')
@@ -1587,6 +2115,7 @@ async function startActualRecording(
     let fatalStartupHandled = false
     let recordingReady = false
     const readyRoles = new Set<FfmpegProcessRole>()
+    const ffmpegStartupErrorText = new Map<FfmpegProcessRole, string>()
     let startupErrorText = ''
     let startupTimeout: NodeJS.Timeout | null = setTimeout(() => {
       if (recordingReady || fatalStartupHandled) return
@@ -1609,12 +2138,14 @@ async function startActualRecording(
       resolve(value)
     }
 
-    const expectedReadyCount =
-      ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
+    const expectedReadyCount = ffmpegRuns.length + (systemAudioHelperRun ? 1 : 0) - (systemAudioEncoderRun ? 1 : 0)
+
+    const readyMonotonicByRole = new Map<FfmpegProcessRole, number>()
 
     const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
       readyRoles.add(role)
+      readyMonotonicByRole.set(role, getMonotonicMilliseconds())
       log.info(
         `[FFMPEG] Ready signal from ${role}. count=${readyRoles.size}/${expectedReadyCount} roles=${Array.from(readyRoles).join(',')}`,
       )
@@ -1627,7 +2158,35 @@ async function startActualRecording(
         return
       }
 
-      log.info('[FFMPEG] Recording pipeline is ready.')
+      // All capture processes were spawned together. Timeline zero is deliberately
+      // set only after every input confirms readiness, so initial device startup is
+      // disposable pre-roll instead of a fixed, guessed audio trim.
+      const captureOriginMonotonicMs = getMonotonicMilliseconds()
+      const offsetFromReady = (role: FfmpegProcessRole, fallback: FfmpegProcessRole = 'main'): number =>
+        Math.max(
+          0,
+          Math.round(
+            captureOriginMonotonicMs -
+              (readyMonotonicByRole.get(role) ?? readyMonotonicByRole.get(fallback) ?? captureOriginMonotonicMs),
+          ),
+        )
+      session.captureOriginMonotonicMs = captureOriginMonotonicMs
+      session.captureSourceOffsetsMs = {
+        screen: offsetFromReady('main'),
+        webcam: offsetFromReady('webcam'),
+        recording: offsetFromReady('main'),
+        systemAudio: offsetFromReady('system-audio'),
+      }
+      log.info(
+        `[FFMPEG] Recording pipeline ready; shared capture origin offsets(ms)=${JSON.stringify(session.captureSourceOffsetsMs)}`,
+      )
+      session.takeRecordingReadyMonotonicMs = captureOriginMonotonicMs
+      session.takeLastPtsMonotonicMs = session.takeRecordingReadyMonotonicMs
+      appState.recordingStartTime = Date.now()
+      if (isRecordingTimerEnabled()) {
+        showRecordingTimer(appState.recordingStartTime)
+        registerRecordingTimerShortcut()
+      }
       appState.recorderWin?.webContents.send('recording-started')
       createTray()
       resolveOnce({ canceled: false, ...session })
@@ -1676,7 +2235,7 @@ async function startActualRecording(
         }
 
         log.error(`[FFMPEG:${run.role}] Process exited before recording became ready. code=${code} signal=${signal}`)
-        const startupDetail = startupErrorText.trim()
+        const startupDetail = (ffmpegStartupErrorText.get(run.role) || '').trim()
         const errorMessage = startupDetail.includes('Device or resource busy')
           ? `The selected recording device is busy.\n\n${startupDetail}\n\nClose any app that is using the webcam or microphone and try again.`
           : startupDetail.length > 0
@@ -1689,12 +2248,26 @@ async function startActualRecording(
 
       // Monitor FFmpeg's stderr for progress, errors, and sync timing
       ffmpeg.stderr.on('data', (data: any) => {
-        const message = data.toString()
-        startupErrorText = `[${run.role}] ${message}`
+        const message: string = data.toString()
+        const current = ffmpegStartupErrorText.get(run.role) || ''
+        ffmpegStartupErrorText.set(run.role, `${current}${message}`.slice(-16000))
         log.warn(`[FFMPEG:${run.role} stderr]: ${message}`)
 
         if (!recordingReady && isFFmpegRecordingReadyMessage(message)) {
           markRecordingReady(run.role)
+        }
+
+        if (run.role === 'main') {
+          const progressMatches = Array.from(message.matchAll(/out_time_us=(\d+)/g))
+          const latest = progressMatches[progressMatches.length - 1]
+          const session = appState.currentRecordingSession
+          if (latest && session) {
+            const ptsSeconds = Number(latest[1]) / 1_000_000
+            if (Number.isFinite(ptsSeconds) && ptsSeconds >= (session.takeLastPtsSeconds || 0)) {
+              session.takeLastPtsSeconds = ptsSeconds
+              session.takeLastPtsMonotonicMs = getMonotonicMilliseconds()
+            }
+          }
         }
 
         // Early detection of fatal errors to provide immediate feedback
@@ -1797,24 +2370,27 @@ function appendScreenOutputArgs(
     `[RecordingManager] Screen recording encode config: output=${screenOut} codecArgs=${encoderDef.codecArgs.join(' ')} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
   )
   args.push('-map', `${screenIndex}:v`, ...encoderDef.codecArgs)
+  const screenFilters =
+    outputOptions.screenFrameTransferFilters ||
+    (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])
   if (outputOptions.screenScale) {
-    const screenFilters = outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : []
     screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
     args.push('-vf', screenFilters.join(','))
-  } else if (outputOptions.screenNeedsHwDownload) {
-    args.push('-vf', 'hwdownload,format=bgra')
+  } else if (screenFilters.length > 0) {
+    args.push('-vf', screenFilters.join(','))
   }
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
+
+  // GOP ≤2s: take edits and deep seeks need regular random-access points.
+  const gopSize = Math.round((outputOptions.screenFps || 30) * 2)
+  args.push('-g', String(gopSize))
+  args.push('-progress', 'pipe:2', '-stats_period', '0.25')
   args.push(screenOut)
 }
 
-function buildSystemAudioFfmpegArgs(
-  audioOut: string,
-  inputName: string,
-  config: RecordingAudioOutputConfig,
-): string[] {
+function buildSystemAudioFfmpegArgs(audioOut: string, inputName: string, config: RecordingAudioOutputConfig): string[] {
   return ['-y', '-f', 'pulse', '-i', inputName, '-vn', ...getRecordedAudioCodecArgs(config), audioOut]
 }
 
@@ -1843,10 +2419,7 @@ function buildWindowsHelperSystemAudioFfmpegArgs(
   ]
 }
 
-type RecordingAudioOutputConfig = Pick<
-  RecordingProfileRuntime,
-  'audioCodec' | 'audioBitrateKbps' | 'audioSampleRate'
->
+type RecordingAudioOutputConfig = Pick<RecordingProfileRuntime, 'audioCodec' | 'audioBitrateKbps' | 'audioSampleRate'>
 
 function getRecordedAudioFileExtension(codec: RecordingAudioCodec): '.aac' | '.mp3' {
   return codec === 'mp3' ? '.mp3' : '.aac'
@@ -1897,9 +2470,9 @@ function stopSystemAudioHelperProcess(process: ChildProcessWithoutNullStreams): 
   })
 }
 
-function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string): void {
+function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: string, webcamFps: number = 30): void {
   log.info(
-    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt}`,
+    `[RecordingManager] Webcam recording encode config: output=${webcamOut} codec=${WEBCAM_RECORDING_ENCODING_CONFIG.codec} preset=${WEBCAM_RECORDING_ENCODING_CONFIG.preset} crf=${WEBCAM_RECORDING_ENCODING_CONFIG.crf} maxrate=${WEBCAM_RECORDING_ENCODING_CONFIG.maxrate} bufsize=${WEBCAM_RECORDING_ENCODING_CONFIG.bufsize} pix_fmt=${WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt} gopSize=${Math.round(webcamFps * 2)}`,
   )
   args.push(
     '-map',
@@ -1916,6 +2489,8 @@ function appendWebcamOutputArgs(args: string[], webcamIndex: number, webcamOut: 
     WEBCAM_RECORDING_ENCODING_CONFIG.bufsize,
     '-pix_fmt',
     WEBCAM_RECORDING_ENCODING_CONFIG.pixFmt,
+    '-g',
+    String(Math.round(webcamFps * 2)),
     webcamOut,
   )
 }
@@ -1937,7 +2512,7 @@ function buildFfmpegArgs(
 
   appendScreenOutputArgs(finalArgs, screenIndex, screenOut, outputOptions)
   if (hasMic && audioOut) appendEncodedAudioOutputArgs(finalArgs, `${micIndex}:a`, audioOut, audioConfig)
-  if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut)
+  if (hasWebcam && webcamOut) appendWebcamOutputArgs(finalArgs, webcamIndex, webcamOut, outputOptions.webcamFps)
 
   return finalArgs
 }
@@ -1956,7 +2531,7 @@ function buildWin32SplitWebcamFfmpegSpecs(
   if (hasMic && audioOut) appendEncodedAudioOutputArgs(mainArgs, '0:a', audioOut, audioConfig)
 
   const webcamArgs = [...inputArgs.webcamInputArgs]
-  appendWebcamOutputArgs(webcamArgs, 0, webcamOut)
+  appendWebcamOutputArgs(webcamArgs, 0, webcamOut, outputOptions.webcamFps)
 
   return [
     { role: 'main', args: mainArgs },
@@ -1972,6 +2547,29 @@ function createTray() {
   appState.tray = new Tray(icon)
   const contextMenu = Menu.buildFromTemplate([
     {
+      label: 'Open Window',
+      click: () => {
+        const recorderWindow = appState.recorderWin
+        if (!recorderWindow || recorderWindow.isDestroyed()) return
+        if (recorderWindow.isMinimized()) recorderWindow.restore()
+        if (!recorderWindow.isVisible()) recorderWindow.show()
+        recorderWindow.focus()
+      },
+    },
+    { type: 'separator' as const },
+    ...(appState.currentRecordingSession?.takeModeEnabled
+      ? [
+          {
+            label: 'Mark Take',
+            accelerator: appState.currentRecordingSession.takeShortcut,
+            click: () => {
+              markTake()
+            },
+          },
+          { type: 'separator' as const },
+        ]
+      : []),
+    {
       label: 'Stop Recording',
       click: async () => {
         await stopRecording()
@@ -1984,7 +2582,11 @@ function createTray() {
       },
     },
   ])
-  appState.tray.setToolTip('RecordSaaS is recording...')
+  appState.tray.setToolTip(
+    appState.currentRecordingSession?.takeModeEnabled
+      ? 'RecordSaaS is recording — Take 1'
+      : 'RecordSaaS is recording...',
+  )
   appState.tray.setContextMenu(contextMenu)
 }
 
@@ -2003,12 +2605,15 @@ export async function startRecording(options: any) {
   }
   const screenFps = recordingProfile.screenFps
   const screenEncoderStatus = await getScreenEncoderStatus()
-  const outputOptions: RecordingOutputOptions = { screenFps, screenEncoderStatus }
+  const webcamFps = webcam ? resolveWebcamFps(recordingProfile) : undefined
+  const outputOptions: RecordingOutputOptions = { screenFps, webcamFps, screenEncoderStatus }
   log.info('[RecordingManager] Received start recording request with options:', options)
   log.info('[RecordingManager] Using recording profile:', recordingProfile)
   log.info('[RecordingManager] Resolved screen encoder:', screenEncoderStatus)
 
-  const computerAudioCapture = computerAudioEnabled ? resolveComputerAudioCaptureConfig(options.computerAudioDeviceId) : null
+  const computerAudioCapture = computerAudioEnabled
+    ? resolveComputerAudioCaptureConfig(options.computerAudioDeviceId)
+    : null
   if (computerAudioEnabled && !computerAudioCapture?.supported) {
     dialog.showErrorBox(
       'Computer Audio Unavailable',
@@ -2131,6 +2736,15 @@ export async function startRecording(options: any) {
   }
   if (webcam) {
     const webcamInputOptions = await resolveWebcamInputOptions(recordingProfile, webcamInputContext, webcam)
+    if (!webcamInputOptions) {
+      const deviceName = webcam.deviceLabel || 'selected webcam'
+      log.error(`[RecordingManager] Webcam opened but did not produce any frames: ${deviceName}`)
+      dialog.showErrorBox(
+        'Webcam Unavailable',
+        `RecordSaaS opened "${deviceName}" but received no video frames.\n\nClose Camera, Teams, Zoom, Chrome tabs, OBS, or any other app using the webcam, then try again. If no app is using it, restart the webcam or Windows and try again.`,
+      )
+      return { canceled: true }
+    }
     switch (process.platform) {
       case 'linux':
         webcamInputArgs.push('-f', 'v4l2')
@@ -2192,8 +2806,19 @@ export async function startRecording(options: any) {
       case 'win32': {
         const windowsPhysicalRect = getWindowsPhysicalDisplayRect(targetDisplay)
         const candidate = selectWindowsScreenCaptureCandidate(targetDisplay, windowsPhysicalRect, screenFps)
+        const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
+        const transfer = resolveWindowsScreenCaptureFrameTransfer(
+          candidate,
+          screenEncoderStatus.encoder,
+          encoderDef.prefixArgs,
+          encoderDef.codecArgs,
+          !outputOptions.screenScale,
+        )
         outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenFrameTransferFilters = transfer.filters
+        outputOptions.screenFrameTransferMode = transfer.mode
         outputOptions.screenCaptureBackend = candidate.backend
+        log.info(`[RecordingManager] Windows screen frame transfer: ${transfer.mode}`)
         screenInputArgs.push(...candidate.inputArgs)
         break
       }
@@ -2246,19 +2871,27 @@ export async function startRecording(options: any) {
     const physicalHeight = windowsCaptureRect?.height ?? getPlatformPhysicalDimension(safeHeight, scaleFactor)
     const physicalX = windowsCaptureRect?.x ?? getPlatformPhysicalOffset(selectedGeometry.x, scaleFactor)
     const physicalY = windowsCaptureRect?.y ?? getPlatformPhysicalOffset(selectedGeometry.y, scaleFactor)
-    recordingGeometry =
-      windowsCaptureRect || { x: selectedGeometry.x, y: selectedGeometry.y, width: safeWidth, height: safeHeight }
+    recordingGeometry = windowsCaptureRect || {
+      x: selectedGeometry.x,
+      y: selectedGeometry.y,
+      width: safeWidth,
+      height: safeHeight,
+    }
     outputOptions.screenScale =
       resolveScaledDimensions(physicalWidth, physicalHeight, recordingProfile.screenResolution) || undefined
-    const windowsDisplayRect =
-      process.platform === 'win32' ? getWindowsPhysicalDisplayRect(containingDisplay) : null
+    const windowsDisplayRect = process.platform === 'win32' ? getWindowsPhysicalDisplayRect(containingDisplay) : null
     outputOptions.screenCaptureDisplay = {
       id: containingDisplay.id,
-      label: containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
+      label:
+        containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
       bounds: containingDisplay.bounds,
       scaleFactor,
-      physicalBounds:
-        windowsDisplayRect || { x: physicalX, y: physicalY, width: physicalWidth, height: physicalHeight },
+      physicalBounds: windowsDisplayRect || {
+        x: physicalX,
+        y: physicalY,
+        width: physicalWidth,
+        height: physicalHeight,
+      },
     }
 
     switch (process.platform) {
@@ -2283,8 +2916,19 @@ export async function startRecording(options: any) {
           containingDisplay,
         )
         const candidate = selectWindowsScreenCaptureCandidate(containingDisplay, windowsPhysicalRect, screenFps)
+        const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
+        const transfer = resolveWindowsScreenCaptureFrameTransfer(
+          candidate,
+          screenEncoderStatus.encoder,
+          encoderDef.prefixArgs,
+          encoderDef.codecArgs,
+          !outputOptions.screenScale,
+        )
         outputOptions.screenNeedsHwDownload = candidate.needsHwDownload
+        outputOptions.screenFrameTransferFilters = transfer.filters
+        outputOptions.screenFrameTransferMode = transfer.mode
         outputOptions.screenCaptureBackend = candidate.backend
+        log.info(`[RecordingManager] Windows screen frame transfer: ${transfer.mode}`)
         screenInputArgs.push(...candidate.inputArgs)
         break
       }
@@ -2339,6 +2983,8 @@ export async function startRecording(options: any) {
     computerAudioEnabled,
     computerAudioCapture?.supported ? computerAudioCapture : undefined,
     audioConfig,
+    options.takeModeEnabled === true,
+    normalizeTakeShortcut(store.get(TAKE_SHORTCUT_SETTING_KEY, DEFAULT_TAKE_SHORTCUT)),
   )
 }
 
@@ -2468,6 +3114,10 @@ export async function selectRecordingArea() {
 export async function stopRecording() {
   restoreOriginalCursorScale()
   log.info('Stopping recording, preparing to save...')
+  unregisterTakeShortcut()
+  closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   appState.tray?.destroy()
   appState.tray = null
   createSavingWindow()
@@ -2487,22 +3137,12 @@ export async function stopRecording() {
   // Notify recorder window that the recording has finished, allowing it to reset its UI
   appState.recorderWin?.webContents.send('recording-finished', { canceled: false, ...session })
 
-  // Step 2: Trim audio file if present
-  if (session.audioPath) {
-    try {
-      log.info('[StopRecord] Trimming audio file by 1000ms...')
-      await trimAudioFile(session.audioPath, 1000)
-      log.info('[StopRecord] Audio file trimmed successfully.')
-    } catch (error) {
-      log.error('[StopRecord] Failed to trim audio file:', error)
-      // Continue anyway - audio is trimmed but not critical
-    }
-  }
-
+  // Step 2: Preserve each raw source. Alignment is represented by the shared
+  // capture origin saved in metadata, never by a guessed destructive trim.
   if (session.systemAudioPath) {
     try {
       log.info('[StopRecord] Finalizing computer audio file...')
-      await finalizeSystemAudioCapture(session, 1000)
+      await finalizeSystemAudioCapture(session)
       log.info('[StopRecord] Computer audio file finalized successfully.')
     } catch (error) {
       log.error('[StopRecord] Failed to finalize computer audio file:', error)
@@ -2512,8 +3152,7 @@ export async function stopRecording() {
           await fsPromises.unlink(session.systemAudioPath).catch(() => undefined)
           session.systemAudioPath = session.systemAudioTempPath
           session.systemAudioTempPath = undefined
-          await trimAudioFile(session.systemAudioPath, 1000)
-          log.warn('[StopRecord] Falling back to raw helper WAV for computer audio.')
+          log.warn('[StopRecord] Falling back to raw helper WAV for computer audio without trimming.')
         } catch (fallbackError) {
           log.error('[StopRecord] Failed to recover raw helper WAV after finalize error:', fallbackError)
         }
@@ -2561,6 +3200,10 @@ export async function stopRecording() {
  */
 export async function cancelRecording() {
   log.info('Cancelling recording and deleting files...')
+  unregisterTakeShortcut()
+  closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   await cleanupAndDiscard()
   appState.recorderWin?.webContents.send('recording-finished', { canceled: true })
   appState.recorderWin?.show()
@@ -2715,19 +3358,29 @@ function getScaledGeometry(geometry: RecordingGeometry, scaleFactor: number): Re
  */
 async function processAndSaveMetadata(session: RecordingSession): Promise<boolean> {
   try {
-    const videoStartTime = await getVideoStartTime(session.screenVideoPath)
-    log.info(`[SYNC] Precise video start time from ffprobe: ${new Date(videoStartTime).toISOString()}`)
+    const captureOriginMonotonicMs = session.captureOriginMonotonicMs
+    const captureSourceOffsetsMs = session.captureSourceOffsetsMs || {
+      screen: 0,
+      webcam: 0,
+      recording: 0,
+      systemAudio: 0,
+    }
 
     const scaleFactor = session.scaleFactor || 1
     const finalEvents = appState.recordedMouseEvents.map((event) => {
       const shouldScaleLinuxEvent = shouldApplyLinuxDisplayScale(scaleFactor)
       const scaledX = shouldScaleLinuxEvent ? event.x * scaleFactor : event.x
       const scaledY = shouldScaleLinuxEvent ? event.y * scaleFactor : event.y
+      const { captureMonotonicMs, ...eventWithoutCaptureClock } = event
+      const relativeTimestamp =
+        typeof captureOriginMonotonicMs === 'number' && typeof captureMonotonicMs === 'number'
+          ? captureMonotonicMs - captureOriginMonotonicMs
+          : 0
       return {
-        ...event,
+        ...eventWithoutCaptureClock,
         x: scaledX,
         y: scaledY,
-        timestamp: Math.max(0, event.timestamp - videoStartTime),
+        timestamp: Math.max(0, relativeTimestamp),
       }
     })
 
@@ -2742,8 +3395,24 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       requestedScreenFps: session.requestedScreenFps,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
+      captureSourceOffsetsMs,
       cursorImages: Object.fromEntries(appState.runtimeCursorImageMap || []),
       events: finalEvents,
+      takeModeEnabled: session.takeModeEnabled === true,
+      sourceDuration: Math.max(0, (session.takeLastPtsSeconds || 0) - captureSourceOffsetsMs.screen / 1000),
+      takeBoundaries: (() => {
+        if (!session.takeModeEnabled) return []
+        const duration = Math.max(0, (session.takeLastPtsSeconds || 0) - captureSourceOffsetsMs.screen / 1000)
+        const minimumDuration = Math.max(0.1, 2 / Math.max(1, session.requestedScreenFps || 30))
+        const boundaries = (session.takeBoundaries || []).filter(
+          (boundary, index, values) =>
+            boundary >= minimumDuration &&
+            boundary < duration &&
+            (index === 0 || boundary - values[index - 1] >= minimumDuration),
+        )
+        if (boundaries.length > 0 && duration - boundaries[boundaries.length - 1] < minimumDuration) boundaries.pop()
+        return boundaries
+      })(),
     }
 
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(finalMetadata))
@@ -2763,6 +3432,18 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
       requestedScreenFps: session.requestedScreenFps,
       ffmpegVersion: getFFmpegVersionLine(),
       syncOffset: 0,
+      captureSourceOffsetsMs: session.captureSourceOffsetsMs || {
+        screen: 0,
+        webcam: 0,
+        recording: 0,
+        systemAudio: 0,
+      },
+      takeModeEnabled: session.takeModeEnabled === true,
+      sourceDuration: Math.max(
+        0,
+        (session.takeLastPtsSeconds || 0) - (session.captureSourceOffsetsMs?.screen || 0) / 1000,
+      ),
+      takeBoundaries: session.takeBoundaries || [],
     }
     await fsPromises.writeFile(session.metadataPath, JSON.stringify(errorMetadata))
     return false
@@ -2773,6 +3454,10 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
  * Forcefully terminates all recording processes and deletes any temporary files.
  */
 export async function cleanupAndDiscard() {
+  unregisterTakeShortcut()
+  closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   if (!appState.currentRecordingSession) return
   log.warn('[Cleanup] Discarding current recording session.')
   const sessionToDiscard = { ...appState.currentRecordingSession }
@@ -2856,6 +3541,10 @@ export async function cleanupOrphanedRecordings() {
  * Event handler for application quit, ensuring recordings are cleaned up before exit.
  */
 export async function onAppQuit(event: Electron.Event) {
+  unregisterTakeShortcut()
+  closeTakeToast()
+  unregisterRecordingTimerShortcut()
+  closeRecordingTimer()
   if (appState.currentRecordingSession && !appState.isCleanupInProgress) {
     log.warn('[AppQuit] Active session detected. Cleaning up before exit...')
     event.preventDefault()
@@ -3054,6 +3743,12 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       getProjectFirstField(projectData, null, 'systemAudioPath') || null,
       'computer audio track',
     )
+    const rawFrameStyles = getProjectFirstField(projectData, null, 'frameStyles')
+    const rawBackground = rawFrameStyles?.background
+    const importedBackgroundImagePath =
+      rawBackground?.type === 'image'
+        ? await importMediaFile(rawBackground.imagePath || rawBackground.imageUrl || null, 'background image')
+        : undefined
 
     // Copy canonical metadata if available; this is the source of cursor/mouse events.
     let hasCanonicalMetadataFile = false
@@ -3085,6 +3780,22 @@ export async function importProjectFromPath(sourceProjectPath: string) {
 
     const rawMediaAudioClip = getProjectFirstField(projectData, canonicalMetadata, 'mediaAudioClip') || null
     const importedMediaAudioPath = await importMediaFile(rawMediaAudioClip?.path || null, 'media audio clip')
+    const rawFloatingMonitors = getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitors') || {}
+    const importedFloatingMonitors: NonNullable<ImportedProjectPayload['floatingMonitors']> = {}
+    if (rawFloatingMonitors && typeof rawFloatingMonitors === 'object') {
+      for (const [monitorId, rawMonitor] of Object.entries(rawFloatingMonitors)) {
+        if (!rawMonitor || typeof rawMonitor !== 'object') continue
+        const importedPath = await importMediaFile(rawMonitor.path || null, `floating monitor ${monitorId}`)
+        if (!importedPath) continue
+        importedFloatingMonitors[monitorId] = {
+          ...rawMonitor,
+          id: rawMonitor.id || monitorId,
+          path: importedPath,
+          url: toMediaUrl(importedPath) || '',
+          name: rawMonitor.name || path.basename(importedPath),
+        }
+      }
+    }
 
     const fallbackEvents = Array.isArray(projectData.events)
       ? projectData.events
@@ -3121,6 +3832,21 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       recordingGeometry: mergedGeometry,
       timelineLanes: normalizedTimelineLanes,
       systemAudioPath: systemAudioPath || undefined,
+      floatingMonitors: importedFloatingMonitors,
+    }
+
+    if (rawFrameStyles && typeof rawFrameStyles === 'object') {
+      mergedRuntimeMetadata.frameStyles = {
+        ...rawFrameStyles,
+        background:
+          importedBackgroundImagePath && rawBackground && typeof rawBackground === 'object'
+            ? {
+                ...rawBackground,
+                imagePath: importedBackgroundImagePath,
+                imageUrl: toMediaUrl(importedBackgroundImagePath) || importedBackgroundImagePath,
+              }
+            : rawBackground,
+      }
     }
 
     if (rawMediaAudioClip && importedMediaAudioPath) {
@@ -3248,7 +3974,7 @@ export async function importProjectFromPath(sourceProjectPath: string) {
           laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
           startTime,
           duration,
-          sourceKey: 'recording-mic',
+          sourceKey: rawRegion.sourceKey === 'system-audio' ? 'system-audio' : 'recording-mic',
           isMuted: rawRegion.isMuted === true,
           volume,
           fadeInDuration,
@@ -3258,6 +3984,42 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       }
     }
     mergedRuntimeMetadata.changeSoundRegions = normalizedChangeSoundRegions
+
+    const rawFloatingMonitorRegions =
+      getProjectFirstField(projectData, canonicalMetadata, 'floatingMonitorRegions') || {}
+    const normalizedFloatingMonitorRegions: NonNullable<ImportedProjectPayload['floatingMonitorRegions']> = {}
+    if (rawFloatingMonitorRegions && typeof rawFloatingMonitorRegions === 'object') {
+      for (const [regionId, rawRegion] of Object.entries(rawFloatingMonitorRegions)) {
+        if (
+          !rawRegion ||
+          typeof rawRegion !== 'object' ||
+          !rawRegion.monitorId ||
+          !importedFloatingMonitors[rawRegion.monitorId]
+        )
+          continue
+        normalizedFloatingMonitorRegions[regionId] = {
+          ...rawRegion,
+          id: rawRegion.id || regionId,
+          type: 'floating-monitor',
+          monitorId: rawRegion.monitorId,
+          laneId: resolveImportedLaneId(rawRegion.laneId, normalizedTimelineLanes, fallbackTimelineLaneId),
+          startTime:
+            typeof rawRegion.startTime === 'number' && Number.isFinite(rawRegion.startTime)
+              ? Math.max(0, rawRegion.startTime)
+              : 0,
+          duration:
+            typeof rawRegion.duration === 'number' && Number.isFinite(rawRegion.duration)
+              ? Math.max(0.1, rawRegion.duration)
+              : 0.1,
+          sourceStart:
+            typeof rawRegion.sourceStart === 'number' && Number.isFinite(rawRegion.sourceStart)
+              ? Math.max(0, rawRegion.sourceStart)
+              : 0,
+          zIndex: typeof rawRegion.zIndex === 'number' && Number.isFinite(rawRegion.zIndex) ? rawRegion.zIndex : 0,
+        }
+      }
+    }
+    mergedRuntimeMetadata.floatingMonitorRegions = normalizedFloatingMonitorRegions
 
     if (mergedRuntimeMetadata.events.length === 0) {
       log.warn('[RecordingManager] Imported project contains no mouse events after metadata merge.')

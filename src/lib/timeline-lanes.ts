@@ -19,6 +19,8 @@ export type TimelineSegment = {
 
 export const DEFAULT_TIMELINE_LANE_ID = 'lane-1'
 export const DEFAULT_TIMELINE_LANE_NAME = 'Lane 1'
+export const CONTENT_ROOT_LANE_ID = 'lane-content-root'
+export const CONTENT_ROOT_LANE_NAME = 'Content Root'
 
 export type LanePrecedenceContext = {
   normalizedLanes: TimelineLane[]
@@ -41,18 +43,49 @@ export function createDefaultTimelineLane(): TimelineLane {
   }
 }
 
+export function createContentRootLane(): TimelineLane {
+  return {
+    id: CONTENT_ROOT_LANE_ID,
+    name: CONTENT_ROOT_LANE_NAME,
+    order: 1,
+    visible: true,
+    locked: true,
+    isContentRootLane: true,
+  }
+}
+
+export function ensureContentRootLane(lanes: TimelineLane[]): TimelineLane[] {
+  const regular = lanes.filter((lane) => !lane.isCutLane && !lane.isChangeSoundLane && !lane.isContentRootLane)
+  const existingContentRoot = lanes.find((lane) => lane.isContentRootLane)
+  const contentRootLane = existingContentRoot ?? createContentRootLane()
+  return [contentRootLane, ...regular.map((lane, index) => ({ ...lane, order: index + 2 }))]
+}
+
+export function removeContentRootLaneIfEmpty(
+  lanes: TimelineLane[],
+  hasCutRegions: boolean,
+  hasChangeSoundRegions: boolean,
+): TimelineLane[] {
+  if (hasCutRegions || hasChangeSoundRegions) return lanes
+  const hasContentRoot = lanes.some((lane) => lane.isContentRootLane)
+  if (!hasContentRoot) return lanes
+  return lanes.filter((lane) => !lane.isContentRootLane)
+}
+
 export function sortTimelineLanes(lanes: TimelineLane[]): TimelineLane[] {
   return [...lanes].sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
 }
 
 export function normalizeTimelineLanes(lanes: TimelineLane[] | null | undefined): TimelineLane[] {
   const source = lanes && lanes.length > 0 ? lanes : [createDefaultTimelineLane()]
-  return sortTimelineLanes(source).map((lane, index) => ({ ...lane, order: index }))
+  const sorted = sortTimelineLanes(source)
+  return sorted.map((lane, index) => ({ ...lane, order: index }))
 }
 
 export function getFallbackLaneId(lanes: TimelineLane[]): string {
   const sorted = sortTimelineLanes(lanes)
-  return sorted[0]?.id ?? DEFAULT_TIMELINE_LANE_ID
+  const nonSpecial = sorted.find((lane) => !lane.isContentRootLane && !lane.isCutLane && !lane.isChangeSoundLane)
+  return nonSpecial?.id ?? sorted[0]?.id ?? DEFAULT_TIMELINE_LANE_ID
 }
 
 export function buildLaneIndexMap(lanes: TimelineLane[]): Map<string, number> {

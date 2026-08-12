@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
   FileImport,
@@ -18,6 +18,7 @@ import { useEditorStore } from '../../../store/editorStore'
 import { cn, formatTime } from '../../../lib/utils'
 import { Button } from '../../ui/button'
 import { CHANGE_SOUND_DRAG_TYPE, MEDIA_AUDIO_DRAG_TYPE } from '../../../lib/media-assets'
+import { resolveMonitorForAssetTimeline } from '../../../lib/floating-monitor'
 
 type MediaCategory = 'audio' | 'image' | 'video'
 
@@ -32,17 +33,22 @@ const categoryConfig: Array<{
   { id: 'video', label: 'Video', icon: Video },
 ]
 
-const PlaceholderCategory = ({ icon, title, message }: { icon: ReactNode; title: string; message: string }) => (
-  <div className="rounded-lg border border-border bg-card/60 p-5 text-center">
-    <IconShell className="mx-auto mb-3 h-11 w-11">{icon}</IconShell>
-    <p className="text-sm font-semibold text-foreground">{title}</p>
-    <p className="mt-1 text-xs text-muted-foreground">{message}</p>
-  </div>
-)
-
 export function MediaAssetsPanel() {
   const [activeCategory, setActiveCategory] = useState<MediaCategory>('audio')
   const [isImporting, setIsImporting] = useState(false)
+  const [isImportingVideo, setIsImportingVideo] = useState(false)
+  const [isImportingImage, setIsImportingImage] = useState(false)
+  const [takePreparation, setTakePreparation] = useState<{ requestId: string; progress: number; stage: string } | null>(
+    null,
+  )
+
+  useEffect(
+    () =>
+      window.electronAPI.onPrepareTakeVideoProgress((payload) => {
+        setTakePreparation((current) => (current?.requestId === payload.requestId ? payload : current))
+      }),
+    [],
+  )
 
   const {
     currentTime,
@@ -52,6 +58,15 @@ export function MediaAssetsPanel() {
     addMediaAudioRegion,
     addChangeSoundRegion,
     clearMediaAudioClip,
+    floatingMonitors,
+    floatingMonitorRegions,
+    selectedRegionId,
+    assetTimelineEditing,
+    addFloatingMonitor,
+    updateFloatingMonitor,
+    removeFloatingMonitor,
+    addFloatingMonitorRegion,
+    beginAssetTimelineEdit,
   } = useEditorStore(
     useShallow((state) => ({
       currentTime: state.currentTime,
@@ -61,6 +76,15 @@ export function MediaAssetsPanel() {
       addMediaAudioRegion: state.addMediaAudioRegion,
       addChangeSoundRegion: state.addChangeSoundRegion,
       clearMediaAudioClip: state.clearMediaAudioClip,
+      floatingMonitors: state.floatingMonitors,
+      floatingMonitorRegions: state.floatingMonitorRegions,
+      selectedRegionId: state.selectedRegionId,
+      assetTimelineEditing: state.assetTimelineEditing,
+      addFloatingMonitor: state.addFloatingMonitor,
+      updateFloatingMonitor: state.updateFloatingMonitor,
+      removeFloatingMonitor: state.removeFloatingMonitor,
+      addFloatingMonitorRegion: state.addFloatingMonitorRegion,
+      beginAssetTimelineEdit: state.beginAssetTimelineEdit,
     })),
   )
 
@@ -69,6 +93,11 @@ export function MediaAssetsPanel() {
     if (mediaAudioClip.duration <= 0) return 'Loading...'
     return formatTime(mediaAudioClip.duration, true)
   }, [mediaAudioClip])
+  const selectedMonitorId = useMemo(() => {
+    const selectedMonitorId = selectedRegionId ? floatingMonitorRegions[selectedRegionId]?.monitorId : null
+    if (!selectedMonitorId || !assetTimelineEditing) return selectedMonitorId
+    return resolveMonitorForAssetTimeline(floatingMonitors, selectedMonitorId)?.id || selectedMonitorId
+  }, [assetTimelineEditing, floatingMonitorRegions, floatingMonitors, selectedRegionId])
 
   const handleImportAudio = async () => {
     try {
@@ -106,28 +135,162 @@ export function MediaAssetsPanel() {
     event.dataTransfer.setData(CHANGE_SOUND_DRAG_TYPE, 'change-sound')
   }
 
+  const handleImportVideo = async () => {
+    try {
+      setIsImportingVideo(true)
+      const result = await window.electronAPI.importMediaVideoAsset()
+      if (!result.asset) return
+      const requestId = `take-video-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setTakePreparation({ requestId, progress: 0, stage: 'Reading metadata' })
+      const prepared = await window.electronAPI.prepareTakeVideo(result.asset.path, requestId)
+      if (prepared.asset) addFloatingMonitor(prepared.asset)
+    } catch (error) {
+      console.error('Failed to import media video asset:', error)
+    } finally {
+      setIsImportingVideo(false)
+      setTakePreparation(null)
+    }
+  }
+
+  const handleImportImage = async () => {
+    try {
+      setIsImportingImage(true)
+      const result = await window.electronAPI.importMediaImageAsset()
+      if (result.asset) addFloatingMonitor({ ...result.asset, kind: 'image' })
+    } catch (error) {
+      console.error('Failed to import media image asset:', error)
+    } finally {
+      setIsImportingImage(false)
+    }
+  }
+
   const handlePlaceChangeSoundAtPlayhead = () => {
     addChangeSoundRegion({ startTime: currentTime })
   }
 
   const renderCategoryContent = () => {
-    if (activeCategory === 'image') {
-      return (
-        <PlaceholderCategory
-          icon={<Photo className="h-5 w-5" />}
-          title="Image Assets"
-          message="Coming soon. This category is part of the Media foundation."
-        />
+    if (activeCategory === 'video' || activeCategory === 'image') {
+      const isVideo = activeCategory === 'video'
+      const visualAssets = Object.values(floatingMonitors).filter(
+        (monitor) => (monitor.kind || 'video') === activeCategory,
       )
-    }
-
-    if (activeCategory === 'video') {
       return (
-        <PlaceholderCategory
-          icon={<Video className="h-5 w-5" />}
-          title="Video Assets"
-          message="Coming soon. This category is part of the Media foundation."
-        />
+        <div className="space-y-3">
+          <Button
+            onClick={isVideo ? handleImportVideo : handleImportImage}
+            disabled={isVideo ? isImportingVideo : isImportingImage}
+            className="icon-hover w-full justify-center gap-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Upload className={cn('h-4 w-4', (isVideo ? isImportingVideo : isImportingImage) && 'animate-pulse')} />
+            {isVideo
+              ? isImportingVideo
+                ? takePreparation
+                  ? `${takePreparation.stage} ${Math.round(takePreparation.progress)}%`
+                  : 'Importing...'
+                : 'Import Video'
+              : isImportingImage
+                ? 'Importing...'
+                : 'Import Image'}
+          </Button>
+          {isVideo && takePreparation && (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => window.electronAPI.cancelPrepareTakeVideo(takePreparation.requestId)}
+            >
+              Cancel preparation
+            </Button>
+          )}
+
+          {visualAssets.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-6 text-center">
+              <p className="text-sm font-medium text-foreground">No {isVideo ? 'video' : 'image'} assets</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Import {isVideo ? 'a video and edit its timeline' : 'an image'}, then add it as a monitor.
+              </p>
+            </div>
+          ) : (
+            visualAssets.map((monitor) => {
+              const isTimelineSelected = monitor.id === selectedMonitorId
+              return (
+                <div
+                  key={monitor.id}
+                  className={cn(
+                    'rounded-lg border bg-violet-500/5 p-3 transition-colors',
+                    isTimelineSelected
+                      ? 'border-violet-500 bg-violet-500/10 ring-2 ring-violet-500/35'
+                      : 'border-violet-500/30',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-500 dark:text-violet-300">
+                      <Video className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-foreground">{monitor.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {monitor.duration > 0 ? formatTime(monitor.duration, true) : 'Loading duration...'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFloatingMonitor(monitor.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Remove ${monitor.name}`}
+                    >
+                      <Trash className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="relative mt-3">
+                    {isVideo ? (
+                      <video
+                        src={monitor.url}
+                        muted
+                        preload="metadata"
+                        onLoadedMetadata={(event) => {
+                          const duration = event.currentTarget.duration
+                          if (Number.isFinite(duration) && duration > 0 && duration !== monitor.duration) {
+                            updateFloatingMonitor(monitor.id, {
+                              duration,
+                              timelineDuration: monitor.timelineDuration > 0 ? monitor.timelineDuration : duration,
+                            })
+                          }
+                        }}
+                        className="aspect-video w-full rounded-md bg-black object-cover"
+                      />
+                    ) : (
+                      <img src={monitor.url} alt="" className="aspect-video w-full rounded-md bg-black object-cover" />
+                    )}
+                    <span className="absolute left-1 top-1 max-w-[calc(100%_-_5rem)] truncate rounded-sm border border-border/70 bg-card/95 px-2 py-0.5 text-[10px] font-semibold text-foreground shadow-sm">
+                      {monitor.originalName || monitor.name}
+                    </span>
+                    {monitor.isEditedCopy && (
+                      <span className="absolute right-1 top-1 rounded-sm bg-emerald-500 px-2 py-0.5 font-mono text-sm font-bold leading-none text-white shadow-sm">
+                        Edit
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => beginAssetTimelineEdit(monitor.id)}
+                    className="mt-3 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                  >
+                    <Video className="h-4 w-4 text-violet-500 dark:text-violet-300" />
+                    Edit copy in timeline
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => addFloatingMonitorRegion(monitor.id, { startTime: currentTime })}
+                    disabled={monitor.timelineDuration <= 0}
+                    className="mt-2 w-full gap-2 border-violet-500/30 hover:bg-violet-500/10"
+                  >
+                    Add monitor to main timeline
+                  </Button>
+                </div>
+              )
+            })
+          )}
+        </div>
       )
     }
 

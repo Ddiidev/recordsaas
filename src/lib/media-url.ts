@@ -48,6 +48,19 @@ export function toMediaUrl(value: string | null | undefined): string | null {
   return value.startsWith('media://') ? value : `media://${normalized}`
 }
 
+export function resolveProjectMediaPath(
+  projectFolder: string | null | undefined,
+  value: string | null | undefined,
+): string {
+  const normalized = normalizeMediaPath(value)
+  if (!normalized || isAbsoluteLikePath(normalized)) return normalized
+
+  const normalizedProjectFolder = normalizeMediaPath(projectFolder)
+  if (!normalizedProjectFolder || !isAbsoluteLikePath(normalizedProjectFolder)) return normalized
+
+  return `${normalizedProjectFolder.replace(/[\\/]+$/, '')}/${normalized.replace(/^[\\/]+/, '')}`
+}
+
 export function getMediaPathBasename(value: string): string {
   const normalized = normalizeMediaPath(value)
   return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized
