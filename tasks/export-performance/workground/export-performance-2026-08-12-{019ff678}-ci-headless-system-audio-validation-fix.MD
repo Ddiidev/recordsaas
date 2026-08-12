@@ -62,13 +62,15 @@ Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
 - `npm run build`: passou; permaneceu apenas o aviso existente de chunks acima de 500 kB.
 - `git diff --check`: passou.
 - SCC nos três arquivos de código alterados: snapshot sem baseline anterior; classificação neutra.
-- Pendente: nova execução da Action após o push.
+- `gh run view 31639380331`: concluído com `success`.
+- Jobs Windows, Linux, macOS x64 e macOS arm64: todos `success`.
+- Release `v2.7.3`: publicada com os artefatos multiplataforma.
 
 ## Riscos E Pendencias
 
-- A Action ainda precisa confirmar o build completo após a alteração.
+- Nenhuma pendência funcional identificada após a execução completa da Action.
 - `--probe` continua podendo falhar corretamente em runtime se o usuário não tiver um dispositivo de saída; isso não bloqueia o empacotamento.
 
 ## Proximo Teste Esperado
 
-- Publicar na `main`; confirmar no `gh run` que `setup:binaries` avança para o build Windows.
+- Manter o WIP junto ao histórico da correção; o run completo já foi confirmado.
