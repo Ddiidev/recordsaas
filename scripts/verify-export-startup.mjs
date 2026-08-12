@@ -15,6 +15,8 @@ const exportProcessPath = path.join(rootDir, 'src', 'hooks', 'useExportProcess.t
 const audioVolumePath = path.join(rootDir, 'src', 'lib', 'audio-volume.ts')
 const previewAudioPath = path.join(rootDir, 'src', 'lib', 'preview-audio.ts')
 const previewPath = path.join(rootDir, 'src', 'components', 'editor', 'Preview.tsx')
+const systemAudioProjectPath = path.join(rootDir, 'native', 'RecordSaaS.SystemAudio', 'RecordSaaS.SystemAudio.csproj')
+const releaseWorkflowPath = path.join(rootDir, '.github', 'workflows', 'release.yml')
 const source = fs.readFileSync(exportManagerPath, 'utf-8')
 const exportIpcHandlersSource = fs.readFileSync(exportIpcHandlersPath, 'utf-8')
 const appIpcHandlersSource = fs.readFileSync(appIpcHandlersPath, 'utf-8')
@@ -27,6 +29,8 @@ const exportProcessSource = fs.readFileSync(exportProcessPath, 'utf-8')
 const audioVolumeSource = fs.readFileSync(audioVolumePath, 'utf-8')
 const previewAudioSource = fs.readFileSync(previewAudioPath, 'utf-8')
 const previewSource = fs.readFileSync(previewPath, 'utf-8')
+const systemAudioProjectSource = fs.readFileSync(systemAudioProjectPath, 'utf-8')
+const releaseWorkflowSource = fs.readFileSync(releaseWorkflowPath, 'utf-8')
 
 function fail(message) {
   console.error(`[verify-export-startup] ${message}`)
@@ -171,6 +175,14 @@ assertIncludes('Preview peak oversampling', previewAudioSource, "peakGuard.overs
 assertIncludes('Early temporary audio cleanup', source, 'const cleanupProcessedAudio = () =>')
 assertIncludes('Preview limiter activation', previewSource, 'shouldLimitPreviewAudio')
 assertIncludes('Imported take CORS', previewSource, 'crossOrigin="anonymous"')
+assertIncludes(
+  'Windows helper .NET 11 target',
+  systemAudioProjectSource,
+  '<TargetFramework>net11.0-windows</TargetFramework>',
+)
+assertIncludes('Windows helper .NET SDK setup', releaseWorkflowSource, 'uses: actions/setup-dotnet@v5')
+assertIncludes('Windows helper .NET preview channel', releaseWorkflowSource, "dotnet-version: '11.0.x'")
+assertIncludes('Windows helper preview quality', releaseWorkflowSource, 'dotnet-quality: preview')
 assertIncludes('Screen recording CFR output', recordingSource, "'-fps_mode'")
 assertIncludes('Screen recording CFR output', recordingSource, "'cfr'")
 assertIncludes('Screen recording CFR output', recordingSource, 'Screen recording encode config')
