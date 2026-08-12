@@ -44,8 +44,8 @@ Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
 - Branch: `main`
 - Base/destino: `origin/main`.
 - Commit anterior relacionado: `13ea7c6` - instalação do SDK .NET 11 preview.
-- Correção atual: validada localmente; commit e push pendentes.
-- Push/PR: será publicado diretamente em `origin/main`.
+- `d6621f4` - `fix(ci): validate Windows audio helper without hardware` - 2026-08-12 - corrige a validação headless e publica o helper atualizado.
+- Push/PR: commit publicado diretamente em `origin/main` após rebase sobre `v2.7.3`.
 
 ## Validacao
 
