@@ -321,6 +321,7 @@ export const Preview = memo(
       takeModeEnabled,
       takes,
       takeTransitions,
+      sourceDuration,
     } = useEditorStore(
       useShallow((state) => ({
         videoUrl: state.videoUrl,
@@ -368,6 +369,7 @@ export const Preview = memo(
         takeModeEnabled: state.takeModeEnabled,
         takes: state.takes,
         takeTransitions: state.takeTransitions,
+        sourceDuration: state.sourceDuration,
       })),
     )
 
@@ -379,6 +381,7 @@ export const Preview = memo(
       () => calcRealDuration(duration, cutRegions, speedRegions),
       [duration, cutRegions, speedRegions],
     )
+    const hasTakeSourceDuration = takeModeEnabled && sourceDuration > 0
 
     const captureSourceOffsetSeconds = useCallback(
       (source: 'screen' | 'webcam' | 'recording' | 'systemAudio') => {
@@ -1955,16 +1958,27 @@ export const Preview = memo(
 
               <SimpleTooltip
                 content={
-                  realDuration < duration
-                    ? `Tempo real pós-render: ${formatTime(realDuration, true)}`
-                    : 'Sem cortes aplicados'
+                  hasTakeSourceDuration
+                    ? `Original: ${formatTime(sourceDuration, true)} · pós-render: ${formatTime(realDuration, true)}`
+                    : realDuration < duration
+                      ? `Tempo real pós-render: ${formatTime(realDuration, true)}`
+                      : 'Sem cortes aplicados'
                 }
               >
-                <div className="flex items-baseline gap-2 text-xs font-mono tabular-nums text-muted-foreground min-w-[130px] ml-2 mr-4 cursor-help">
+                <div className="ml-2 mr-4 flex min-w-[130px] items-baseline gap-1.5 whitespace-nowrap text-xs font-mono tabular-nums text-muted-foreground cursor-help">
                   <span className="text-foreground font-semibold">{formatTime(previewTime, true)}</span>
                   <span className="text-muted-foreground/50">/</span>
-                  <span className="text-muted-foreground">{formatTime(duration, true)}</span>
-                  {realDuration < duration && <span className="text-primary/80">{formatTime(realDuration, true)}</span>}
+                  <span title={hasTakeSourceDuration ? 'Tempo original' : 'Tempo total'} className="text-muted-foreground">
+                    {formatTime(hasTakeSourceDuration ? sourceDuration : duration, true)}
+                  </span>
+                  {(hasTakeSourceDuration || realDuration < duration) && (
+                    <>
+                      <span className="text-muted-foreground/50">→</span>
+                      <span title="Tempo real pós-render" className="text-primary/80">
+                        {formatTime(realDuration, true)}
+                      </span>
+                    </>
+                  )}
                 </div>
               </SimpleTooltip>
               <Slider

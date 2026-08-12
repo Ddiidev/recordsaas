@@ -1367,7 +1367,7 @@ export const createProjectSlice: Slice<ProjectState, ProjectActions> = (set, get
         return
       }
       if (state.takeModeEnabled) {
-        state.sourceDuration = Math.max(0, duration)
+        state.sourceDuration = Math.max(state.sourceDuration, Math.max(0, duration))
         if (state.takes.length === 0 && state.sourceDuration > 0) {
           state.takes = createTakesFromBoundaries(state.sourceDuration, [], () => createTakeId())
         } else {

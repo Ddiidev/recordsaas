@@ -224,14 +224,14 @@ export function TakeTrack({
         {TRANSITION_OPTIONS.map((option) => (
           <ContextMenuItem
             key={option.type}
-            className={activeBoundaryTransition?.type === option.type ? 'bg-white/10' : undefined}
+            className={activeBoundaryTransition?.type === option.type ? 'bg-accent' : undefined}
             onClick={() => upsertTransition({ type: option.type })}
           >
             {option.label}
           </ContextMenuItem>
         ))}
         <ContextMenuDivider />
-        <div className="space-y-2 px-3 py-2 text-xs text-white/80">
+        <div className="space-y-2 px-3 py-2 text-xs text-popover-foreground">
           <label className="flex items-center justify-between gap-3">
             <span>Duration</span>
             <input
@@ -241,7 +241,7 @@ export function TakeTrack({
               step={0.1}
               value={activeBoundaryTransition?.duration || TAKE_TRANSITION_DEFAULT_DURATION}
               onChange={(event) => upsertTransition({ duration: Number(event.target.value) })}
-              className="h-7 w-20 rounded border border-white/15 bg-black/25 px-2 text-right text-white outline-none focus:border-white/35"
+              className="h-7 w-20 rounded border border-input bg-background px-2 text-right text-foreground outline-none focus:border-ring"
             />
           </label>
           <label className="flex items-center justify-between gap-3">
@@ -249,7 +249,7 @@ export function TakeTrack({
             <select
               value={activeBoundaryTransition?.audioMode || 'cut'}
               onChange={(event) => upsertTransition({ audioMode: event.target.value as 'cut' | 'crossfade' })}
-              className="h-7 rounded border border-white/15 bg-zinc-900 px-2 text-white outline-none"
+              className="h-7 rounded border border-input bg-background px-2 text-foreground outline-none"
             >
               <option value="cut">Cut</option>
               <option value="crossfade">Crossfade</option>

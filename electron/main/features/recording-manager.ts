@@ -3743,6 +3743,12 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       getProjectFirstField(projectData, null, 'systemAudioPath') || null,
       'computer audio track',
     )
+    const rawFrameStyles = getProjectFirstField(projectData, null, 'frameStyles')
+    const rawBackground = rawFrameStyles?.background
+    const importedBackgroundImagePath =
+      rawBackground?.type === 'image'
+        ? await importMediaFile(rawBackground.imagePath || rawBackground.imageUrl || null, 'background image')
+        : undefined
 
     // Copy canonical metadata if available; this is the source of cursor/mouse events.
     let hasCanonicalMetadataFile = false
@@ -3827,6 +3833,20 @@ export async function importProjectFromPath(sourceProjectPath: string) {
       timelineLanes: normalizedTimelineLanes,
       systemAudioPath: systemAudioPath || undefined,
       floatingMonitors: importedFloatingMonitors,
+    }
+
+    if (rawFrameStyles && typeof rawFrameStyles === 'object') {
+      mergedRuntimeMetadata.frameStyles = {
+        ...rawFrameStyles,
+        background:
+          importedBackgroundImagePath && rawBackground && typeof rawBackground === 'object'
+            ? {
+                ...rawBackground,
+                imagePath: importedBackgroundImagePath,
+                imageUrl: toMediaUrl(importedBackgroundImagePath) || importedBackgroundImagePath,
+              }
+            : rawBackground,
+      }
     }
 
     if (rawMediaAudioClip && importedMediaAudioPath) {

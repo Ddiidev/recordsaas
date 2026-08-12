@@ -20,7 +20,7 @@ import { Input } from '../components/ui/input'
 import { TooltipProvider, SimpleTooltip } from '../components/ui/tooltip'
 import { useShallow } from 'zustand/react/shallow'
 import { getMediaPathBasename, normalizeMediaPath } from '../lib/media-url'
-import type { FloatingMonitor } from '../types'
+import type { FloatingMonitor, FrameStyles } from '../types'
 import { positionTakes } from '../lib/takes'
 
 const generateDefaultProjectName = () => {
@@ -83,6 +83,21 @@ const createCanonicalProjectSaveState = (storeState: any) => {
     assetTimelineEditing: editing.mainProject.assetTimelineEditing,
     isPlaying: false,
   })
+}
+
+const serializeFrameStyles = (frameStyles: FrameStyles | undefined): FrameStyles | undefined => {
+  const imagePath = frameStyles?.background?.imagePath
+  if (!imagePath) return frameStyles
+
+  const serializedImagePath = getMediaPathBasename(imagePath)
+  return {
+    ...frameStyles,
+    background: {
+      ...frameStyles.background,
+      imagePath: serializedImagePath,
+      imageUrl: serializedImagePath,
+    },
+  }
 }
 
 export function EditorPage() {
@@ -193,7 +208,9 @@ export function EditorPage() {
           ...Object.values(floatingMonitors as Record<string, FloatingMonitor>).flatMap((monitor) => [
             monitor.path,
             monitor.timeline?.mediaAudioClip?.path,
+            monitor.timeline?.frameStyles?.background?.imagePath,
           ]),
+          canonicalState.frameStyles?.background?.imagePath,
         ]
           .map((filePath) => normalizeMediaPath(filePath))
           .filter((filePath): filePath is string => Boolean(filePath))
@@ -237,6 +254,7 @@ export function EditorPage() {
             url: `media://${serializedMediaPath}`,
           }
         }
+        stateToSave.frameStyles = serializeFrameStyles(stateToSave.frameStyles)
         stateToSave.floatingMonitors = Object.fromEntries(
           Object.entries((stateToSave.floatingMonitors as Record<string, FloatingMonitor> | undefined) || {}).map(
             ([monitorId, monitor]) => {
@@ -250,6 +268,7 @@ export function EditorPage() {
                   timeline: monitor.timeline
                     ? {
                         ...monitor.timeline,
+                        frameStyles: serializeFrameStyles(monitor.timeline.frameStyles),
                         mediaAudioClip: monitor.timeline.mediaAudioClip
                           ? {
                               ...monitor.timeline.mediaAudioClip,

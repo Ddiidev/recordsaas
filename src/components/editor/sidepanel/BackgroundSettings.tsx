@@ -1,6 +1,5 @@
 // Settings panel for video background (wallpaper, color, gradient, image)
-import type React from 'react'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useEditorStore } from '../../../store/editorStore'
 import { cn } from '../../../lib/utils'
 import { WALLPAPERS } from '../../../lib/constants'
@@ -9,6 +8,7 @@ import { PaintBrushIcon } from '../../ui/icons'
 import { ControlGroup } from './ControlGroup'
 import { Button } from '../../ui/button'
 import { ColorPickerRoundedRect } from '../../ui/color-picker'
+import { toMediaUrl } from '../../../lib/media-url'
 
 type BackgroundTab = 'color' | 'gradient' | 'image' | 'wallpaper'
 
@@ -232,21 +232,19 @@ const GradientSelector = () => {
 
 const ImageSelector = () => {
   const { frameStyles, updateBackground } = useEditorStore()
-  const imageInputRef = useRef<HTMLInputElement>(null)
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) {
-      const imageUrl = URL.createObjectURL(e.target.files[0])
-      updateBackground({ type: 'image', imageUrl })
-    }
+  const handleImageUpload = async () => {
+    const result = await window.electronAPI.importMediaImageAsset()
+    if (!result.asset) return
+
+    const imageUrl = toMediaUrl(result.asset.path) || result.asset.path
+    updateBackground({ type: 'image', imagePath: result.asset.path, imageUrl })
   }
 
   const removeUploadedImage = () => {
-    if (frameStyles.background.imageUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(frameStyles.background.imageUrl)
-    }
     updateBackground({
       type: 'wallpaper',
+      imagePath: undefined,
       imageUrl: WALLPAPERS[0].imageUrl,
       thumbnailUrl: WALLPAPERS[0].thumbnailUrl,
     })
@@ -254,7 +252,8 @@ const ImageSelector = () => {
 
   return (
     <div className="relative group">
-      <label
+      <div
+        onClick={() => void handleImageUpload()}
         className={cn(
           'flex flex-col items-center justify-center w-full rounded-xl cursor-pointer border-2 border-dashed transition-all duration-300 overflow-hidden',
           frameStyles.background.imageUrl
@@ -265,7 +264,7 @@ const ImageSelector = () => {
         {frameStyles.background.imageUrl && frameStyles.background.type === 'image' ? (
           <>
             <img
-              src={frameStyles.background.imageUrl || '/placeholder.svg'}
+              src={toMediaUrl(frameStyles.background.imageUrl) || '/placeholder.svg'}
               alt="Background"
               className="w-full h-full object-cover"
             />
@@ -285,7 +284,7 @@ const ImageSelector = () => {
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  imageInputRef.current?.click()
+                  void handleImageUpload()
                 }}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors shadow-sm"
               >
@@ -305,8 +304,7 @@ const ImageSelector = () => {
             </div>
           </div>
         )}
-        <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-      </label>
+      </div>
     </div>
   )
 }

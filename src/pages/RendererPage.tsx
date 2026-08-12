@@ -1009,6 +1009,24 @@ export function RendererPage() {
           log.info(
             `[RendererPage] Starting seek-driven rendering. Total frames: ${totalFrames}, Export duration: ${exportDuration.toFixed(2)}s`,
           )
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-started',
+            exportSessionId,
+            metrics: {
+              outputWidth,
+              outputHeight,
+              fps,
+              exportDuration: Number(exportDuration.toFixed(3)),
+              totalFrames,
+              isTakeMode,
+              takeCount: projectState.takes.length,
+              metadataEventCount: projectState.metadata.length,
+              zoomRegionCount: Object.keys(projectState.zoomRegions || {}).length,
+              webcamEnabled: hasWebcam,
+              webCodecsDecoder: hasVideoDecoder,
+              webCodecsEncoder: hasVideoEncoder,
+            },
+          })
 
           // --- SETUP ENCODER (Optimization) ---
           let videoEncoder: any = null
@@ -1429,6 +1447,11 @@ export function RendererPage() {
                 encodeQueueSize: videoEncoder?.encodeQueueSize ?? 0,
               }
               log.info(`${renderLogPrefix}[Perf] Render loop metrics: ${JSON.stringify(perfPayload)}`)
+              window.electronAPI.sendRenderDiagnostics({
+                event: 'renderer-perf',
+                exportSessionId,
+                metrics: perfPayload,
+              })
               perfStats.lastLoggedAt = now
             }
           }
@@ -1436,6 +1459,16 @@ export function RendererPage() {
           if (videoEncoder) {
             await videoEncoder.flush()
           }
+
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-finished',
+            exportSessionId,
+            metrics: {
+              elapsedMs: Number((performance.now() - perfStats.startedAt).toFixed(3)),
+              renderedFrames: perfStats.frames,
+              totalFrames,
+            },
+          })
 
           // --- 6. FINISH ---
           log.info('[RendererPage] Render loop finished. Sending "finishRender" signal.')
@@ -1457,6 +1490,11 @@ export function RendererPage() {
           floatingMonitorFrameProviders.forEach((provider) => provider.close())
           floatingMonitorImages.forEach((image) => image.close())
           const message = error instanceof Error ? error.message : 'Unknown render error'
+          window.electronAPI.sendRenderDiagnostics({
+            event: 'renderer-error',
+            exportSessionId,
+            metrics: { error: message },
+          })
           window.electronAPI.sendRenderError({ error: message })
         }
       },

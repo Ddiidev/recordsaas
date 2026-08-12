@@ -18,6 +18,7 @@ export interface Background {
   gradientStart?: string
   gradientEnd?: string
   gradientDirection?: string
+  imagePath?: string
   imageUrl?: string
   thumbnailUrl?: string
 }

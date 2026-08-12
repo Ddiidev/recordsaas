@@ -434,6 +434,9 @@ export const electronAPI = {
     }
     ipcRenderer.send('export:render-progress', payload)
   },
+  sendRenderDiagnostics: (payload: { event: string; exportSessionId?: string; metrics: Record<string, unknown> }) => {
+    ipcRenderer.send('export:render-diagnostics', payload)
+  },
   finishRender: () => {
     ipcRenderer.send('export:render-finished')
   },

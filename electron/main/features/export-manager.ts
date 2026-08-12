@@ -19,6 +19,7 @@ import fsPromises from 'node:fs/promises'
 import { constants as osConstants, getPriority, setPriority } from 'node:os'
 import Store from 'electron-store'
 import { appState } from '../state'
+import { writeExportExperimentLog } from '../lib/export-experiment-log'
 import { getFFmpegPath, calculateExportDimensions, getFFmpegSpawnErrorMessage } from '../lib/utils'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST, PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
 import { normalizeMediaPath } from '../lib/media-url'
@@ -932,6 +933,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   const exportSessionId = `export-${exportStartTime.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const sessionLogPrefix = `[ExportManager][${exportSessionId}]`
   log.info(`${sessionLogPrefix} Starting export process...`)
+  writeExportExperimentLog('export-session-created', { exportSessionId })
   const getElapsedDurationSeconds = () => (Date.now() - exportStartTime) / 1000
 
   const editorWindow = BrowserWindow.fromWebContents(event.sender)
@@ -1558,6 +1560,20 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   log.info(
     `${sessionLogPrefix} Effective export settings: adaptive=${normalizedExportSettings.adaptiveRender ? 'yes' : 'no'}, output=${outputWidth}x${outputHeight}, fps=${fps.toFixed(3)}`,
   )
+  writeExportExperimentLog('export-settings', {
+    exportSessionId,
+    format,
+    resolution,
+    outputWidth,
+    outputHeight,
+    fps,
+    quality: normalizedExportSettings.quality,
+    adaptiveRender: normalizedExportSettings.adaptiveRender,
+    projectDuration: projectState.duration,
+    sourceDuration: projectState.sourceDuration,
+    takeCount: Array.isArray(projectState.takes) ? projectState.takes.length : 0,
+    metadataEventCount: Array.isArray(projectState.metadata) ? projectState.metadata.length : 0,
+  })
 
   // Determine input format based on output format
   // If MP4, we receive H.264 stream from Renderer (WebCodecs)
@@ -1992,6 +2008,24 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     sendProgressUpdate(progress, 'Rendering...', false, 'render-progress')
   }
 
+  const renderDiagnosticsListener = (_e: unknown, payload: unknown) => {
+    const diagnostic = payload as {
+      event?: unknown
+      exportSessionId?: unknown
+      metrics?: unknown
+    }
+    if (diagnostic.exportSessionId !== exportSessionId || typeof diagnostic.event !== 'string') return
+    const metrics =
+      diagnostic.metrics && typeof diagnostic.metrics === 'object' && !Array.isArray(diagnostic.metrics)
+        ? (diagnostic.metrics as Record<string, unknown>)
+        : {}
+    writeExportExperimentLog('renderer-diagnostic', {
+      exportSessionId,
+      diagnosticEvent: diagnostic.event,
+      metrics,
+    })
+  }
+
   const finishListener = () => {
     log.info(`${sessionLogPrefix} Render finished. Closing FFmpeg stdin.`)
     const finalizingProgress = lastProgressBroadcast < 0 ? 0 : Math.max(lastProgressBroadcast, 99)
@@ -2004,6 +2038,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
   cleanupListeners = () => {
     ipcMain.removeListener('export:frame-data', frameListener)
     ipcMain.removeListener('export:render-progress', renderProgressListener)
+    ipcMain.removeListener('export:render-diagnostics', renderDiagnosticsListener)
     ipcMain.removeListener('export:render-finished', finishListener)
     ipcMain.removeListener('export:cancel', cancellationHandler)
     ipcMain.removeListener('export:render-error', renderErrorListener)
@@ -2017,6 +2052,7 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (exportCompleted) return
 
     log.error(`${sessionLogPrefix} Render error:`, error)
+    writeExportExperimentLog('renderer-error', { exportSessionId, error })
     exportCompleted = true
     if (ffmpeg && !ffmpeg.killed) {
       ffmpeg.kill('SIGKILL')
@@ -2032,12 +2068,14 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
 
   ipcMain.on('export:frame-data', frameListener)
   ipcMain.on('export:render-progress', renderProgressListener)
+  ipcMain.on('export:render-diagnostics', renderDiagnosticsListener)
   ipcMain.on('export:render-finished', finishListener)
   ipcMain.on('export:render-error', renderErrorListener)
 
   activeFFmpeg.on('error', (error) => {
     ffmpegClosed = true
     log.error('[ExportManager] Failed to start FFmpeg process:', error)
+    writeExportExperimentLog('ffmpeg-start-error', { exportSessionId, error: error.message })
     failExportStartup(getFFmpegSpawnErrorMessage(error))
   })
 
@@ -2052,6 +2090,12 @@ export async function startExport(event: IpcMainInvokeEvent, { projectState, exp
     if (!exportCompleted) {
       exportCompleted = true
       const renderDuration = getElapsedDurationSeconds()
+      writeExportExperimentLog('export-finished', {
+        exportSessionId,
+        exitCode: code,
+        durationSeconds: Number(renderDuration.toFixed(3)),
+        success: code === 0,
+      })
       if (code === null) {
         sendExportComplete({ success: false, error: 'Export cancelled.', duration: renderDuration }, 'cancelled')
       } else if (code === 0) {

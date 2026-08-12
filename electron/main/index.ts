@@ -7,6 +7,7 @@ import fsSync from 'node:fs'
 import { Readable } from 'node:stream'
 import Store from 'electron-store'
 import { VITE_PUBLIC } from './lib/constants'
+import { prepareExportExperimentLog } from './lib/export-experiment-log'
 import { setupLogging } from './lib/logging'
 import { resolveMediaRequestPath } from './lib/media-url'
 import { registerIpcHandlers } from './ipc'
@@ -216,6 +217,12 @@ app.on('activate', () => {
 
 app.whenReady().then(async () => {
   log.info('[App] Ready. Initializing...')
+  const exportExperimentLogPath = prepareExportExperimentLog()
+  if (exportExperimentLogPath) {
+    log.info(`[ExportExperiment] Fresh diagnostics log: ${exportExperimentLogPath}`)
+  } else {
+    log.warn('[ExportExperiment] Could not prepare diagnostics log.')
+  }
   registerCustomProtocolClient()
 
   // Set Dock Menu on macOS
