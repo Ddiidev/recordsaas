@@ -11,6 +11,12 @@ static int PrintUsage()
     return 1;
 }
 
+static int PrintVersion()
+{
+    Console.WriteLine("recordsaas-system-audio");
+    return 0;
+}
+
 static MMDevice? GetDefaultRenderDevice()
 {
     using var enumerator = new MMDeviceEnumerator();
@@ -65,6 +71,11 @@ string? ParseDeviceId(string[] arguments)
         }
     }
     return null;
+}
+
+if (args.Length == 1 && string.Equals(args[0], "--version", StringComparison.OrdinalIgnoreCase))
+{
+    return PrintVersion();
 }
 
 // --probe-all: list all active render endpoints

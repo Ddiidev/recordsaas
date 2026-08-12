@@ -88,7 +88,7 @@ async function ensureWindowsSystemAudioHelper() {
       ])
 
       if (outputStats.isFile() && outputStats.size > 0 && outputStats.mtimeMs >= sourceMTimeMs) {
-        const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
+        const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--version'])
         if (!probeResult.error && probeResult.status === 0) {
           console.log(`[setup:binaries] Reusing existing Windows system-audio helper at ${windowsSystemAudioOutputPath}`)
           return
@@ -136,10 +136,10 @@ async function ensureWindowsSystemAudioHelper() {
     throw new Error((publishResult.stderr || publishResult.stdout || `dotnet publish failed with code ${publishResult.status}`).trim())
   }
 
-  const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--probe'])
+  const probeResult = probeBinary(windowsSystemAudioOutputPath, ['--version'])
   if (probeResult.error || probeResult.status !== 0) {
     throw new Error(
-      (probeResult.stderr || probeResult.stdout || probeResult.error?.message || 'System audio helper probe failed.').trim(),
+      (probeResult.stderr || probeResult.stdout || probeResult.error?.message || 'System audio helper validation failed.').trim(),
     )
   }
 

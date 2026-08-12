@@ -15,6 +15,8 @@ const exportProcessPath = path.join(rootDir, 'src', 'hooks', 'useExportProcess.t
 const audioVolumePath = path.join(rootDir, 'src', 'lib', 'audio-volume.ts')
 const previewAudioPath = path.join(rootDir, 'src', 'lib', 'preview-audio.ts')
 const previewPath = path.join(rootDir, 'src', 'components', 'editor', 'Preview.tsx')
+const ensureBinariesPath = path.join(rootDir, 'scripts', 'ensure-binaries.mjs')
+const systemAudioProgramPath = path.join(rootDir, 'native', 'RecordSaaS.SystemAudio', 'Program.cs')
 const systemAudioProjectPath = path.join(rootDir, 'native', 'RecordSaaS.SystemAudio', 'RecordSaaS.SystemAudio.csproj')
 const releaseWorkflowPath = path.join(rootDir, '.github', 'workflows', 'release.yml')
 const source = fs.readFileSync(exportManagerPath, 'utf-8')
@@ -29,6 +31,8 @@ const exportProcessSource = fs.readFileSync(exportProcessPath, 'utf-8')
 const audioVolumeSource = fs.readFileSync(audioVolumePath, 'utf-8')
 const previewAudioSource = fs.readFileSync(previewAudioPath, 'utf-8')
 const previewSource = fs.readFileSync(previewPath, 'utf-8')
+const ensureBinariesSource = fs.readFileSync(ensureBinariesPath, 'utf-8')
+const systemAudioProgramSource = fs.readFileSync(systemAudioProgramPath, 'utf-8')
 const systemAudioProjectSource = fs.readFileSync(systemAudioProjectPath, 'utf-8')
 const releaseWorkflowSource = fs.readFileSync(releaseWorkflowPath, 'utf-8')
 
@@ -183,6 +187,16 @@ assertIncludes(
 assertIncludes('Windows helper .NET SDK setup', releaseWorkflowSource, 'uses: actions/setup-dotnet@v5')
 assertIncludes('Windows helper .NET preview channel', releaseWorkflowSource, "dotnet-version: '11.0.x'")
 assertIncludes('Windows helper preview quality', releaseWorkflowSource, 'dotnet-quality: preview')
+assertIncludes(
+  'Windows helper headless-safe validation',
+  systemAudioProgramSource,
+  'string.Equals(args[0], "--version",',
+)
+assertIncludes(
+  'Windows helper headless-safe validation',
+  ensureBinariesSource,
+  "probeBinary(windowsSystemAudioOutputPath, ['--version'])",
+)
 assertIncludes('Screen recording CFR output', recordingSource, "'-fps_mode'")
 assertIncludes('Screen recording CFR output', recordingSource, "'cfr'")
 assertIncludes('Screen recording CFR output', recordingSource, 'Screen recording encode config')
