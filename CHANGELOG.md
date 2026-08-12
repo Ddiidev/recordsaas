@@ -1,3 +1,10 @@
+## [2.7.3](https://github.com/Ddiidev/recordsaas/compare/v2.7.2...v2.7.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **ci:** install .NET 11 preview for system audio helper ([13ea7c6](https://github.com/Ddiidev/recordsaas/commit/13ea7c66ff683c9c75b66d092c1f8a63a21da1ed))
+
 ## [2.7.2](https://github.com/Ddiidev/recordsaas/compare/v2.7.1...v2.7.2) (2026-08-12)
 
 ## [2.7.1](https://github.com/Ddiidev/recordsaas/compare/v2.7.0...v2.7.1) (2026-06-24)
