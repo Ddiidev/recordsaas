@@ -26,6 +26,7 @@ import {
 } from '../../lib/timeline-lanes'
 import { resolveMonitorForAssetTimeline } from '../../lib/floating-monitor'
 import { applyMediaAudioCutAdaptation } from '../../lib/media-audio-cuts'
+import { normalizeSwapVisibility, sameSwapParticipant } from '../../lib/swap'
 
 export const initialTimelineState: TimelineState = {
   timelineLanes: [createDefaultTimelineLane()],
@@ -57,6 +58,7 @@ const SWAP_DEFAULT_UPDATE_KEYS: Array<keyof SwapPresetDefaults> = [
   'duration',
   'origin',
   'target',
+  'hideOrigin',
   'transition',
   'transitionDuration',
 ]
@@ -74,19 +76,23 @@ const getBlurDefaults = (
   height: localDefaults?.height ?? preset?.blurDefaults?.height ?? BLUR_REGION.HEIGHT.defaultValue,
 })
 
-const getSwapDefaults = (
-  preset: Preset | null | undefined,
-  localDefaults?: SwapPresetDefaults,
-): SwapPresetDefaults => ({
-  duration: localDefaults?.duration ?? preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
-  origin: localDefaults?.origin ?? preset?.swapDefaults?.origin ?? { kind: 'main-screen' },
-  target: localDefaults?.target ?? preset?.swapDefaults?.target ?? { kind: 'webcam' },
-  transition: localDefaults?.transition ?? preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
-  transitionDuration:
-    localDefaults?.transitionDuration ??
-    preset?.swapDefaults?.transitionDuration ??
-    SWAP_REGION.TRANSITION_DURATION.defaultValue,
-})
+const getSwapDefaults = (preset: Preset | null | undefined, localDefaults?: SwapPresetDefaults): SwapPresetDefaults => {
+  const visibility = normalizeSwapVisibility({
+    hideOrigin: localDefaults?.hideOrigin ?? preset?.swapDefaults?.hideOrigin,
+  })
+
+  return {
+    duration: localDefaults?.duration ?? preset?.swapDefaults?.duration ?? SWAP_REGION.DEFAULT_DURATION,
+    origin: localDefaults?.origin ?? preset?.swapDefaults?.origin ?? { kind: 'main-screen' },
+    target: localDefaults?.target ?? preset?.swapDefaults?.target ?? { kind: 'webcam' },
+    ...visibility,
+    transition: localDefaults?.transition ?? preset?.swapDefaults?.transition ?? SWAP_REGION.TRANSITION.DEFAULT,
+    transitionDuration:
+      localDefaults?.transitionDuration ??
+      preset?.swapDefaults?.transitionDuration ??
+      SWAP_REGION.TRANSITION_DURATION.defaultValue,
+  }
+}
 
 const toBlurPresetDefaults = (region: BlurRegion): BlurPresetDefaults => ({
   duration: region.duration,
@@ -102,6 +108,7 @@ const toSwapPresetDefaults = (region: CameraSwapRegion): SwapPresetDefaults => (
   duration: region.duration,
   origin: region.origin,
   target: region.target,
+  hideOrigin: region.hideOrigin,
   transition: region.transition,
   transitionDuration: region.transitionDuration ?? SWAP_REGION.TRANSITION_DURATION.defaultValue,
 })
@@ -215,12 +222,6 @@ const getSwapParticipantBounds = (
     ? { start: monitorRegion.startTime, end: monitorRegion.startTime + monitorRegion.duration }
     : null
 }
-
-const sameSwapParticipant = (left: CameraSwapRegion['origin'], right: CameraSwapRegion['target']): boolean =>
-  left.kind === right.kind &&
-  (left.kind !== 'floating-monitor-region' ||
-    right.kind !== 'floating-monitor-region' ||
-    left.regionId === right.regionId)
 
 const ensureRegionLaneIds = (state: {
   timelineLanes: TimelineLane[]
@@ -614,6 +615,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
       duration: swapDefaults.duration,
       origin: swapDefaults.origin,
       target: swapDefaults.target,
+      hideOrigin: swapDefaults.hideOrigin,
       transition: swapDefaults.transition,
       transitionDuration: swapDefaults.transitionDuration,
       zIndex: 0,
@@ -1041,6 +1043,7 @@ export const createTimelineSlice: Slice<TimelineState, TimelineActions> = (set, 
             )
           }
         } else if (region.type === 'swap') {
+          Object.assign(region, normalizeSwapVisibility(region))
           if (sameSwapParticipant(region.origin, region.target)) {
             region.target = { kind: 'floating-monitor-region', regionId: '' }
           }

@@ -12,6 +12,7 @@ import type {
 import { initialFrameState } from './frameSlice'
 import { initialWebcamState } from './webcamSlice'
 import { normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
+import { normalizeSwapVisibility } from '../../lib/swap'
 
 const DEFAULT_PRESET_ID = 'default-preset-v1'
 
@@ -35,6 +36,7 @@ const DEFAULT_SWAP_PRESET_DEFAULTS: SwapPresetDefaults = {
   duration: SWAP_REGION.DEFAULT_DURATION,
   origin: { kind: 'main-screen' },
   target: { kind: 'webcam' },
+  hideOrigin: false,
   transition: SWAP_REGION.TRANSITION.DEFAULT,
   transitionDuration: SWAP_REGION.TRANSITION_DURATION.defaultValue,
 }
@@ -72,32 +74,35 @@ const normalizeBlurPresetDefaults = (value: Partial<BlurPresetDefaults> | undefi
   }
 }
 
-const normalizeSwapPresetDefaults = (value: Partial<SwapPresetDefaults> | undefined): SwapPresetDefaults => ({
-  duration:
-    typeof value?.duration === 'number' && Number.isFinite(value.duration)
-      ? Math.max(TIMELINE.MINIMUM_REGION_DURATION, value.duration)
-      : DEFAULT_SWAP_PRESET_DEFAULTS.duration,
-  origin:
-    value?.origin?.kind === 'webcam'
-      ? { kind: 'webcam' }
-      : value?.origin?.kind === 'floating-monitor-region'
-        ? { kind: 'floating-monitor-region', regionId: value.origin.regionId || '' }
-        : { kind: 'main-screen' },
-  target:
-    value?.target?.kind === 'main-screen'
-      ? { kind: 'main-screen' }
-      : value?.target?.kind === 'floating-monitor-region'
-        ? { kind: 'floating-monitor-region', regionId: value.target.regionId || '' }
-        : { kind: 'webcam' },
-  transition:
-    value?.transition && SWAP_REGION.TRANSITION.OPTIONS.includes(value.transition)
-      ? value.transition
-      : DEFAULT_SWAP_PRESET_DEFAULTS.transition,
-  transitionDuration:
-    typeof value?.transitionDuration === 'number' && Number.isFinite(value.transitionDuration)
-      ? clamp(value.transitionDuration, SWAP_REGION.TRANSITION_DURATION.min, SWAP_REGION.TRANSITION_DURATION.max)
-      : DEFAULT_SWAP_PRESET_DEFAULTS.transitionDuration,
-})
+const normalizeSwapPresetDefaults = (value: Partial<SwapPresetDefaults> | undefined): SwapPresetDefaults => {
+  return {
+    duration:
+      typeof value?.duration === 'number' && Number.isFinite(value.duration)
+        ? Math.max(TIMELINE.MINIMUM_REGION_DURATION, value.duration)
+        : DEFAULT_SWAP_PRESET_DEFAULTS.duration,
+    origin:
+      value?.origin?.kind === 'webcam'
+        ? { kind: 'webcam' }
+        : value?.origin?.kind === 'floating-monitor-region'
+          ? { kind: 'floating-monitor-region', regionId: value.origin.regionId || '' }
+          : { kind: 'main-screen' },
+    target:
+      value?.target?.kind === 'main-screen'
+        ? { kind: 'main-screen' }
+        : value?.target?.kind === 'floating-monitor-region'
+          ? { kind: 'floating-monitor-region', regionId: value.target.regionId || '' }
+          : { kind: 'webcam' },
+    ...normalizeSwapVisibility(value || {}),
+    transition:
+      value?.transition && SWAP_REGION.TRANSITION.OPTIONS.includes(value.transition)
+        ? value.transition
+        : DEFAULT_SWAP_PRESET_DEFAULTS.transition,
+    transitionDuration:
+      typeof value?.transitionDuration === 'number' && Number.isFinite(value.transitionDuration)
+        ? clamp(value.transitionDuration, SWAP_REGION.TRANSITION_DURATION.min, SWAP_REGION.TRANSITION_DURATION.max)
+        : DEFAULT_SWAP_PRESET_DEFAULTS.transitionDuration,
+  }
+}
 
 const syncPresetVisualState = (
   preset: Preset,

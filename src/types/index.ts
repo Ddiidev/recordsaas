@@ -73,6 +73,7 @@ export interface SwapPresetDefaults {
   duration: number
   origin: SwapParticipant
   target: SwapParticipant
+  hideOrigin: boolean
   transition: CameraSwapTransition
   transitionDuration: number
 }
@@ -194,6 +195,7 @@ export interface CameraSwapRegion {
   duration: number
   origin: SwapParticipant
   target: SwapParticipant
+  hideOrigin: boolean
   transition: CameraSwapTransition
   zIndex: number
   transitionDuration?: number

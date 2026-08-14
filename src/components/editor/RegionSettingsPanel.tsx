@@ -39,6 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { BLUR_REGION, DEFAULTS } from '../../lib/constants'
 import { hasPendingCutAdaptation } from '../../lib/media-audio-cuts'
 import { normalizeWebcamCrop } from '../../lib/webcam'
+import { setSwapOriginVisibility } from '../../lib/swap'
 import { hexToRgb, rgbaToHexAlpha } from '../../lib/utils'
 import { Switch } from '../ui/switch'
 import { ColorPicker } from '../ui/color-picker'
@@ -334,7 +335,6 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
       : value === 'webcam'
         ? { kind: 'webcam' }
         : { kind: 'main-screen' }
-
   useEffect(() => {
     setDurationText((region.transitionDuration ?? 0.3).toFixed(1))
   }, [region.transitionDuration])
@@ -342,7 +342,17 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
   return (
     <div className="space-y-6">
       <div className="space-y-2.5">
-        <span className="text-sm font-medium text-sidebar-foreground">Origin</span>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium text-sidebar-foreground">Origin</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{region.hideOrigin ? 'Hidden' : 'Visible'}</span>
+            <Switch
+              checked={!region.hideOrigin}
+              onCheckedChange={(visible) => updateRegion(region.id, setSwapOriginVisibility(visible))}
+              aria-label={region.hideOrigin ? 'Show Origin' : 'Hide Origin'}
+            />
+          </div>
+        </div>
         <Select
           value={participantValue(region.origin)}
           onValueChange={(value) => updateRegion(region.id, { origin: participantFromValue(value) })}
@@ -378,7 +388,8 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
           </SelectContent>
         </Select>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Monitor disponível apenas quando cruza este trecho. Origem e destino precisam ser diferentes.
+          Monitor disponível apenas quando cruza este trecho. Origem e destino precisam ser diferentes. Ao ocultar a
+          origem, o destino ocupa sozinho o quadro principal com o padding do projeto.
         </p>
       </div>
 
@@ -395,7 +406,7 @@ function SwapSettings({ region }: { region: CameraSwapRegion }) {
             <SelectItem value="none">None (Instant)</SelectItem>
             <SelectItem value="fade">Fade</SelectItem>
             <SelectItem value="slide">Slide</SelectItem>
-            <SelectItem value="scale">Scale</SelectItem>
+            <SelectItem value="scale">Scale (Zoom)</SelectItem>
           </SelectContent>
         </Select>
       </div>

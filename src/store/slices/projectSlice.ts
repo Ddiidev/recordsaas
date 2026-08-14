@@ -37,6 +37,7 @@ import {
   CONTENT_ROOT_LANE_ID,
 } from '../../lib/timeline-lanes'
 import { isWebcamShape, normalizeWebcamCrop, normalizeWebcamLayoutMode } from '../../lib/webcam'
+import { normalizeSwapVisibility, sameSwapParticipant } from '../../lib/swap'
 import { normalizeMediaPath, resolveProjectMediaPath, toMediaUrl } from '../../lib/media-url'
 import { findEditedMonitorClone, normalizeAssetTimelineMonitorRegions } from '../../lib/floating-monitor'
 import {
@@ -167,6 +168,7 @@ const createAssetTimeline = (
     duration: SWAP_REGION.DEFAULT_DURATION,
     origin: { kind: 'main-screen' },
     target: { kind: 'webcam' },
+    hideOrigin: false,
     transition: SWAP_REGION.TRANSITION.DEFAULT,
     transitionDuration: SWAP_REGION.TRANSITION_DURATION.defaultValue,
   },
@@ -177,12 +179,6 @@ const cloneSwapParticipant = (participant: SwapParticipant): SwapParticipant =>
   participant.kind === 'floating-monitor-region'
     ? { kind: participant.kind, regionId: participant.regionId }
     : { kind: participant.kind }
-
-const sameSwapParticipant = (left: SwapParticipant, right: SwapParticipant): boolean =>
-  left.kind === right.kind &&
-  (left.kind !== 'floating-monitor-region' ||
-    right.kind !== 'floating-monitor-region' ||
-    left.regionId === right.regionId)
 
 const parseSwapParticipant = (value: unknown): SwapParticipant | null => {
   if (!value || typeof value !== 'object') return null
@@ -774,6 +770,7 @@ const parseSwapRegion = (
 
   const parsedOrigin = parseSwapParticipant(region.origin) || { kind: 'main-screen' as const }
   const parsedTarget = parseSwapParticipant(region.target)
+  const visibility = normalizeSwapVisibility(region)
   const legacyTarget =
     region.target === 'floating-monitor'
       ? {
@@ -793,6 +790,7 @@ const parseSwapRegion = (
     target: sameSwapParticipant(parsedOrigin, target)
       ? { kind: 'floating-monitor-region', regionId: '' }
       : cloneSwapParticipant(target),
+    ...visibility,
     transition,
     transitionDuration,
     zIndex: typeof region.zIndex === 'number' && Number.isFinite(region.zIndex) ? region.zIndex : 0,

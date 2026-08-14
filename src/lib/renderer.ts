@@ -8,10 +8,12 @@ import {
   sortRegionsByLanePrecedence,
 } from './timeline-lanes'
 import { getWebcamAspectRatio, getWebcamRadius } from './webcam'
+import { getSwapSlideStartConfig, resolveSwapRenderPlan, sameSwapParticipant } from './swap'
 import type {
   CameraSwapRegion,
   EditorState,
   RenderableState,
+  SwapParticipant,
   WebcamLayout,
   WebcamPosition,
   WebcamStyles,
@@ -1098,7 +1100,7 @@ export const drawScene = (
   }
 
   // --- 7. Resolve Final Compositions ---
-  const draws: { zIndex: number; draw: () => void }[] = []
+  const draws: { zIndex: number; draw: () => void; participant?: SwapParticipant }[] = []
 
   // Base states
   const desktopSource = screenCache?.canvas
@@ -1124,6 +1126,7 @@ export const drawScene = (
     if (desktopSource) {
       draws.push({
         zIndex: normalDesktopConfig.zIndex,
+        participant: { kind: 'main-screen' },
         draw: () =>
           drawMediaToConfig(normalDesktopConfig, desktopSource, desktopDims.width, desktopDims.height, desktopFlipped),
       })
@@ -1131,6 +1134,7 @@ export const drawScene = (
     if (normalCameraConfig && cameraSource && cameraDims) {
       draws.push({
         zIndex: normalCameraConfig.zIndex,
+        participant: { kind: 'webcam' },
         draw: () =>
           drawMediaToConfig(
             normalCameraConfig,
@@ -1459,6 +1463,7 @@ export const drawScene = (
     })
     draws.push({
       zIndex: config.zIndex,
+      participant: { kind: 'floating-monitor-region', regionId: region.id },
       draw: () => drawMediaToConfig(config, source, sourceWidth, sourceHeight, region.isFlipped, 1, region.crop),
     })
   })
@@ -1490,15 +1495,19 @@ export const drawScene = (
       if (participant.kind === 'webcam') return webcamSlot
       return monitorSlots.get(participant.regionId) || null
     }
-    const isSameParticipant =
-      activeSwapRegion.origin.kind === activeSwapRegion.target.kind &&
-      (activeSwapRegion.origin.kind !== 'floating-monitor-region' ||
-        activeSwapRegion.target.kind !== 'floating-monitor-region' ||
-        activeSwapRegion.origin.regionId === activeSwapRegion.target.regionId)
+    const isSameParticipant = sameSwapParticipant(activeSwapRegion.origin, activeSwapRegion.target)
     const originSlot = getSwapSlot(activeSwapRegion.origin)
     const targetSlot = getSwapSlot(activeSwapRegion.target)
 
     if (!isSameParticipant && originSlot && targetSlot) {
+      const removeParticipantDraws = (participant: SwapParticipant) => {
+        for (let drawIndex = draws.length - 1; drawIndex >= 0; drawIndex -= 1) {
+          const drawParticipant = draws[drawIndex].participant
+          if (drawParticipant && sameSwapParticipant(drawParticipant, participant)) {
+            draws.splice(drawIndex, 1)
+          }
+        }
+      }
       const drawIntoDestination = (
         sourceSlot: NonNullable<typeof originSlot>,
         destinationSlot: NonNullable<typeof targetSlot>,
@@ -1516,7 +1525,66 @@ export const drawScene = (
           destinationStyle.crop,
         )
 
-      if (activeSwapRegion.transition === 'none' || swapProgress >= 0.999) {
+      const swapRenderPlan = resolveSwapRenderPlan(activeSwapRegion)
+      if (swapRenderPlan.kind === 'target-only') {
+        const targetFrameZIndex = Math.max(originSlot.config.zIndex, targetSlot.config.zIndex) + 0.1
+        const drawTargetInConfig = (config: MediaRectConfig, alpha = 1) =>
+          drawMediaToConfig(
+            config,
+            targetSlot.source,
+            targetSlot.width,
+            targetSlot.height,
+            targetSlot.isFlipped,
+            alpha,
+            targetSlot.crop,
+          )
+        const drawOriginInConfig = (alpha: number) =>
+          drawMediaToConfig(
+            originSlot.config,
+            originSlot.source,
+            originSlot.width,
+            originSlot.height,
+            originSlot.isFlipped,
+            alpha,
+            originSlot.crop,
+          )
+
+        const motionProgress = EASING_MAP.Balanced(swapProgress)
+        const slideStartConfig = {
+          ...getSwapSlideStartConfig(targetSlot.config, originSlot.config, mainRectConfig),
+          shadowBlur: 0,
+          shadowOffsetX: 0,
+          shadowOffsetY: 0,
+          borderWidth: 0,
+        }
+        const targetTransition = {
+          none: { normalAlpha: 0, config: mainRectConfig, alpha: 1 },
+          fade: { normalAlpha: 1 - swapProgress, config: mainRectConfig, alpha: swapProgress },
+          slide: {
+            normalAlpha: 1 - swapProgress,
+            config: lerpConfig(slideStartConfig, mainRectConfig, motionProgress),
+            alpha: 1,
+          },
+          scale: { normalAlpha: 0, config: lerpConfig(targetSlot.config, mainRectConfig, motionProgress), alpha: 1 },
+        }[activeSwapRegion.transition]
+
+        removeParticipantDraws(activeSwapRegion.origin)
+        removeParticipantDraws(activeSwapRegion.target)
+        draws.push({
+          zIndex: originSlot.config.zIndex,
+          draw: () => drawOriginInConfig(1 - swapProgress),
+        })
+        draws.push({
+          zIndex: targetSlot.config.zIndex,
+          draw: () => drawTargetInConfig(targetSlot.config, targetTransition.normalAlpha),
+        })
+        draws.push({
+          zIndex: targetFrameZIndex,
+          draw: () => drawTargetInConfig(targetTransition.config, targetTransition.alpha),
+        })
+      } else if (activeSwapRegion.transition === 'none' || swapProgress >= 0.999) {
+        removeParticipantDraws(activeSwapRegion.origin)
+        removeParticipantDraws(activeSwapRegion.target)
         draws.push({
           zIndex: targetSlot.config.zIndex,
           draw: () => drawIntoDestination(originSlot, targetSlot, targetSlot.config),
