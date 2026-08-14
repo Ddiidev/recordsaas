@@ -46,7 +46,7 @@ Repositorio: `E:\GitHub\recordsaas-solutions\recordsaas`
 - Branch: `main`
 - Base/destino: `origin/main`
 - Commits:
-  - `f870337` - `feat(editor): add one-sided swap transitions` - 2026-08-13 - funcionalidade de visibilidade do Origin, transicoes e correcao da sombra duplicada.
+  - `21355cd` - `feat(editor): add one-sided swap transitions` - 2026-08-13 - funcionalidade de visibilidade do Origin, transicoes e correcao da sombra duplicada.
 - Push/PR: nao enviado.
 
 ## Validacao
