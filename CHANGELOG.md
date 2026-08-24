@@ -1,3 +1,15 @@
+# [2.8.0](https://github.com/Ddiidev/recordsaas/compare/v2.7.4...v2.8.0) (2026-08-24)
+
+
+### Bug Fixes
+
+* **recorder:** eliminate webcam/audio startup delay and fix mic/screen sync ([cdc0788](https://github.com/Ddiidev/recordsaas/commit/cdc07887eaecec4fc84411197d528e559a0ab33d))
+
+
+### Features
+
+* **editor:** add one-sided swap transitions ([21355cd](https://github.com/Ddiidev/recordsaas/commit/21355cd96e1e8df3c5e66deca87474ee1cafda52))
+
 ## [2.7.4](https://github.com/Ddiidev/recordsaas/compare/v2.7.3...v2.7.4) (2026-08-12)
 
 
