@@ -23,6 +23,7 @@ import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
 import { PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
+import { getMainLogFilePath } from '../lib/logging'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
@@ -47,6 +48,8 @@ const store = new Store()
 const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
 const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
 const RECORDING_TIMER_SETTING_KEY = 'recorder.showTimer'
+
+const withDiagnosticLogLocation = (message: string): string => `${message}\n\nDiagnostic logs:\n${getMainLogFilePath()}`
 
 const normalizeTakeShortcut = (value: unknown): string =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : DEFAULT_TAKE_SHORTCUT
@@ -710,7 +713,8 @@ type RecordingOutputOptions = {
   screenEncoderStatus?: ScreenEncoderStatus
   screenCaptureDisplay?: any
 }
-type FfmpegProcessRole = 'main' | 'webcam' | 'system-audio'
+type FfmpegProcessRole = 'main' | 'mic' | 'webcam' | 'system-audio'
+type CaptureSourceKey = 'screen' | 'webcam' | 'recording' | 'systemAudio'
 type ComputerAudioBackend = 'windows-helper' | 'pulse'
 type FfmpegProcessSpec = {
   role: FfmpegProcessRole
@@ -767,6 +771,7 @@ const FFMPEG_STOP_FORCE_PERIOD_MS = 4500
 const FFMPEG_STOP_RESOLVE_PERIOD_MS = 5500
 const FFMPEG_STARTUP_TIMEOUT_MS = 10000
 const WEBCAM_RELEASE_REQUEST_TIMEOUT_MS = 3000
+const MEDIA_DURATION_PROBE_TIMEOUT_MS = 5000
 const RECORDING_CAPABILITY_PROBE_SECONDS = 5
 const RECORDING_CAPABILITY_PROBE_TIMEOUT_MS = 8000
 const RECORDING_PROCESS_PRIORITY_SETTING_KEY = 'general.recordingProcessPriority'
@@ -780,14 +785,30 @@ const DEFAULT_RECORDING_PROCESS_PRIORITIES: RecordingProcessPriorities = {
 }
 const FFMPEG_ROLE_PRIORITY_KEYS: Record<FfmpegProcessRole, RecordingProcessPriorityKey> = {
   main: 'main',
+  mic: 'main',
   webcam: 'webcam',
   'system-audio': 'systemAudio',
 }
+const CAPTURE_SOURCE_KEY_BY_ROLE: Record<FfmpegProcessRole, CaptureSourceKey> = {
+  main: 'screen',
+  mic: 'recording',
+  webcam: 'webcam',
+  'system-audio': 'systemAudio',
+}
+// System audio is written by the helper rather than captured by FFmpeg, and its file does not come
+// out the length of the recording, so its duration cannot be used to recover a start instant. It
+// keeps the distance to the screen it was given at startup instead.
+const CAPTURE_SOURCES_WITH_MEASURED_START: CaptureSourceKey[] = ['screen', 'webcam', 'recording']
 const ffmpegDemuxerAvailability: Partial<Record<ComputerAudioBackend, boolean | null>> = {
   pulse: null,
 }
 const WIN32_DSHOW_WEBCAM_THREAD_QUEUE_SIZE = '1024'
 const WIN32_DSHOW_WEBCAM_RTBUF_SIZE = '512M'
+// Mirrors the webcam's dshow buffering so the mic's demuxer thread is not left on FFmpeg's tiny
+// default queue, which can drop packets when the machine is under load. It does not affect the
+// startup skew between sources: that comes from how long each device takes to deliver its first
+// data, and is corrected through the measured capture offsets instead.
+const WIN32_DSHOW_MIC_THREAD_QUEUE_SIZE = '4096'
 const WEBCAM_RECORDING_ENCODING_CONFIG = {
   codec: 'libx264',
   preset: 'ultrafast',
@@ -1088,6 +1109,19 @@ const probeWin32DshowWebcamInput = (
     })
   })
 
+// Probing a candidate fps/size opens (and briefly runs) the physical webcam device, which is
+// the second visible LED flicker users see right before recording actually starts. The result
+// is stable for a given device+fps+size for as long as the device stays connected, so cache it
+// instead of re-probing (and re-flickering the LED) on every single recording start.
+const WIN32_WEBCAM_PROBE_CACHE_TTL_MS = 5 * 60 * 1000
+const win32WebcamProbeCache = new Map<string, { options: WebcamInputOptions | null; expiresAt: number }>()
+
+const getWin32WebcamProbeCacheKey = (
+  deviceLabel: string,
+  fps: 30 | 60,
+  desiredSize: { width: number; height: number } | undefined,
+) => `${deviceLabel}::${fps}::${desiredSize ? `${desiredSize.width}x${desiredSize.height}` : 'auto'}`
+
 const resolveWebcamInputOptions = async (
   profile: RecordingProfileRuntime,
   context: WebcamInputContext,
@@ -1098,6 +1132,17 @@ const resolveWebcamInputOptions = async (
 
   if (process.platform !== 'win32') {
     return { fps, size: desiredSize }
+  }
+
+  const cacheKey = getWin32WebcamProbeCacheKey(webcam.deviceLabel, fps, desiredSize)
+  const cached = win32WebcamProbeCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.options
+  }
+
+  const rememberAndReturn = (options: WebcamInputOptions | null) => {
+    win32WebcamProbeCache.set(cacheKey, { options, expiresAt: Date.now() + WIN32_WEBCAM_PROBE_CACHE_TTL_MS })
+    return options
   }
 
   for (const candidateFps of getWin32WebcamFallbackFps(fps)) {
@@ -1114,7 +1159,7 @@ const resolveWebcamInputOptions = async (
             } instead.`,
           )
         }
-        return { fps: candidateFps, size: candidateSize }
+        return rememberAndReturn({ fps: candidateFps, size: candidateSize })
       }
     }
   }
@@ -1123,7 +1168,138 @@ const resolveWebcamInputOptions = async (
   log.warn(
     `[RecordingManager] Webcam probe opened the device but received no frames for any explicit FPS/size combination. requestedFps=${fps} fallbackFps=${fallbackFps}`,
   )
-  return null
+  return rememberAndReturn(null)
+}
+
+/** Reads a finished file's duration straight from FFmpeg. */
+const probeMediaDurationSeconds = (filePath: string): Promise<number | null> =>
+  new Promise((resolve) => {
+    const probe = spawn(FFMPEG_PATH, ['-hide_banner', '-i', filePath], { windowsHide: true })
+    let stderr = ''
+    let settled = false
+
+    const settle = (value: number | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      resolve(value)
+    }
+
+    const timeoutId = setTimeout(() => {
+      try {
+        probe.kill('SIGKILL')
+      } catch {
+        // ignore probe cleanup errors
+      }
+      settle(null)
+    }, MEDIA_DURATION_PROBE_TIMEOUT_MS)
+
+    probe.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+    probe.once('error', () => settle(null))
+    probe.once('close', () => {
+      const match = stderr.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/)
+      if (!match) return settle(null)
+      const seconds = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+      settle(Number.isFinite(seconds) ? seconds : null)
+    })
+  })
+
+/**
+ * Recovers the instant each source actually began capturing, by measuring what it ended up
+ * recording.
+ *
+ * Every capture process is asked to stop within a few milliseconds of the others, so a file that
+ * came out longer is a file that started earlier: `stop - duration` is that source's real start.
+ * This is measured rather than estimated from FFmpeg's stderr, because the progress FFmpeg reports
+ * while running trails the content actually captured — each device holds a different amount in its
+ * buffer, flushed only when the process is told to stop — and that per-source lag is exactly the
+ * skew being corrected here.
+ */
+async function measureCaptureSourceStarts(session: RecordingSession, stopRequestedMonotonicMs: number) {
+  const filesBySource: Array<{ sourceKey: CaptureSourceKey; filePath?: string }> = [
+    { sourceKey: 'screen', filePath: session.screenVideoPath },
+    { sourceKey: 'webcam', filePath: session.webcamVideoPath },
+    { sourceKey: 'recording', filePath: session.audioPath },
+  ]
+
+  const starts = session.captureSourceStartMonotonicMs || (session.captureSourceStartMonotonicMs = {})
+  const measuredDurations: Record<string, number> = {}
+
+  await Promise.all(
+    filesBySource.map(async ({ sourceKey, filePath }) => {
+      if (!filePath || !CAPTURE_SOURCES_WITH_MEASURED_START.includes(sourceKey)) return
+      const durationSeconds = await probeMediaDurationSeconds(filePath)
+      if (durationSeconds === null || durationSeconds <= 0) {
+        log.warn(`[SYNC] Could not measure duration for ${sourceKey} (${filePath}).`)
+        return
+      }
+      measuredDurations[sourceKey] = durationSeconds
+      starts[sourceKey] = stopRequestedMonotonicMs - durationSeconds * 1000
+    }),
+  )
+
+  log.info(`[SYNC] Measured capture durations(s)=${JSON.stringify(measuredDurations)}`)
+}
+
+/**
+ * Rebuilds the per-source offsets from the capture streams themselves, once every source has
+ * reported real progress.
+ *
+ * The offsets written during startup come from the "pipeline ready" strings FFmpeg prints on
+ * stderr, which fire at very different points depending on the codec and muxer involved, so they
+ * are not comparable across sources. The measured start instants are, and every process is asked
+ * to stop within a few milliseconds of the others, so this is the measurement that reflects the
+ * real skew between what the screen, the webcam and the microphone captured.
+ */
+function resolveMeasuredCaptureOffsets(session: RecordingSession): {
+  offsetsMs: { screen: number; webcam: number; recording: number; systemAudio: number }
+  originMonotonicMs: number
+} | null {
+  const starts = session.captureSourceStartMonotonicMs
+  if (!starts) return null
+
+  const measuredStarts = CAPTURE_SOURCES_WITH_MEASURED_START.map((key) => starts[key]).filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+  )
+  if (measuredStarts.length === 0) return null
+
+  // Timeline zero is the last source to come up, so every other source keeps its head as
+  // disposable pre-roll and none is ever asked for content it had not captured yet.
+  const originMonotonicMs = Math.max(...measuredStarts)
+  const provisionalOffsets = session.captureSourceOffsetsMs
+  const measuredScreenStart = starts.screen
+  const measuredScreenOffsetMs =
+    typeof measuredScreenStart === 'number' && Number.isFinite(measuredScreenStart)
+      ? originMonotonicMs - measuredScreenStart
+      : null
+
+  const offsetFor = (sourceKey: CaptureSourceKey): number => {
+    const start = starts[sourceKey]
+    if (typeof start === 'number' && Number.isFinite(start)) {
+      return Math.max(0, Math.round(originMonotonicMs - start))
+    }
+
+    // Sources without a start of their own — a microphone still sharing the screen's process,
+    // for instance — keep the distance to the screen they were given at startup, re-expressed
+    // against the new origin so every source stays on one clock.
+    if (measuredScreenOffsetMs === null || !provisionalOffsets) {
+      return Math.max(0, Math.round(provisionalOffsets?.[sourceKey] ?? 0))
+    }
+    const provisionalDistanceToScreenMs = (provisionalOffsets[sourceKey] ?? 0) - provisionalOffsets.screen
+    return Math.max(0, Math.round(measuredScreenOffsetMs + provisionalDistanceToScreenMs))
+  }
+
+  return {
+    offsetsMs: {
+      screen: offsetFor('screen'),
+      webcam: offsetFor('webcam'),
+      recording: offsetFor('recording'),
+      systemAudio: offsetFor('systemAudio'),
+    },
+    originMonotonicMs,
+  }
 }
 
 const parseProbeTimeSeconds = (value: string): number | null => {
@@ -2122,7 +2298,7 @@ async function startActualRecording(
       log.error('[FFMPEG] Startup timed out before recording became ready.')
       dialog.showErrorBox(
         'Recording Failed',
-        'FFmpeg did not finish initializing the recording in time. Please try again.',
+        withDiagnosticLogLocation('FFmpeg did not finish initializing the recording in time. Please try again.'),
       )
       cleanupFailedRecordingStart()
       resolveOnce({ canceled: true })
@@ -2145,7 +2321,11 @@ async function startActualRecording(
     const markRecordingReady = (role: FfmpegProcessRole) => {
       if (recordingReady) return
       readyRoles.add(role)
-      readyMonotonicByRole.set(role, getMonotonicMilliseconds())
+      // FFmpeg prints several messages that qualify as "ready"; only the first one is close to
+      // when this source actually came up.
+      if (!readyMonotonicByRole.has(role)) {
+        readyMonotonicByRole.set(role, getMonotonicMilliseconds())
+      }
       log.info(
         `[FFMPEG] Ready signal from ${role}. count=${readyRoles.size}/${expectedReadyCount} roles=${Array.from(readyRoles).join(',')}`,
       )
@@ -2161,6 +2341,11 @@ async function startActualRecording(
       // All capture processes were spawned together. Timeline zero is deliberately
       // set only after every input confirms readiness, so initial device startup is
       // disposable pre-roll instead of a fixed, guessed audio trim.
+      //
+      // These readiness-based offsets are provisional: they keep the recording usable if it is
+      // cut short, but they compare stderr messages that different codecs and muxers emit at
+      // very different points. They are replaced at save time by the measured stream starts
+      // (see resolveMeasuredCaptureOffsets) whenever those are available.
       const captureOriginMonotonicMs = getMonotonicMilliseconds()
       const offsetFromReady = (role: FfmpegProcessRole, fallback: FfmpegProcessRole = 'main'): number =>
         Math.max(
@@ -2174,11 +2359,11 @@ async function startActualRecording(
       session.captureSourceOffsetsMs = {
         screen: offsetFromReady('main'),
         webcam: offsetFromReady('webcam'),
-        recording: offsetFromReady('main'),
+        recording: offsetFromReady('mic', 'main'),
         systemAudio: offsetFromReady('system-audio'),
       }
       log.info(
-        `[FFMPEG] Recording pipeline ready; shared capture origin offsets(ms)=${JSON.stringify(session.captureSourceOffsetsMs)}`,
+        `[FFMPEG] Recording pipeline ready; provisional capture origin offsets(ms)=${JSON.stringify(session.captureSourceOffsetsMs)}`,
       )
       session.takeRecordingReadyMonotonicMs = captureOriginMonotonicMs
       session.takeLastPtsMonotonicMs = session.takeRecordingReadyMonotonicMs
@@ -2220,7 +2405,7 @@ async function startActualRecording(
 
       ffmpeg.once('error', (error: NodeJS.ErrnoException) => {
         log.error(`[FFMPEG:${run.role}] Failed to start FFmpeg process:`, error)
-        dialog.showErrorBox('Recording Failed', getFFmpegSpawnErrorMessage(error))
+        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(getFFmpegSpawnErrorMessage(error)))
         setTimeout(() => {
           cleanupAndDiscard().catch((cleanupError) => {
             log.error('[FFMPEG] Failed to cleanup after spawn error:', cleanupError)
@@ -2241,7 +2426,7 @@ async function startActualRecording(
           : startupDetail.length > 0
             ? `FFmpeg exited before the recording could start.\n\n${startupDetail}`
             : `FFmpeg exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
-        dialog.showErrorBox('Recording Failed', errorMessage)
+        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(errorMessage))
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2278,11 +2463,17 @@ async function startActualRecording(
           'Unknown input format',
           'error opening device',
         ]
-        if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
+        if (
+          !recordingReady &&
+          !fatalStartupHandled &&
+          fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))
+        ) {
           log.error(`[FFMPEG:${run.role}] Fatal error detected: ${message}`)
           dialog.showErrorBox(
             'Recording Failed',
-            `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
+            withDiagnosticLogLocation(
+              `A critical FFmpeg error occurred while initializing the recording pipeline:\n\n${message}`,
+            ),
           )
           cleanupFailedRecordingStart()
         }
@@ -2299,7 +2490,10 @@ async function startActualRecording(
 
       helper.once('error', (error: NodeJS.ErrnoException) => {
         log.error('[SystemAudioHelper] Failed to start helper:', error)
-        dialog.showErrorBox('Recording Failed', `Could not start system audio helper.\n\n${error.message}`)
+        dialog.showErrorBox(
+          'Recording Failed',
+          withDiagnosticLogLocation(`Could not start system audio helper.\n\n${error.message}`),
+        )
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2313,7 +2507,7 @@ async function startActualRecording(
         const errorMessage =
           startupErrorText.trim() ||
           `System audio helper exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
-        dialog.showErrorBox('Recording Failed', errorMessage)
+        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(errorMessage))
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2370,15 +2564,19 @@ function appendScreenOutputArgs(
     `[RecordingManager] Screen recording encode config: output=${screenOut} codecArgs=${encoderDef.codecArgs.join(' ')} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
   )
   args.push('-map', `${screenIndex}:v`, ...encoderDef.codecArgs)
-  const screenFilters =
-    outputOptions.screenFrameTransferFilters ||
-    (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])
+  const screenFilters = [
+    ...(outputOptions.screenFrameTransferFilters ??
+      (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])),
+  ]
   if (outputOptions.screenScale) {
     screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
     args.push('-vf', screenFilters.join(','))
   } else if (screenFilters.length > 0) {
     args.push('-vf', screenFilters.join(','))
   }
+  log.info(
+    `[RecordingManager] Screen filter route: backend=${outputOptions.screenCaptureBackend || 'unknown'} transfer=${outputOptions.screenFrameTransferMode || 'unknown'} filters=${screenFilters.join(',') || 'none'} scale=${outputOptions.screenScale ? `${outputOptions.screenScale.width}x${outputOptions.screenScale.height}` : 'native'}`,
+  )
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
@@ -2526,17 +2724,31 @@ function buildWin32SplitWebcamFfmpegSpecs(
   outputOptions: RecordingOutputOptions = {},
   audioConfig: RecordingAudioOutputConfig = { audioCodec: 'aac', audioBitrateKbps: 192, audioSampleRate: 48000 },
 ): FfmpegProcessSpec[] {
-  const mainArgs = [...inputArgs.micInputArgs, ...inputArgs.screenInputArgs]
-  appendScreenOutputArgs(mainArgs, hasMic ? 1 : 0, screenOut, outputOptions)
-  if (hasMic && audioOut) appendEncodedAudioOutputArgs(mainArgs, '0:a', audioOut, audioConfig)
+  const mainArgs = [...inputArgs.screenInputArgs]
+  appendScreenOutputArgs(mainArgs, 0, screenOut, outputOptions)
 
   const webcamArgs = [...inputArgs.webcamInputArgs]
   appendWebcamOutputArgs(webcamArgs, 0, webcamOut, outputOptions.webcamFps)
 
-  return [
+  const specs: FfmpegProcessSpec[] = [
     { role: 'main', args: mainArgs },
     { role: 'webcam', args: webcamArgs },
   ]
+
+  // The mic gets its own FFmpeg process instead of sharing the screen's, so its "recording
+  // pipeline ready" signal reflects when the microphone itself actually starts flowing —
+  // independent of the screen encoder's (gfxcapture + hwdownload + nvenc) warm-up time. When
+  // mic and screen shared one process, mic inherited the screen's readiness timestamp, which
+  // hid a real startup skew between the two (the screen pipeline needs measurably longer to
+  // produce its first real frame than the mic needs to start producing samples), causing a
+  // fixed audio-behind-video offset that captureSourceOffsetsMs couldn't see or compensate for.
+  if (hasMic && audioOut) {
+    const micArgs = [...inputArgs.micInputArgs]
+    appendEncodedAudioOutputArgs(micArgs, '0:a', audioOut, audioConfig)
+    specs.push({ role: 'mic', args: micArgs })
+  }
+
+  return specs
 }
 
 /**
@@ -2727,7 +2939,7 @@ export async function startRecording(options: any) {
         }
         break
       case 'win32':
-        micInputArgs.push('-f', 'dshow', '-i', `audio=${mic.deviceLabel}`)
+        micInputArgs.push('-f', 'dshow', '-thread_queue_size', WIN32_DSHOW_MIC_THREAD_QUEUE_SIZE, '-i', `audio=${mic.deviceLabel}`)
         break
       case 'darwin':
         micInputArgs.push('-f', 'avfoundation', '-i', `:${mic.index}`)
@@ -2805,6 +3017,15 @@ export async function startRecording(options: any) {
         break
       case 'win32': {
         const windowsPhysicalRect = getWindowsPhysicalDisplayRect(targetDisplay)
+        outputOptions.screenCaptureDisplay = {
+          id: targetDisplay.id,
+          label: targetDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === targetDisplay.id) + 1}`,
+          bounds: targetDisplay.bounds,
+          scaleFactor,
+          displayFrequency: targetDisplay.displayFrequency,
+          internal: targetDisplay.internal,
+          physicalBounds: windowsPhysicalRect,
+        }
         const candidate = selectWindowsScreenCaptureCandidate(targetDisplay, windowsPhysicalRect, screenFps)
         const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
         const transfer = resolveWindowsScreenCaptureFrameTransfer(
@@ -2886,6 +3107,8 @@ export async function startRecording(options: any) {
         containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
       bounds: containingDisplay.bounds,
       scaleFactor,
+      displayFrequency: containingDisplay.displayFrequency,
+      internal: containingDisplay.internal,
       physicalBounds: windowsDisplayRect || {
         x: physicalX,
         y: physicalY,
@@ -2942,6 +3165,23 @@ export async function startRecording(options: any) {
     }
   } else {
     return { canceled: true }
+  }
+
+  if (process.platform === 'win32') {
+    log.info(
+      `[RecordingManager] Windows capture diagnostics: ${JSON.stringify({
+        source,
+        display: outputOptions.screenCaptureDisplay,
+        recordingGeometry,
+        recordingScaleFactor,
+        requestedFps: outputOptions.screenFps,
+        outputScale: outputOptions.screenScale || null,
+        captureBackend: outputOptions.screenCaptureBackend,
+        frameTransferMode: outputOptions.screenFrameTransferMode,
+        frameTransferFilters: outputOptions.screenFrameTransferFilters || [],
+        encoder: screenEncoderStatus,
+      })}`,
+    )
   }
 
   // Only get/store original cursor scale on Linux
@@ -3326,9 +3566,21 @@ async function cleanupAndSave(): Promise<void> {
   }
 
   const processes = takeFfmpegProcesses()
+  // Every process is told to stop from here, so this single instant is the shared reference the
+  // per-source start times are measured back from.
+  const stopRequestedMonotonicMs = getMonotonicMilliseconds()
   await Promise.all(
     processes.map((process, index) => stopFfmpegProcess(process, index === 0 ? 'main' : `aux-${index}`)),
   )
+
+  const session = appState.currentRecordingSession
+  if (session) {
+    try {
+      await measureCaptureSourceStarts(session, stopRequestedMonotonicMs)
+    } catch (error) {
+      log.error('[SYNC] Failed to measure capture source starts:', error)
+    }
+  }
 }
 
 /**
@@ -3358,13 +3610,28 @@ function getScaledGeometry(geometry: RecordingGeometry, scaleFactor: number): Re
  */
 async function processAndSaveMetadata(session: RecordingSession): Promise<boolean> {
   try {
-    const captureOriginMonotonicMs = session.captureOriginMonotonicMs
-    const captureSourceOffsetsMs = session.captureSourceOffsetsMs || {
-      screen: 0,
-      webcam: 0,
-      recording: 0,
-      systemAudio: 0,
+    const provisionalOffsetsMs = session.captureSourceOffsetsMs
+    const measuredCapture = resolveMeasuredCaptureOffsets(session)
+    if (measuredCapture) {
+      log.info(
+        `[SYNC] Measured capture offsets(ms)=${JSON.stringify(measuredCapture.offsetsMs)} (provisional=${JSON.stringify(
+          provisionalOffsetsMs,
+        )})`,
+      )
+    } else {
+      log.warn('[SYNC] No measured capture starts available; keeping provisional readiness offsets.')
     }
+
+    const captureOriginMonotonicMs = measuredCapture?.originMonotonicMs ?? session.captureOriginMonotonicMs
+    const captureSourceOffsetsMs = measuredCapture?.offsetsMs ||
+      provisionalOffsetsMs || {
+        screen: 0,
+        webcam: 0,
+        recording: 0,
+        systemAudio: 0,
+      }
+    // Take marks were timestamped live against the provisional screen offset, so they move with it.
+    const takeBoundaryShiftSeconds = ((provisionalOffsetsMs?.screen ?? 0) - captureSourceOffsetsMs.screen) / 1000
 
     const scaleFactor = session.scaleFactor || 1
     const finalEvents = appState.recordedMouseEvents.map((event) => {
@@ -3404,7 +3671,9 @@ async function processAndSaveMetadata(session: RecordingSession): Promise<boolea
         if (!session.takeModeEnabled) return []
         const duration = Math.max(0, (session.takeLastPtsSeconds || 0) - captureSourceOffsetsMs.screen / 1000)
         const minimumDuration = Math.max(0.1, 2 / Math.max(1, session.requestedScreenFps || 30))
-        const boundaries = (session.takeBoundaries || []).filter(
+        const boundaries = (session.takeBoundaries || [])
+          .map((boundary) => Math.max(0, boundary + takeBoundaryShiftSeconds))
+          .filter(
           (boundary, index, values) =>
             boundary >= minimumDuration &&
             boundary < duration &&
@@ -3632,6 +3901,270 @@ export async function loadVideoFromFile() {
   } catch (error) {
     log.error('[RecordingManager] Error loading video from file:', error)
     dialog.showErrorBox('Error Loading Video', `An error occurred while loading the video: ${(error as Error).message}`)
+    appState.savingWin?.close()
+    if (recorderWindow && !recorderWindow.isDestroyed()) {
+      recorderWindow.show()
+    }
+    return { canceled: true }
+  }
+}
+
+const RECORDING_DRAFT_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'mkv', 'webm'])
+const RECORDING_DRAFT_MIC_AUDIO_RE = /-audio\.(aac|mp3)$/i
+const RECORDING_DRAFT_SYSTEM_AUDIO_RE = /-system-audio(?:-raw)?\.(aac|mp3|wav)$/i
+const RECORDING_DRAFT_SCREEN_VIDEO_RE = /-screen\.(mp4|mov|mkv|webm)$/i
+const RECORDING_DRAFT_WEBCAM_VIDEO_RE = /-webcam\.(mp4|mov|mkv|webm)$/i
+
+export type RecordingDraftListItem = {
+  folderPath: string
+  metadataPath: string
+  screenVideoPath: string
+  webcamVideoPath?: string
+  audioPath?: string
+  systemAudioPath?: string
+  recordedAt: string
+  sizeBytes: number
+}
+
+export type ListRecordingDraftsResult = {
+  success: boolean
+  rootPath?: string
+  drafts?: RecordingDraftListItem[]
+  error?: string
+}
+
+type InspectedRecordingDraft = {
+  folderPath: string
+  metadataPath: string
+  screenVideoPath: string
+  webcamVideoPath?: string
+  audioPath?: string
+  systemAudioPath?: string
+  mediaAudioPath?: string
+  sizeBytes: number
+}
+
+/**
+ * Inspects a `~/.recordsaas` session folder and returns its core files when it
+ * looks like a recoverable recording draft (at least one metadata `.json` and
+ * one video). Otherwise returns null.
+ */
+async function inspectRecordingDraft(folderPath: string): Promise<InspectedRecordingDraft | null> {
+  let entries: string[]
+  try {
+    entries = await fsPromises.readdir(folderPath)
+  } catch {
+    return null
+  }
+
+  const jsonFiles: string[] = []
+  const videoCandidates: { name: string; path: string }[] = []
+  const audioCandidates: { name: string; path: string }[] = []
+  let sizeBytes = 0
+
+  for (const entry of entries) {
+    let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+    try {
+      stat = await fsPromises.stat(path.join(folderPath, entry))
+    } catch {
+      continue
+    }
+    if (!stat.isFile()) continue
+
+    sizeBytes += stat.size
+    const ext = path.extname(entry).slice(1).toLowerCase()
+    const fullPath = path.join(folderPath, entry)
+
+    if (ext === 'json') {
+      jsonFiles.push(fullPath)
+    } else if (RECORDING_DRAFT_VIDEO_EXTENSIONS.has(ext)) {
+      videoCandidates.push({ name: entry, path: fullPath })
+    } else if (ext === 'aac' || ext === 'mp3' || ext === 'wav') {
+      audioCandidates.push({ name: entry, path: fullPath })
+    }
+  }
+
+  if (jsonFiles.length === 0 || videoCandidates.length === 0) return null
+
+  const screen =
+    videoCandidates.find((candidate) => RECORDING_DRAFT_SCREEN_VIDEO_RE.test(candidate.name)) || videoCandidates[0]
+  const webcam = videoCandidates.find((candidate) => RECORDING_DRAFT_WEBCAM_VIDEO_RE.test(candidate.name))
+  const micAudio = audioCandidates.find((candidate) => RECORDING_DRAFT_MIC_AUDIO_RE.test(candidate.name))
+  const systemAudio = audioCandidates.find((candidate) => RECORDING_DRAFT_SYSTEM_AUDIO_RE.test(candidate.name))
+
+  return {
+    folderPath,
+    metadataPath: jsonFiles.find((file) => /RecordSaaS-recording-.*\.json$/.test(file)) || jsonFiles[0],
+    screenVideoPath: screen.path,
+    webcamVideoPath: webcam?.path,
+    audioPath: micAudio?.path,
+    systemAudioPath: systemAudio?.path,
+    mediaAudioPath: undefined,
+    sizeBytes,
+  }
+}
+
+/**
+ * Lists recoverable recording drafts stored under `~/.recordsaas`. Only session
+ * folders that still contain a metadata `.json` file and at least one video are
+ * returned, so an unfinished recording can be reopened in the editor.
+ */
+export async function listRecordingDrafts(): Promise<ListRecordingDraftsResult> {
+  const rootPath = getRecordingRootDir()
+
+  try {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await fsPromises.readdir(rootPath, { withFileTypes: true, encoding: 'utf8' })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { success: true, rootPath, drafts: [] }
+      }
+      throw error
+    }
+
+    const folderCandidates = entries.filter((entry) => entry.isDirectory() && entry.name.toLowerCase().startsWith('recording-'))
+    const draftItems = await Promise.all(
+      folderCandidates.map(async (entry): Promise<RecordingDraftListItem | null> => {
+        const folderPath = path.join(rootPath, entry.name)
+        const inspected = await inspectRecordingDraft(folderPath)
+        if (!inspected) return null
+
+        let recordedAt = ''
+        try {
+          const folderStat = await fsPromises.stat(folderPath)
+          recordedAt = folderStat.birthtime.getTime() > 0 ? folderStat.birthtime.toISOString() : folderStat.mtime.toISOString()
+        } catch {
+          // Fall back to the folder name timestamp below.
+        }
+        if (!recordedAt) {
+          const match = entry.name.match(/recording-(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/)
+          if (match) {
+            const date = new Date(
+              Number(match[1]),
+              Number(match[2]) - 1,
+              Number(match[3]),
+              Number(match[4]),
+              Number(match[5]),
+              Number(match[6]),
+            )
+            recordedAt = Number.isNaN(date.getTime()) ? '' : date.toISOString()
+          }
+        }
+
+        return {
+          folderPath,
+          metadataPath: inspected.metadataPath,
+          screenVideoPath: inspected.screenVideoPath,
+          webcamVideoPath: inspected.webcamVideoPath,
+          audioPath: inspected.audioPath,
+          systemAudioPath: inspected.systemAudioPath,
+          recordedAt,
+          sizeBytes: inspected.sizeBytes,
+        }
+      }),
+    )
+
+    const drafts = draftItems
+      .filter((draft): draft is RecordingDraftListItem => Boolean(draft))
+      .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
+
+    return { success: true, rootPath, drafts }
+  } catch (error: unknown) {
+    console.error('Error listing recording drafts:', error)
+    return { success: false, rootPath, error: error instanceof Error ? error.message : 'Unknown list error' }
+  }
+}
+
+/**
+ * Opens a previously recorded draft (an unsaved recording session folder under
+ * `~/.recordsaas`) directly in the editor. The user then decides whether to save
+ * the project or discard it using the normal editor flow.
+ */
+export async function openRecordingDraft(draftFolderPath: string) {
+  const recorderWindow = appState.recorderWin
+  if (!recorderWindow) return { canceled: true }
+
+  if (typeof draftFolderPath !== 'string' || draftFolderPath.trim().length === 0) {
+    dialog.showErrorBox('Invalid Draft Folder', 'Please select a valid recording draft folder.')
+    return { canceled: true }
+  }
+
+  const normalizedDraftFolder = normalizeMediaPath(draftFolderPath) || draftFolderPath
+  const inspected = await inspectRecordingDraft(normalizedDraftFolder)
+  if (!inspected) {
+    dialog.showErrorBox(
+      'Invalid Recording Draft',
+      'The selected folder does not contain a valid recording draft. A metadata .json file and at least one video are required.',
+    )
+    return { canceled: true }
+  }
+  log.info(`[RecordingManager] Opening recording draft: ${inspected.folderPath}`)
+
+  recorderWindow.hide()
+  createSavingWindow()
+
+  try {
+    const session: RecordingSession = {
+      screenVideoPath: inspected.screenVideoPath,
+      metadataPath: inspected.metadataPath,
+      webcamVideoPath: inspected.webcamVideoPath,
+      audioPath: inspected.audioPath,
+      systemAudioPath: inspected.systemAudioPath,
+      mediaAudioPath: inspected.mediaAudioPath,
+      recordingGeometry: { x: 0, y: 0, width: 0, height: 0 },
+      scaleFactor: 1,
+    }
+
+    try {
+      const rawData = await fsPromises.readFile(inspected.metadataPath, 'utf-8')
+      const parsed = JSON.parse(rawData) as Record<string, unknown>
+      const rawGeometry = parsed?.recordingGeometry || parsed?.geometry
+      if (
+        rawGeometry &&
+        typeof rawGeometry === 'object' &&
+        typeof (rawGeometry as RecordingGeometry).x === 'number' &&
+        typeof (rawGeometry as RecordingGeometry).y === 'number' &&
+        typeof (rawGeometry as RecordingGeometry).width === 'number' &&
+        typeof (rawGeometry as RecordingGeometry).height === 'number'
+      ) {
+        session.recordingGeometry = rawGeometry as RecordingGeometry
+      }
+      if (typeof parsed?.scaleFactor === 'number' && parsed.scaleFactor > 0) {
+        session.scaleFactor = parsed.scaleFactor
+      }
+    } catch (error) {
+      log.warn('[RecordingManager] Could not read draft metadata before opening:', error)
+    }
+
+    const isValid = await validateRecordingFiles(session)
+    if (!isValid) {
+      appState.savingWin?.close()
+      recorderWindow.show()
+      return { canceled: true }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    appState.savingWin?.close()
+
+    createEditorWindow(
+      session.screenVideoPath,
+      session.metadataPath,
+      session.recordingGeometry,
+      session.webcamVideoPath,
+      session.audioPath,
+      session.systemAudioPath,
+      session.mediaAudioPath,
+      session.scaleFactor,
+    )
+    recorderWindow.close()
+    return { canceled: false, filePath: session.screenVideoPath }
+  } catch (error) {
+    log.error('[RecordingManager] Error recovering recording draft:', error)
+    dialog.showErrorBox(
+      'Error Recovering Draft',
+      `An error occurred while opening the draft: ${(error as Error).message}`,
+    )
     appState.savingWin?.close()
     if (recorderWindow && !recorderWindow.isDestroyed()) {
       recorderWindow.show()

@@ -217,7 +217,13 @@ export function RecorderPage() {
 
   const releaseWebcamPreview = useCallback(async () => {
     webcamPreviewRequestIdRef.current += 1
+    const hadActiveStream = webcamStreamRef.current !== null
     teardownWebcamPreview()
+    // Only the OS-level device handoff needs this delay. If the stream was already
+    // torn down by an earlier call, the device is already free — skip the wait so a
+    // second release request (e.g. the main process's pre-recording handshake) doesn't
+    // add another redundant second of "loading" on top of the first release.
+    if (!hadActiveStream) return
     await new Promise((resolve) => setTimeout(resolve, WEBCAM_RELEASE_DELAY_MS))
   }, [teardownWebcamPreview])
 
@@ -586,13 +592,16 @@ export function RecorderPage() {
       }, 1000)
     })
 
-  const startRecordingAfterPreparation = async (areaGeometry?: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }) => {
-    await releaseWebcamPreview()
+  const startRecordingAfterPreparation = async (
+    areaGeometry: {
+      x: number
+      y: number
+      width: number
+      height: number
+    } | undefined,
+    webcamReleasePromise: Promise<void>,
+  ) => {
+    await webcamReleasePromise
 
     try {
       const webcam = selectedWebcamId !== 'none' ? webcams.find((d) => d.id === selectedWebcamId) : undefined
@@ -667,8 +676,12 @@ export function RecorderPage() {
       }
 
       const countdownSeconds = await resolvePreparationCountdownSeconds()
+      // Start releasing the webcam preview as soon as the countdown begins instead of
+      // waiting for it to finish, so the ~1s release delay overlaps with the countdown
+      // instead of adding on top of it.
+      const webcamReleasePromise = releaseWebcamPreview()
       await runPreparationCountdown(countdownSeconds)
-      await startRecordingAfterPreparation(selectedAreaGeometry)
+      await startRecordingAfterPreparation(selectedAreaGeometry, webcamReleasePromise)
     } catch (error) {
       console.error('Failed to run preparation countdown:', error)
       setActionInProgress('none')
@@ -705,6 +718,17 @@ export function RecorderPage() {
       if (result.canceled) setActionInProgress('none')
     } catch (error) {
       console.error('Failed to import project manually:', error)
+      setActionInProgress('none')
+    }
+  }
+
+  const handleRecoverRecordingDraft = async (draftFolderPath: string) => {
+    setActionInProgress('loading')
+    try {
+      const result = await window.electronAPI.openRecordingDraft(draftFolderPath)
+      if (result.canceled) setActionInProgress('none')
+    } catch (error) {
+      console.error('Failed to recover recording draft:', error)
       setActionInProgress('none')
     }
   }
@@ -1206,6 +1230,9 @@ export function RecorderPage() {
         }}
         onImportManually={() => {
           void handleImportProjectManually()
+        }}
+        onRecoverDraft={(draftFolderPath) => {
+          void handleRecoverRecordingDraft(draftFolderPath)
         }}
       />
 

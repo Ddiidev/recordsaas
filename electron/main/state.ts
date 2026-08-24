@@ -36,6 +36,13 @@ export interface RecordingSession {
   takeRecordingReadyMonotonicMs?: number
   /** Shared post-start marker. Each value maps project timeline zero to the local source timestamp. */
   captureOriginMonotonicMs?: number
+  /** Monotonic instant at which each source's own stream clock was zero, measured while capturing. */
+  captureSourceStartMonotonicMs?: {
+    screen?: number
+    webcam?: number
+    recording?: number
+    systemAudio?: number
+  }
   captureSourceOffsetsMs?: {
     screen: number
     webcam: number
