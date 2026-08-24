@@ -1,3 +1,10 @@
+## [2.8.1](https://github.com/Ddiidev/recordsaas/compare/v2.8.0...v2.8.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **recorder:** remove unrelated code accidentally swept into cdc0788 ([771c57a](https://github.com/Ddiidev/recordsaas/commit/771c57ab81f83a7f1972c2966c99e9509ebef1ef))
+
 # [2.8.0](https://github.com/Ddiidev/recordsaas/compare/v2.7.4...v2.8.0) (2026-08-24)
 
 
