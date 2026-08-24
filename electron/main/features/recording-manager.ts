@@ -23,7 +23,6 @@ import Store from 'electron-store'
 import { appState } from '../state'
 import { getFFmpegPath, ensureDirectoryExists, getFFmpegSpawnErrorMessage, getBinaryPath } from '../lib/utils'
 import { PRELOAD_SCRIPT, VITE_PUBLIC } from '../lib/constants'
-import { getMainLogFilePath } from '../lib/logging'
 import { normalizeMediaPath, toMediaUrl } from '../lib/media-url'
 import { createMouseTracker } from './mouse-tracker'
 import { getCursorScale, restoreOriginalCursorScale, resetCursorScale } from './cursor-manager'
@@ -48,8 +47,6 @@ const store = new Store()
 const TAKE_SHORTCUT_SETTING_KEY = 'recorder.takeShortcut'
 const DEFAULT_TAKE_SHORTCUT = 'CommandOrControl+Shift+F12'
 const RECORDING_TIMER_SETTING_KEY = 'recorder.showTimer'
-
-const withDiagnosticLogLocation = (message: string): string => `${message}\n\nDiagnostic logs:\n${getMainLogFilePath()}`
 
 const normalizeTakeShortcut = (value: unknown): string =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : DEFAULT_TAKE_SHORTCUT
@@ -786,12 +783,6 @@ const DEFAULT_RECORDING_PROCESS_PRIORITIES: RecordingProcessPriorities = {
 const FFMPEG_ROLE_PRIORITY_KEYS: Record<FfmpegProcessRole, RecordingProcessPriorityKey> = {
   main: 'main',
   mic: 'main',
-  webcam: 'webcam',
-  'system-audio': 'systemAudio',
-}
-const CAPTURE_SOURCE_KEY_BY_ROLE: Record<FfmpegProcessRole, CaptureSourceKey> = {
-  main: 'screen',
-  mic: 'recording',
   webcam: 'webcam',
   'system-audio': 'systemAudio',
 }
@@ -2298,7 +2289,7 @@ async function startActualRecording(
       log.error('[FFMPEG] Startup timed out before recording became ready.')
       dialog.showErrorBox(
         'Recording Failed',
-        withDiagnosticLogLocation('FFmpeg did not finish initializing the recording in time. Please try again.'),
+        'FFmpeg did not finish initializing the recording in time. Please try again.',
       )
       cleanupFailedRecordingStart()
       resolveOnce({ canceled: true })
@@ -2405,7 +2396,7 @@ async function startActualRecording(
 
       ffmpeg.once('error', (error: NodeJS.ErrnoException) => {
         log.error(`[FFMPEG:${run.role}] Failed to start FFmpeg process:`, error)
-        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(getFFmpegSpawnErrorMessage(error)))
+        dialog.showErrorBox('Recording Failed', getFFmpegSpawnErrorMessage(error))
         setTimeout(() => {
           cleanupAndDiscard().catch((cleanupError) => {
             log.error('[FFMPEG] Failed to cleanup after spawn error:', cleanupError)
@@ -2426,7 +2417,7 @@ async function startActualRecording(
           : startupDetail.length > 0
             ? `FFmpeg exited before the recording could start.\n\n${startupDetail}`
             : `FFmpeg exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
-        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(errorMessage))
+        dialog.showErrorBox('Recording Failed', errorMessage)
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2463,17 +2454,11 @@ async function startActualRecording(
           'Unknown input format',
           'error opening device',
         ]
-        if (
-          !recordingReady &&
-          !fatalStartupHandled &&
-          fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))
-        ) {
+        if (fatalErrorKeywords.some((keyword) => message.toLowerCase().includes(keyword.toLowerCase()))) {
           log.error(`[FFMPEG:${run.role}] Fatal error detected: ${message}`)
           dialog.showErrorBox(
             'Recording Failed',
-            withDiagnosticLogLocation(
-              `A critical FFmpeg error occurred while initializing the recording pipeline:\n\n${message}`,
-            ),
+            `A critical error occurred while starting the recording process:\n\n${message}\n\nPlease check your device permissions and configurations.`,
           )
           cleanupFailedRecordingStart()
         }
@@ -2490,10 +2475,7 @@ async function startActualRecording(
 
       helper.once('error', (error: NodeJS.ErrnoException) => {
         log.error('[SystemAudioHelper] Failed to start helper:', error)
-        dialog.showErrorBox(
-          'Recording Failed',
-          withDiagnosticLogLocation(`Could not start system audio helper.\n\n${error.message}`),
-        )
+        dialog.showErrorBox('Recording Failed', `Could not start system audio helper.\n\n${error.message}`)
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2507,7 +2489,7 @@ async function startActualRecording(
         const errorMessage =
           startupErrorText.trim() ||
           `System audio helper exited before the recording could start.\n\ncode=${code ?? 'null'} signal=${signal ?? 'none'}`
-        dialog.showErrorBox('Recording Failed', withDiagnosticLogLocation(errorMessage))
+        dialog.showErrorBox('Recording Failed', errorMessage)
         cleanupFailedRecordingStart()
         resolveOnce({ canceled: true })
       })
@@ -2564,19 +2546,15 @@ function appendScreenOutputArgs(
     `[RecordingManager] Screen recording encode config: output=${screenOut} codecArgs=${encoderDef.codecArgs.join(' ')} fps=${outputOptions.screenFps ?? 'input'} fps_mode=cfr pix_fmt=yuv420p`,
   )
   args.push('-map', `${screenIndex}:v`, ...encoderDef.codecArgs)
-  const screenFilters = [
-    ...(outputOptions.screenFrameTransferFilters ??
-      (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])),
-  ]
+  const screenFilters =
+    outputOptions.screenFrameTransferFilters ||
+    (outputOptions.screenNeedsHwDownload ? ['hwdownload', 'format=bgra'] : [])
   if (outputOptions.screenScale) {
     screenFilters.push(`scale=${outputOptions.screenScale.width}:${outputOptions.screenScale.height}`)
     args.push('-vf', screenFilters.join(','))
   } else if (screenFilters.length > 0) {
     args.push('-vf', screenFilters.join(','))
   }
-  log.info(
-    `[RecordingManager] Screen filter route: backend=${outputOptions.screenCaptureBackend || 'unknown'} transfer=${outputOptions.screenFrameTransferMode || 'unknown'} filters=${screenFilters.join(',') || 'none'} scale=${outputOptions.screenScale ? `${outputOptions.screenScale.width}x${outputOptions.screenScale.height}` : 'native'}`,
-  )
   if (outputOptions.screenFps) {
     args.push('-r', String(outputOptions.screenFps), '-fps_mode', 'cfr')
   }
@@ -3017,15 +2995,6 @@ export async function startRecording(options: any) {
         break
       case 'win32': {
         const windowsPhysicalRect = getWindowsPhysicalDisplayRect(targetDisplay)
-        outputOptions.screenCaptureDisplay = {
-          id: targetDisplay.id,
-          label: targetDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === targetDisplay.id) + 1}`,
-          bounds: targetDisplay.bounds,
-          scaleFactor,
-          displayFrequency: targetDisplay.displayFrequency,
-          internal: targetDisplay.internal,
-          physicalBounds: windowsPhysicalRect,
-        }
         const candidate = selectWindowsScreenCaptureCandidate(targetDisplay, windowsPhysicalRect, screenFps)
         const encoderDef = getScreenEncoderDefinition(screenEncoderStatus)
         const transfer = resolveWindowsScreenCaptureFrameTransfer(
@@ -3107,8 +3076,6 @@ export async function startRecording(options: any) {
         containingDisplay.label || `Display ${allDisplays.findIndex((item) => item.id === containingDisplay.id) + 1}`,
       bounds: containingDisplay.bounds,
       scaleFactor,
-      displayFrequency: containingDisplay.displayFrequency,
-      internal: containingDisplay.internal,
       physicalBounds: windowsDisplayRect || {
         x: physicalX,
         y: physicalY,
@@ -3165,23 +3132,6 @@ export async function startRecording(options: any) {
     }
   } else {
     return { canceled: true }
-  }
-
-  if (process.platform === 'win32') {
-    log.info(
-      `[RecordingManager] Windows capture diagnostics: ${JSON.stringify({
-        source,
-        display: outputOptions.screenCaptureDisplay,
-        recordingGeometry,
-        recordingScaleFactor,
-        requestedFps: outputOptions.screenFps,
-        outputScale: outputOptions.screenScale || null,
-        captureBackend: outputOptions.screenCaptureBackend,
-        frameTransferMode: outputOptions.screenFrameTransferMode,
-        frameTransferFilters: outputOptions.screenFrameTransferFilters || [],
-        encoder: screenEncoderStatus,
-      })}`,
-    )
   }
 
   // Only get/store original cursor scale on Linux
@@ -3901,270 +3851,6 @@ export async function loadVideoFromFile() {
   } catch (error) {
     log.error('[RecordingManager] Error loading video from file:', error)
     dialog.showErrorBox('Error Loading Video', `An error occurred while loading the video: ${(error as Error).message}`)
-    appState.savingWin?.close()
-    if (recorderWindow && !recorderWindow.isDestroyed()) {
-      recorderWindow.show()
-    }
-    return { canceled: true }
-  }
-}
-
-const RECORDING_DRAFT_VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'mkv', 'webm'])
-const RECORDING_DRAFT_MIC_AUDIO_RE = /-audio\.(aac|mp3)$/i
-const RECORDING_DRAFT_SYSTEM_AUDIO_RE = /-system-audio(?:-raw)?\.(aac|mp3|wav)$/i
-const RECORDING_DRAFT_SCREEN_VIDEO_RE = /-screen\.(mp4|mov|mkv|webm)$/i
-const RECORDING_DRAFT_WEBCAM_VIDEO_RE = /-webcam\.(mp4|mov|mkv|webm)$/i
-
-export type RecordingDraftListItem = {
-  folderPath: string
-  metadataPath: string
-  screenVideoPath: string
-  webcamVideoPath?: string
-  audioPath?: string
-  systemAudioPath?: string
-  recordedAt: string
-  sizeBytes: number
-}
-
-export type ListRecordingDraftsResult = {
-  success: boolean
-  rootPath?: string
-  drafts?: RecordingDraftListItem[]
-  error?: string
-}
-
-type InspectedRecordingDraft = {
-  folderPath: string
-  metadataPath: string
-  screenVideoPath: string
-  webcamVideoPath?: string
-  audioPath?: string
-  systemAudioPath?: string
-  mediaAudioPath?: string
-  sizeBytes: number
-}
-
-/**
- * Inspects a `~/.recordsaas` session folder and returns its core files when it
- * looks like a recoverable recording draft (at least one metadata `.json` and
- * one video). Otherwise returns null.
- */
-async function inspectRecordingDraft(folderPath: string): Promise<InspectedRecordingDraft | null> {
-  let entries: string[]
-  try {
-    entries = await fsPromises.readdir(folderPath)
-  } catch {
-    return null
-  }
-
-  const jsonFiles: string[] = []
-  const videoCandidates: { name: string; path: string }[] = []
-  const audioCandidates: { name: string; path: string }[] = []
-  let sizeBytes = 0
-
-  for (const entry of entries) {
-    let stat: Awaited<ReturnType<typeof fsPromises.stat>>
-    try {
-      stat = await fsPromises.stat(path.join(folderPath, entry))
-    } catch {
-      continue
-    }
-    if (!stat.isFile()) continue
-
-    sizeBytes += stat.size
-    const ext = path.extname(entry).slice(1).toLowerCase()
-    const fullPath = path.join(folderPath, entry)
-
-    if (ext === 'json') {
-      jsonFiles.push(fullPath)
-    } else if (RECORDING_DRAFT_VIDEO_EXTENSIONS.has(ext)) {
-      videoCandidates.push({ name: entry, path: fullPath })
-    } else if (ext === 'aac' || ext === 'mp3' || ext === 'wav') {
-      audioCandidates.push({ name: entry, path: fullPath })
-    }
-  }
-
-  if (jsonFiles.length === 0 || videoCandidates.length === 0) return null
-
-  const screen =
-    videoCandidates.find((candidate) => RECORDING_DRAFT_SCREEN_VIDEO_RE.test(candidate.name)) || videoCandidates[0]
-  const webcam = videoCandidates.find((candidate) => RECORDING_DRAFT_WEBCAM_VIDEO_RE.test(candidate.name))
-  const micAudio = audioCandidates.find((candidate) => RECORDING_DRAFT_MIC_AUDIO_RE.test(candidate.name))
-  const systemAudio = audioCandidates.find((candidate) => RECORDING_DRAFT_SYSTEM_AUDIO_RE.test(candidate.name))
-
-  return {
-    folderPath,
-    metadataPath: jsonFiles.find((file) => /RecordSaaS-recording-.*\.json$/.test(file)) || jsonFiles[0],
-    screenVideoPath: screen.path,
-    webcamVideoPath: webcam?.path,
-    audioPath: micAudio?.path,
-    systemAudioPath: systemAudio?.path,
-    mediaAudioPath: undefined,
-    sizeBytes,
-  }
-}
-
-/**
- * Lists recoverable recording drafts stored under `~/.recordsaas`. Only session
- * folders that still contain a metadata `.json` file and at least one video are
- * returned, so an unfinished recording can be reopened in the editor.
- */
-export async function listRecordingDrafts(): Promise<ListRecordingDraftsResult> {
-  const rootPath = getRecordingRootDir()
-
-  try {
-    let entries: import('node:fs').Dirent[]
-    try {
-      entries = await fsPromises.readdir(rootPath, { withFileTypes: true, encoding: 'utf8' })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return { success: true, rootPath, drafts: [] }
-      }
-      throw error
-    }
-
-    const folderCandidates = entries.filter((entry) => entry.isDirectory() && entry.name.toLowerCase().startsWith('recording-'))
-    const draftItems = await Promise.all(
-      folderCandidates.map(async (entry): Promise<RecordingDraftListItem | null> => {
-        const folderPath = path.join(rootPath, entry.name)
-        const inspected = await inspectRecordingDraft(folderPath)
-        if (!inspected) return null
-
-        let recordedAt = ''
-        try {
-          const folderStat = await fsPromises.stat(folderPath)
-          recordedAt = folderStat.birthtime.getTime() > 0 ? folderStat.birthtime.toISOString() : folderStat.mtime.toISOString()
-        } catch {
-          // Fall back to the folder name timestamp below.
-        }
-        if (!recordedAt) {
-          const match = entry.name.match(/recording-(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/)
-          if (match) {
-            const date = new Date(
-              Number(match[1]),
-              Number(match[2]) - 1,
-              Number(match[3]),
-              Number(match[4]),
-              Number(match[5]),
-              Number(match[6]),
-            )
-            recordedAt = Number.isNaN(date.getTime()) ? '' : date.toISOString()
-          }
-        }
-
-        return {
-          folderPath,
-          metadataPath: inspected.metadataPath,
-          screenVideoPath: inspected.screenVideoPath,
-          webcamVideoPath: inspected.webcamVideoPath,
-          audioPath: inspected.audioPath,
-          systemAudioPath: inspected.systemAudioPath,
-          recordedAt,
-          sizeBytes: inspected.sizeBytes,
-        }
-      }),
-    )
-
-    const drafts = draftItems
-      .filter((draft): draft is RecordingDraftListItem => Boolean(draft))
-      .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))
-
-    return { success: true, rootPath, drafts }
-  } catch (error: unknown) {
-    console.error('Error listing recording drafts:', error)
-    return { success: false, rootPath, error: error instanceof Error ? error.message : 'Unknown list error' }
-  }
-}
-
-/**
- * Opens a previously recorded draft (an unsaved recording session folder under
- * `~/.recordsaas`) directly in the editor. The user then decides whether to save
- * the project or discard it using the normal editor flow.
- */
-export async function openRecordingDraft(draftFolderPath: string) {
-  const recorderWindow = appState.recorderWin
-  if (!recorderWindow) return { canceled: true }
-
-  if (typeof draftFolderPath !== 'string' || draftFolderPath.trim().length === 0) {
-    dialog.showErrorBox('Invalid Draft Folder', 'Please select a valid recording draft folder.')
-    return { canceled: true }
-  }
-
-  const normalizedDraftFolder = normalizeMediaPath(draftFolderPath) || draftFolderPath
-  const inspected = await inspectRecordingDraft(normalizedDraftFolder)
-  if (!inspected) {
-    dialog.showErrorBox(
-      'Invalid Recording Draft',
-      'The selected folder does not contain a valid recording draft. A metadata .json file and at least one video are required.',
-    )
-    return { canceled: true }
-  }
-  log.info(`[RecordingManager] Opening recording draft: ${inspected.folderPath}`)
-
-  recorderWindow.hide()
-  createSavingWindow()
-
-  try {
-    const session: RecordingSession = {
-      screenVideoPath: inspected.screenVideoPath,
-      metadataPath: inspected.metadataPath,
-      webcamVideoPath: inspected.webcamVideoPath,
-      audioPath: inspected.audioPath,
-      systemAudioPath: inspected.systemAudioPath,
-      mediaAudioPath: inspected.mediaAudioPath,
-      recordingGeometry: { x: 0, y: 0, width: 0, height: 0 },
-      scaleFactor: 1,
-    }
-
-    try {
-      const rawData = await fsPromises.readFile(inspected.metadataPath, 'utf-8')
-      const parsed = JSON.parse(rawData) as Record<string, unknown>
-      const rawGeometry = parsed?.recordingGeometry || parsed?.geometry
-      if (
-        rawGeometry &&
-        typeof rawGeometry === 'object' &&
-        typeof (rawGeometry as RecordingGeometry).x === 'number' &&
-        typeof (rawGeometry as RecordingGeometry).y === 'number' &&
-        typeof (rawGeometry as RecordingGeometry).width === 'number' &&
-        typeof (rawGeometry as RecordingGeometry).height === 'number'
-      ) {
-        session.recordingGeometry = rawGeometry as RecordingGeometry
-      }
-      if (typeof parsed?.scaleFactor === 'number' && parsed.scaleFactor > 0) {
-        session.scaleFactor = parsed.scaleFactor
-      }
-    } catch (error) {
-      log.warn('[RecordingManager] Could not read draft metadata before opening:', error)
-    }
-
-    const isValid = await validateRecordingFiles(session)
-    if (!isValid) {
-      appState.savingWin?.close()
-      recorderWindow.show()
-      return { canceled: true }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    appState.savingWin?.close()
-
-    createEditorWindow(
-      session.screenVideoPath,
-      session.metadataPath,
-      session.recordingGeometry,
-      session.webcamVideoPath,
-      session.audioPath,
-      session.systemAudioPath,
-      session.mediaAudioPath,
-      session.scaleFactor,
-    )
-    recorderWindow.close()
-    return { canceled: false, filePath: session.screenVideoPath }
-  } catch (error) {
-    log.error('[RecordingManager] Error recovering recording draft:', error)
-    dialog.showErrorBox(
-      'Error Recovering Draft',
-      `An error occurred while opening the draft: ${(error as Error).message}`,
-    )
     appState.savingWin?.close()
     if (recorderWindow && !recorderWindow.isDestroyed()) {
       recorderWindow.show()

@@ -722,17 +722,6 @@ export function RecorderPage() {
     }
   }
 
-  const handleRecoverRecordingDraft = async (draftFolderPath: string) => {
-    setActionInProgress('loading')
-    try {
-      const result = await window.electronAPI.openRecordingDraft(draftFolderPath)
-      if (result.canceled) setActionInProgress('none')
-    } catch (error) {
-      console.error('Failed to recover recording draft:', error)
-      setActionInProgress('none')
-    }
-  }
-
   const handleCloseImportProjectModal = () => {
     if (actionInProgress === 'loading') return
     setImportProjectModalOpen(false)
@@ -1230,9 +1219,6 @@ export function RecorderPage() {
         }}
         onImportManually={() => {
           void handleImportProjectManually()
-        }}
-        onRecoverDraft={(draftFolderPath) => {
-          void handleRecoverRecordingDraft(draftFolderPath)
         }}
       />
 
